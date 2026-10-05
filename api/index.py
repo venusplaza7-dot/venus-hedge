@@ -1,33 +1,64 @@
+
 from flask import Flask
 import json, time, os, requests
 from datetime import datetime
 app=Flask(__name__)
-try:
- from upstash_redis import Redis
- url=os.getenv("KV_REST_API_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("KV_URL") or ""
- token=os.getenv("KV_REST_API_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
- if not token:
-  for k,v in os.environ.items():
-   if "TOKEN" in k.upper(): token=v; break
- db=Redis(url=url,token=token) if url and token else Redis.from_env()
- def load(k,d):
-  try: v=db.get(k); return json.loads(v) if v else d
-  except: return d
- def save(k,v):
-  try: db.set(k,json.dumps(v))
-  except: pass
- def delete(k):
-  try: db.delete(k)
-  except: pass
- KV=True
-except:
- M={}
- def load(k,d): return M.get(k,d)
- def save(k,v): M[k]=v
- def delete(k): M.pop(k,None)
- KV=False
 
-# FIXED: Coinbase 0.3s FIRST, Binance batch SECOND - your V164 speed
+# REST version - no upstash_redis lib needed - uses Vercel KV REST API directly
+UP_URL = os.getenv("KV_REST_API_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("KV_URL") or ""
+UP_TOKEN = os.getenv("KV_REST_API_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
+if not UP_TOKEN:
+    for k,v in os.environ.items():
+        if "TOKEN" in k.upper() and "UPSTASH" in k.upper() or "KV" in k.upper():
+            if len(v)>20:
+                UP_TOKEN=v
+                break
+
+def rget(k, d=None):
+    try:
+        if not UP_URL or not UP_TOKEN:
+            return M.get(k, d)
+        r=requests.get(f"{UP_URL}/get/{k}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, timeout=4)
+        if r.status_code!=200: return d
+        val=r.json().get("result")
+        if val is None: return d
+        try: return json.loads(val)
+        except: return val
+    except:
+        return M.get(k, d) if 'M' in globals() else d
+
+def rset(k,v):
+    try:
+        if not UP_URL or not UP_TOKEN:
+            M[k]=v
+            return
+        requests.post(f"{UP_URL}/set/{k}", headers={"Authorization": f"Bearer {UP_TOKEN}", "Content-Type":"application/json"}, data=json.dumps(v), timeout=4)
+    except:
+        M[k]=v
+
+def rdel(k):
+    try:
+        if not UP_URL or not UP_TOKEN:
+            M.pop(k, None)
+            return
+        requests.get(f"{UP_URL}/del/{k}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, timeout=4)
+    except:
+        M.pop(k, None)
+
+M={}
+try:
+    KV = bool(UP_URL and UP_TOKEN)
+except:
+    KV=False
+    M={}
+
+def load(k,d):
+    return rget(k,d)
+def save(k,v):
+    rset(k,v)
+def delete(k):
+    rdel(k)
+
 def get_prices_5coin():
  out={}
  headers={"User-Agent":"Mozilla/5.0"}
@@ -92,8 +123,7 @@ def cron():
     elif age>85: res="WIN" if real<=t['entry']*0.9997 else "LOSS"
    if res:
     fee=0.02
-    if res=="WIN": net=0.12
-    else: net=-0.06
+    net=0.12 if res=="WIN" else -0.06
     fee_tot+=fee; cap+=net; tot+=1
     if res=="WIN": wins+=1
     if t['symbol'] not in st: st[t['symbol']]={"w":0,"l":0,"profit":0.0}
@@ -116,7 +146,7 @@ def cron():
   return {"ok":True,"p":len(prices),"open":len(o)}
  except Exception as e:
   save('last',f"ERR {str(e)[:80]}")
-  return {"ok":False}
+  return {"ok":False,"err":str(e)[:100]}
 
 @app.route('/api/reset')
 def reset():
@@ -128,19 +158,20 @@ def reset():
 @app.route('/api/force')
 def force(): return cron()
 @app.route('/api/state')
-def state(): return {"open":load('VENUS_OPEN',[]),"closed":load('VENUS_CLOSED',[]),"cap":load('VENUS_CAP',300.0),"total":load('VENUS_TOT',0),"wins":load('VENUS_WINS',0),"stats":load('VENUS_STATS',{}),"last":load('last','never'),"kv":KV,"fee":load('VENUS_FEE',0.0),"price_count":load('VENUS_PRICE',0)}
+def state(): 
+ return {"open":load('VENUS_OPEN',[]),"closed":load('VENUS_CLOSED',[]),"cap":load('VENUS_CAP',300.0),"total":load('VENUS_TOT',0),"wins":load('VENUS_WINS',0),"stats":load('VENUS_STATS',{}),"last":load('last','never'),"kv":KV,"fee":load('VENUS_FEE',0.0),"price_count":load('VENUS_PRICE',0)}
+@app.route('/api/index')
 @app.route('/')
 def home():
  return """<html><head><meta name=viewport content="width=device-width,initial-scale=1"><style>
 body{background:#0d0d0d;color:#fff;font-family:system-ui;padding:16px}.card{background:#1a1a1a;border:1px solid #333;border-radius:16px;padding:16px;margin:12px 0}.win{color:#00ff88}.loss{color:#ff4444}.m{color:#888;font-size:12px}.trade{padding:8px 0;border-bottom:1px solid #222;display:flex;justify-content:space-between;font-size:11px}
 .btn{background:#00ff88;color:#000;border:0;padding:14px;border-radius:12px;font-weight:800;width:100%;font-size:16px}.btn2{background:#ff4444;color:#fff;border:0;padding:10px;border-radius:10px;font-weight:700;width:100%;margin-top:8px}
 </style></head><body>
-<h2>VENUS v166 5-COIN WIN $0.12 LOSS $0.06 $300→$50/DAY</h2>
-<div class=card>CAP $<span id=cap>300</span> | WR <span id=wr>0%</span> | <span id=tot>0</span> | Open <span id=oc>0/5</span> | Prices <span id=pc>0</span> | Fees $<span id=fee>0</span><br><span class=m>5-COIN YOU ASKED: WIN $0.12 (0.18% TP) LOSS $0.06 (0.06% SL) - INVERTED YOU ASKED! 1 win covers 2 losses! VWAP mean-reversion fade 2σ, Binance batch 0.9s all symbols, <$0.10 PEPE BONK SHIB FLOKI WIF, 3 SHORT 2 LONG hedge</span><br><span class=m>Cron <span id=cr>never</span> | KV <span id=kv>YES</span> | 5-COIN ✅</span><br><br><button class=btn onclick="fetch('/api/force').then(()=>setTimeout(loadState,400))">🚀 FORCE 5-COIN WIN $0.12</button><button class=btn2 onclick="if(confirm('WIPE to $300 5-COIN?')){fetch('/api/reset').then(()=>setTimeout(loadState,400))}">🗑️ WIPE → $300 5-COIN BEATER</button></div>
-<div class=card><b>Open <span id=oc2>0/5</span> 5-coin hedge</b><div id=open>Press FORCE</div></div>
-<div class=card><b>Closed 5-COIN INVERTED WIN $0.12 > LOSS $0.06</b><div id=closed>Waiting...</div></div>
-<div class=card><b>Brain 5-coin</b><div id=brain class=m>Training...</div></div>
-<div class=card><b>$50/Day 5-coin</b><div id=calc class=m>Waiting...</div></div>
+<h2>VENUS v166 REST FIX $300→$50/DAY - NO LIB</h2>
+<div class=card>CAP $<span id=cap>300</span> | WR <span id=wr>0%</span> | <span id=tot>0</span> | Open <span id=oc>0/5</span> | Prices <span id=pc>0</span> | Fees $<span id=fee>0</span><br><span class=m>REST FIX: no upstash-redis lib, uses requests only - fixes Not Found on hedge.vercel.app</span><br><span class=m>Cron <span id=cr>never</span> | KV <span id=kv>YES</span> | 5-COIN ✅</span><br><br><button class=btn onclick="fetch('/api/force').then(()=>setTimeout(loadState,400))">🚀 FORCE 5-COIN WIN $0.12</button><button class=btn2 onclick="if(confirm('WIPE to $300?')){fetch('/api/reset').then(()=>setTimeout(loadState,400))}">🗑️ WIPE → $300</button></div>
+<div class=card><b>Open <span id=oc2>0/5</span></b><div id=open>Press FORCE</div></div>
+<div class=card><b>Closed WIN $0.12 LOSS $0.06</b><div id=closed>Waiting...</div></div>
+<div class=card><b>Brain</b><div id=brain class=m>Training...</div></div>
 <script>
 async function loadState(){
  try{
@@ -159,7 +190,6 @@ async function loadState(){
   if(el('open')) el('open').innerHTML=(j.open||[]).map(t=>`<div class=trade><span>${t.mode=='SHORT'?'🔻 SHORT':'🔥 LONG'} ${t.symbol} $${t.price} 90s ${t.m90||0}%</span><span class=m>${Math.floor(Date.now()/1000 - (t.t||Date.now()/1000))}s</span></div>`).join('')||'No open';
   if(el('closed')) el('closed').innerHTML=(j.closed||[]).map(c=>`<div class=trade><span>${c.time} ${c.mode} ${c.symbol} $${c.price} ${c.hold}s 90s ${c.m90||0}%</span><span><span class=${c.result=='WIN'?'win':'loss'}>${c.result} $${(c.net||0).toFixed(2)}</span></span></div>`).join('')||'No trades';
   if(el('brain')){ let stats=Object.entries(j.stats||{}).sort((a,b)=>(b[1].profit||0)-(a[1].profit||0)); el('brain').innerHTML=stats.slice(0,10).map(([k,v])=>`<div class=trade><span>${k.replace('USDT','')} ${v.w||0}W/${v.l||0}L ${Math.round(((v.w||0)/Math.max(1,(v.w||0)+(v.l||0)))*100)}% $${(v.profit||0).toFixed(2)}</span></div>`).join('')||'Scanning...'; }
-  if(el('calc')){ let exp=0; if(j.total>10){ let w=j.wins/j.total; exp=w*0.12-(1-w)*0.06; } let perDay=exp*300; el('calc').innerHTML=`5-COIN INVERTED: WIN $0.12 LOSS $0.06<br>Expectancy $${exp.toFixed(3)}/trade<br>5 coins *60 batches/h =300 trades/h → $${(exp*300).toFixed(2)}/h → $${perDay.toFixed(2)}/day<br>Need 33% WR! You have ${wr}% → ${perDay>=50?'✅ $50/day 5-COIN BEATER!':perDay>0?'⚠️ Profitable':'Waiting...'}`; }
  }catch(e){}
 }
 setInterval(loadState,2500); loadState(); setInterval(()=>{fetch('/api/cron').then(()=>loadState());},7000);
