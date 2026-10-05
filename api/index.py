@@ -27,7 +27,7 @@ except:
  def delete(k): M.pop(k,None)
  KV=False
 
-# FIXED: 【entity-Coinbase¦canonical_name=Coinbase】 0.3s FIRST, 【entity-Binance¦canonical_name=Binance】 batch SECOND - your V164 speed
+# FIXED: Coinbase 0.3s FIRST, Binance batch SECOND - your V164 speed
 def get_prices_5coin():
  out={}
  headers={"User-Agent":"Mozilla/5.0"}
@@ -158,7 +158,7 @@ async function loadState(){
   if(el('tot')) el('tot').innerText=`${j.wins||0}W/${(j.total||0)-(j.wins||0)}L of ${j.total||0}`;
   if(el('open')) el('open').innerHTML=(j.open||[]).map(t=>`<div class=trade><span>${t.mode=='SHORT'?'🔻 SHORT':'🔥 LONG'} ${t.symbol} $${t.price} 90s ${t.m90||0}%</span><span class=m>${Math.floor(Date.now()/1000 - (t.t||Date.now()/1000))}s</span></div>`).join('')||'No open';
   if(el('closed')) el('closed').innerHTML=(j.closed||[]).map(c=>`<div class=trade><span>${c.time} ${c.mode} ${c.symbol} $${c.price} ${c.hold}s 90s ${c.m90||0}%</span><span><span class=${c.result=='WIN'?'win':'loss'}>${c.result} $${(c.net||0).toFixed(2)}</span></span></div>`).join('')||'No trades';
-  if(el('brain')){ let stats=Object.entries(j.stats||{}).sort((a,b)=>(b[1].profit||0)-(a[1].profit||0)); el('brain').innerHTML=stats.slice(0,10).map(([k][v])=>`<div class=trade><span>${k.replace('USDT','')} ${v.w||0}W/${v.l||0}L ${Math.round(((v.w||0)/Math.max(1,(v.w||0)+(v.l||0)))*100)}% $${(v.profit||0).toFixed(2)}</span></div>`).join('')||'Scanning...'; }
+  if(el('brain')){ let stats=Object.entries(j.stats||{}).sort((a,b)=>(b[1].profit||0)-(a[1].profit||0)); el('brain').innerHTML=stats.slice(0,10).map(([k,v])=>`<div class=trade><span>${k.replace('USDT','')} ${v.w||0}W/${v.l||0}L ${Math.round(((v.w||0)/Math.max(1,(v.w||0)+(v.l||0)))*100)}% $${(v.profit||0).toFixed(2)}</span></div>`).join('')||'Scanning...'; }
   if(el('calc')){ let exp=0; if(j.total>10){ let w=j.wins/j.total; exp=w*0.12-(1-w)*0.06; } let perDay=exp*300; el('calc').innerHTML=`5-COIN INVERTED: WIN $0.12 LOSS $0.06<br>Expectancy $${exp.toFixed(3)}/trade<br>5 coins *60 batches/h =300 trades/h → $${(exp*300).toFixed(2)}/h → $${perDay.toFixed(2)}/day<br>Need 33% WR! You have ${wr}% → ${perDay>=50?'✅ $50/day 5-COIN BEATER!':perDay>0?'⚠️ Profitable':'Waiting...'}`; }
  }catch(e){}
 }
