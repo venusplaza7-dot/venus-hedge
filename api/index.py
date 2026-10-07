@@ -8,6 +8,63 @@ DAILY_GOAL = 50.0
 DAILY_STOP = -10.0
 CACHE = {"data": None, "ts": 0}
 
+def get_meme_whales():
+    whales=[]
+    try:
+        # OLD - only boosted. NEW - also search trending Solana
+        all_pairs=[]
+        # 1. Boosted
+        for url in ["https://api.dexscreener.com/token-boosts/latest/v1","https://api.dexscreener.com/token-boosts/top/v1"]:
+            try:
+                r=requests.get(url, timeout=8).json()
+                if isinstance(r, list):
+                    for item in r[:25]: # was 20, now 25
+                        if item.get('chainId')=='solana':
+                            token=item.get('tokenAddress')
+                            if token:
+                                pr=requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{token}", timeout=7).json()
+                                if pr.get('pairs'): all_pairs.extend(pr['pairs'][:2])
+            except: continue
+        # 2. Trending search - THIS IS WHAT GAVE YOU $12 + $25
+        for q in ["SOL","PEPE","WIF","BONK"]:
+            try:
+                sr=requests.get(f"https://api.dexscreener.com/latest/dex/search/?q={q}", timeout=8).json()
+                if sr.get('pairs'): all_pairs.extend(sr['pairs'][:25])
+            except: pass
+
+        seen=set()
+        for p in all_pairs:
+            try:
+                if p.get('chainId')!='solana': continue
+                base=p.get('baseToken',{}).get('symbol','').upper()
+                if base in ['SOL','USDC','USDT','WETH','WBTC']: continue
+                addr=p.get('pairAddress')
+                if not addr or addr in seen: continue
+                seen.add(addr)
+                fdv=float(p.get('fdv',0) or 0); liq=float(p.get('liquidity',{}).get('usd',0) or 0); price=float(p.get('priceUsd',0) or 0)
+                if price==0: continue
+                # RELAXED - was 12k-120k / 50k-700k / vol 2000 / buys 2
+                # This is your $12/$25 setting:
+                if not (5000 <= liq <= 200000): continue
+                if not (20000 <= fdv <= 1500000): continue
+                vol_m5=float(p.get('volume',{}).get('m5',0) or 0); ch_m5=float(p.get('priceChange',{}).get('m5',0) or 0); ch_24=float(p.get('priceChange',{}).get('h24',0) or 0)
+                txns=p.get('txns',{}); buys_m5=int(txns.get('m5',{}).get('buys',0) or 0)
+                if vol_m5 < 800: continue  # was 2000 - now 800 to catch early
+                if buys_m5 < 1: continue  # was 2 - now 1
+                if ch_24 < -80: continue # was -60
+                if ch_m5 > 400: continue # was 250 - allow bigger pump
+                if ch_m5 < -60: continue # was -45
+                whale_est=vol_m5*0.65; score=vol_m5*(1+ch_m5/100)+buys_m5*400
+                if ch_m5>15: score*=1.6
+                if ch_m5>25: score*=1.4 # extra boost for $12/$25 type
+                whales.append({"prod":f"{base}-USD","symbol":base[:10],"price":price,"c1":ch_m5,"c24":ch_24,"cg_id":addr,"fdv":fdv,"liq":liq,"vol_m5":vol_m5,"buys_m5":buys_m5,"sells_m5":int(txns.get('m5',{}).get('sells',0) or 0),"whale_usd":whale_est,"score":score,"chain":"solana","pair_url":p.get('url',''),"is_meme_whale":True})
+            except: continue
+        whales.sort(key=lambda x: x['score'], reverse=True)
+        return whales[:10] # was 8, now 10 to show more
+    except Exception as e:
+        print(f"whale err {e}")
+        return []
+
 def rget_single():
     global CACHE
     now=time.time()
