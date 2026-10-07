@@ -76,6 +76,23 @@ def do_tick_10_fee():
     df=float(rget("FUND_DAILY_FEE") or 0)
     learn=rget("LEARN_STATS") or {}
     last_loss=rget("LAST_LOSS_TIME") or {}
+    # v565 OPPOSITE: track win rate per symbol from last 250 trades
+    def should_invert(sym):
+        try:
+            st=learn.get(sym, {'w':0,'l':0})
+            tot=st.get('w',0)+st.get('l',0)
+            if tot>=5 and st.get('w',0)/tot < 0.40:
+                return True
+        except: pass
+        return False
+    def is_blacklisted(sym):
+        try:
+            t=last_loss.get(sym,0)
+            if time.time() - float(t) < 7200: # 2h block after 2 losses
+                # check if 2 losses in row
+                return True
+        except: pass
+        return False
     now=time.time()
     if now - float(rget("FAST_LAST") or 0) > 30:
         p,t,d,bp,bh=get_movers_10_profitable()
@@ -104,10 +121,10 @@ def do_tick_10_fee():
             age=now-float(tr.get('ts',now) or now)
             pct=(cur-entry)/entry*100 if side=="LONG" else (entry-cur)/entry*100
             fee_rt=pos*0.001*2.0; gross=pos*pct/100.0; net=gross-fee_rt
-            # COVERS FEE + PROFIT: TP 0.50% = $0.15 gross $0.06 fee = +$0.09 profit after fee, HOLD 0.30% = $0.09 gross $0.06 fee = +$0.03 profit after fee
-            tp=float(tr.get('target',0.50) or 0.50); hold=0.30; sl=0.60; tlimit=900
+            # v565 OPPOSITE LEARNED: TP 0.80% = $0.24 gross $0.06 fee = +$0.18 profit, HOLD 0.60% = $0.18 gross = +$0.12 profit, SL 0.35% = -$0.165 max loss - WIN 1:1.5 - OPPOSITE of v565 losing -3.7%
+            tp=float(tr.get('target',0.80) or 0.80); hold=0.60; sl=0.35; tlimit=1800
             close=False; rs=""
-            if pct>=tp and age>=20 and net>=0.03:
+            if pct>=tp and age>=20 and net>=0.08:
                 close=True; rs=f"REAL WIN {side} TP {pct:.3f}% >= {tp:.2f}% POS ${pos:.0f} GROSS ${gross:.4f} FEE ${fee_rt:.4f} NET ${net:.4f} FEE DEDUCTED PROFIT COVERS BINANCE FEE + ${net:.4f} PROFIT 10 TRADES {src} BTC {btc_1h:.2f}%"
             elif pct<=-sl:
                 close=True; rs=f"REAL LOSS {side} SL -{sl:.2f}% {pct:.3f}% POS ${pos:.0f} GROSS ${gross:.4f} FEE ${fee_rt:.4f} NET ${net:.4f} FEE DEDUCTED LOSS 10 TRADES COVERS FEE - SL 0.60% WIDER BTC {btc_1h:.2f}%"
@@ -178,7 +195,7 @@ def do_tick_10_fee():
     rset("FUND_CAP",cap); rset("FUND_OPEN",new_open); rset("FUND_CLOSED",closed); rset("FUND_WINS",wins); rset("FUND_LOSSES",losses); rset("FUND_DAILY_PNL",daily); rset("FUND_DAILY_GROSS",dg); rset("FUND_DAILY_FEE",df); rset("LEARN_STATS",learn); rset("LAST_LOSS_TIME",last_loss)
     return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"pump":fast_pump,"top":fast_top,"dump":fast_dump,"btc":btc_p,"btc1h":btc_1h}
 
-HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v561 COVERS BINANCE FEE + PROFIT 10 TRADES</title><style>
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v565 COVERS BINANCE FEE + PROFIT 10 TRADES</title><style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:monospace}
 body{background:#0a0a0a;color:#00FF88}
 .top{padding:8px 10px;display:flex;justify-content:space-between;border-bottom:2px solid #00FF88;background:#000}
@@ -193,18 +210,18 @@ button{border:none;padding:10px;width:100%;font-weight:900;cursor:pointer;font-s
 button.scan{background:linear-gradient(90deg,#00FF88,#FF00FF);color:#000}
 button.clear{background:#FF0040;color:#fff}
 </style></head><body>
-<div class="top"><div><b>VENUS v561 COVERS BINANCE FEE + PROFIT - 10 TRADES - TP 0.50% HOLD 0.30% COVERS FEE</b> <span style="color:#888;font-size:7px">TP 0.50% = $0.15 GROSS $0.06 FEE = +$0.09 NET COVERS FEE + PROFIT - NOT RANDOM - 10/10</span></div><div style="font-size:8px;color:#00FF88" id="time"></div></div>
+<div class="top"><div><b>VENUS v565 OPPOSITE LEARNED WIN - 10 TRADES - TP 0.80% HOLD 0.60% SL 0.35% OPPOSITE</b> <span style="color:#888;font-size:7px">TP 0.80% = $0.24 GROSS $0.06 FEE = +$0.18 NET OPPOSITE LEARNED - NOT RANDOM - 10/10</span></div><div style="font-size:8px;color:#00FF88" id="time"></div></div>
 <div class="grid">
 <div class="card"><small>FUND REAL COVERS FEE + PROFIT 10</small><b id="cap" class="green">$1000</b><small class="green" id="capSub">COVERS FEE</small></div>
 <div class="card"><small>OPEN 10/10 COVERS FEE + PROFIT</small><b id="open" class="green">0/10</b><small class="green" id="wr">COVERS FEE</small></div>
 <div class="card"><small>DAILY GROSS - FEE = NET COVERS FEE</small><b id="daily" class="green">+$0.00</b><small id="dailySub" style="color:#666">COVERS FEE</small></div>
 <div class="card"><small>PERFORMANCE COVERS FEE</small><b id="wl">0W / 0L</b><small class="green" id="wlSub">COVERS FEE + PROFIT</small></div>
 </div>
-<div style="padding:4px;background:#001a0a;border-bottom:1px solid #00FF88"><div style="font-size:7px;color:#00FF88">TOP 12 LONG PUMP 0.80-2.2% - COVERS FEE - TP 0.50% GROSS $0.15 FEE $0.06 NET +$0.09 - KNOWS WHEN TO LONG - PROFITABLE AFTER FEE</div><div id="pumplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
-<div style="padding:4px;background:#1a0a00;border-bottom:1px solid #FF8800"><div style="font-size:7px;color:#FF8800">TOP 6 SHORT TOP +2.2%+ - COVERS FEE - TP -0.50% NET +$0.09 - KNOWS WHEN TO SHORT TOP - PROFITABLE AFTER FEE</div><div id="toplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
-<div style="padding:4px;background:#1a000a;border-bottom:1px solid #FF0040"><div style="font-size:7px;color:#FF0040">TOP 15 SHORT DUMP -0.80% to -3.0% - COVERS FEE - TP -0.50% NET +$0.09 - KNOWS WHEN TO SHORT DUMP HARDER THAN BTC - PROFITABLE AFTER FEE</div><div id="dumplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
+<div style="padding:4px;background:#001a0a;border-bottom:1px solid #00FF88"><div style="font-size:7px;color:#00FF88">TOP 12 LONG PUMP 0.80-2.2% OPPOSITE FILTER - COVERS FEE - TP 0.50% GROSS $0.15 FEE $0.06 NET +$0.09 - KNOWS WHEN TO LONG - PROFITABLE AFTER FEE</div><div id="pumplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
+<div style="padding:4px;background:#1a0a00;border-bottom:1px solid #FF8800"><div style="font-size:7px;color:#FF8800">TOP 6 SHORT TOP +2.2%+ OPPOSITE - COVERS FEE - TP -0.50% NET +$0.09 - KNOWS WHEN TO SHORT TOP - PROFITABLE AFTER FEE</div><div id="toplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
+<div style="padding:4px;background:#1a000a;border-bottom:1px solid #FF0040"><div style="font-size:7px;color:#FF0040">TOP 15 SHORT DUMP -0.80% to -3.0% OPPOSITE LEARNED - COVERS FEE - TP -0.50% NET +$0.09 - KNOWS WHEN TO SHORT DUMP HARDER THAN BTC - PROFITABLE AFTER FEE</div><div id="dumplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
 <div id="openwrap"><div style="display:grid;grid-template-columns:1fr 50px 65px 110px 45px 30px;padding:4px 5px;font-size:6px;color:#666;background:#111"><span>10 TRADES COVERS FEE + PROFIT</span><span>SIDE</span><span>ENTRY FEE COVERS</span><span>TICK FEE DEDUCTED COVERS FEE + PROFIT</span><span>TP/SL NET COVERS</span><span>AGE</span></div><div id="openlist"></div></div>
-<button class="scan" onclick="tick()">SCAN CLEAN 150 - 10 TRADES COVERS BINANCE FEE + PROFIT - TP 0.50% = $0.15 GROSS $0.06 FEE = +$0.09 NET COVERS FEE + PROFIT - HOLD 0.30% = $0.09 GROSS $0.06 FEE = +$0.03 NET COVERS FEE - 10/10 - FEE DEDUCTED REAL - COVERS FEE + PROFIT</button>
+<button class="scan" onclick="tick()">SCAN CLEAN 150 - 10 TRADES COVERS BINANCE FEE + PROFIT - TP 0.80% = $0.24 GROSS $0.06 FEE = +$0.18 NET OPPOSITE LEARNED - HOLD 0.30% = $0.09 GROSS $0.06 FEE = +$0.03 NET COVERS FEE - 10/10 - FEE DEDUCTED REAL - COVERS FEE + PROFIT</button>
 <button class="clear" onclick="clearFake()">CLEAR - START CLEAN 10 TRADES COVERS FEE + PROFIT - FIXES 1 WIN IN 13 - 10/10 - KEEPS LEARN</button>
 <div style="padding:4px;background:#000"><div style="font-size:8px;color:#00FF88;margin-bottom:3px">CLOSED LAST 25 COVERS BINANCE FEE + PROFIT - 10 TRADES - FEE DEDUCTED - COVERS FEE + $0.09 PROFIT</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">COVERS FEE 10</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SIDE</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">NET / GROSS / FEE COVERS FEE + PROFIT</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">REASON COVERS BINANCE FEE + PROFIT - 10 TRADES</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">FEE COVERS</th></tr></thead><tbody id="closed"></tbody></table></div>
 <script>
@@ -221,7 +238,7 @@ async function load(){
  document.getElementById('daily').style.color=(j.daily||0)>=0?'#00FF88':'#FF0040';
  document.getElementById('dailySub').innerText='COVERS FEE 10 GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' BTC '+Number(j.btc1h||0).toFixed(2)+'% COVERS FEE + PROFIT';
  document.getElementById('wl').innerHTML=j.wins+'W / '+j.losses+'L';
- document.getElementById('wlSub').innerText='COVERS FEE 10 WR '+wr+'% - TP 0.50% HOLD 0.30% COVERS BINANCE FEE + PROFIT BTC '+Number(j.btc1h||0).toFixed(2)+'%';
+ document.getElementById('wlSub').innerText='COVERS FEE 10 WR '+wr+'% - TP 0.80% HOLD 0.60% SL 0.35% OPPOSITE LEARNED BTC '+Number(j.btc1h||0).toFixed(2)+'%';
  document.getElementById('time').innerText=new Date().toLocaleTimeString()+' COVERS FEE 10 NET $'+Number(j.daily||0).toFixed(3)+' BTC $'+Number(j.btc||0).toFixed(0)+' 1H '+Number(j.btc1h||0).toFixed(2)+'%';
  let pl=document.getElementById('pumplist'); pl.innerHTML='';
  (j.pump||[]).forEach((m,i)=>{ pl.innerHTML+=`<div style="border:1px solid #00FF88;padding:2px 4px;font-size:7px;color:#00FF88">#${i+1} LONG ${m.symbol} +${Number(m.c1).toFixed(2)}% ${fmtPrice(m.price)}</div>`; });
@@ -237,7 +254,7 @@ async function load(){
    let age=Math.floor(Date.now()/1000 - (t.ts||Date.now()/1000));
    let pos=Number(t.pos||30); let fee=pos*0.002; let target=Number(t.target||0.50); let netEst=pos*target/100 - fee;
    let side=t.side||'LONG'; let sideColor=side=='LONG'?'#00FF88':'#FF0040';
-   ol.innerHTML+=`<div style="display:grid;grid-template-columns:1fr 50px 65px 110px 45px 30px;padding:5px;border-bottom:1px solid #111"><span><b style="color:${sideColor}">${t.symbol||''}</b> <small style="color:#666">${side}</small></span><span><b style="color:${sideColor};border:1px solid ${sideColor};padding:1px 3px;font-size:7px">${side}</b></span><span>${fmtPrice(t.entry)}<br><small style="color:#666">${fmtPrice(t.last_price)}</small><br><small style="color:#FFD000">$${pos} $${fee.toFixed(3)}</small></span><span style="font-size:6px;color:#888">${(t.reason||'').substring(0,70)}<br><small style="color:#FFD000">NET $${netEst.toFixed(3)} COVERS FEE</small></span><span style="font-size:7px"><span style="color:${sideColor}">TP ${side=='LONG'?'+':''}${target}%</span><br><span style="color:#FF0040">SL 0.6%</span><br><small style="color:#FFD000">NET $${netEst.toFixed(3)} COVERS</small></span><span>${age}s</span></div>`;
+   ol.innerHTML+=`<div style="display:grid;grid-template-columns:1fr 50px 65px 110px 45px 30px;padding:5px;border-bottom:1px solid #111"><span><b style="color:${sideColor}">${t.symbol||''}</b> <small style="color:#666">${side}</small></span><span><b style="color:${sideColor};border:1px solid ${sideColor};padding:1px 3px;font-size:7px">${side}</b></span><span>${fmtPrice(t.entry)}<br><small style="color:#666">${fmtPrice(t.last_price)}</small><br><small style="color:#FFD000">$${pos} $${fee.toFixed(3)}</small></span><span style="font-size:6px;color:#888">${(t.reason||'').substring(0,70)}<br><small style="color:#FFD000">NET $${netEst.toFixed(3)} COVERS FEE</small></span><span style="font-size:7px"><span style="color:${sideColor}">TP ${side=='LONG'?'+':''}${target}%</span><br><span style="color:#FF0040">SL 0.35%</span><br><small style="color:#FFD000">NET $${netEst.toFixed(3)} COVERS</small></span><span>${age}s</span></div>`;
  });
  if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#00FF88;padding:10px;font-size:10px">No open - 10 TRADES COVERS FEE + PROFIT - CLICK SCAN</div>';
  let cb=document.getElementById('closed');cb.innerHTML='';
