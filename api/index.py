@@ -8,63 +8,6 @@ DAILY_GOAL = 50.0
 DAILY_STOP = -10.0
 CACHE = {"data": None, "ts": 0}
 
-def get_meme_whales():
-    whales=[]
-    try:
-        # OLD - only boosted. NEW - also search trending Solana
-        all_pairs=[]
-        # 1. Boosted
-        for url in ["https://api.dexscreener.com/token-boosts/latest/v1","https://api.dexscreener.com/token-boosts/top/v1"]:
-            try:
-                r=requests.get(url, timeout=8).json()
-                if isinstance(r, list):
-                    for item in r[:25]: # was 20, now 25
-                        if item.get('chainId')=='solana':
-                            token=item.get('tokenAddress')
-                            if token:
-                                pr=requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{token}", timeout=7).json()
-                                if pr.get('pairs'): all_pairs.extend(pr['pairs'][:2])
-            except: continue
-        # 2. Trending search - THIS IS WHAT GAVE YOU $12 + $25
-        for q in ["SOL","PEPE","WIF","BONK"]:
-            try:
-                sr=requests.get(f"https://api.dexscreener.com/latest/dex/search/?q={q}", timeout=8).json()
-                if sr.get('pairs'): all_pairs.extend(sr['pairs'][:25])
-            except: pass
-
-        seen=set()
-        for p in all_pairs:
-            try:
-                if p.get('chainId')!='solana': continue
-                base=p.get('baseToken',{}).get('symbol','').upper()
-                if base in ['SOL','USDC','USDT','WETH','WBTC']: continue
-                addr=p.get('pairAddress')
-                if not addr or addr in seen: continue
-                seen.add(addr)
-                fdv=float(p.get('fdv',0) or 0); liq=float(p.get('liquidity',{}).get('usd',0) or 0); price=float(p.get('priceUsd',0) or 0)
-                if price==0: continue
-                # RELAXED - was 12k-120k / 50k-700k / vol 2000 / buys 2
-                # This is your $12/$25 setting:
-                if not (5000 <= liq <= 200000): continue
-                if not (20000 <= fdv <= 1500000): continue
-                vol_m5=float(p.get('volume',{}).get('m5',0) or 0); ch_m5=float(p.get('priceChange',{}).get('m5',0) or 0); ch_24=float(p.get('priceChange',{}).get('h24',0) or 0)
-                txns=p.get('txns',{}); buys_m5=int(txns.get('m5',{}).get('buys',0) or 0)
-                if vol_m5 < 800: continue  # was 2000 - now 800 to catch early
-                if buys_m5 < 1: continue  # was 2 - now 1
-                if ch_24 < -80: continue # was -60
-                if ch_m5 > 400: continue # was 250 - allow bigger pump
-                if ch_m5 < -60: continue # was -45
-                whale_est=vol_m5*0.65; score=vol_m5*(1+ch_m5/100)+buys_m5*400
-                if ch_m5>15: score*=1.6
-                if ch_m5>25: score*=1.4 # extra boost for $12/$25 type
-                whales.append({"prod":f"{base}-USD","symbol":base[:10],"price":price,"c1":ch_m5,"c24":ch_24,"cg_id":addr,"fdv":fdv,"liq":liq,"vol_m5":vol_m5,"buys_m5":buys_m5,"sells_m5":int(txns.get('m5',{}).get('sells',0) or 0),"whale_usd":whale_est,"score":score,"chain":"solana","pair_url":p.get('url',''),"is_meme_whale":True})
-            except: continue
-        whales.sort(key=lambda x: x['score'], reverse=True)
-        return whales[:10] # was 8, now 10 to show more
-    except Exception as e:
-        print(f"whale err {e}")
-        return []
-
 def rget_single():
     global CACHE
     now=time.time()
@@ -138,23 +81,23 @@ def get_movers_10_profitable():
 def get_meme_whales():
     whales=[]
     try:
-        urls=["https://api.dexscreener.com/token-boosts/latest/v1","https://api.dexscreener.com/token-boosts/top/v1"]
         all_pairs=[]
-        for url in urls:
+        for url in ["https://api.dexscreener.com/token-boosts/latest/v1","https://api.dexscreener.com/token-boosts/top/v1"]:
             try:
                 r=requests.get(url, timeout=8).json()
                 if isinstance(r, list):
-                    for item in r[:20]:
+                    for item in r[:25]:
                         if item.get('chainId')=='solana':
                             token=item.get('tokenAddress')
                             if token:
                                 pr=requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{token}", timeout=7).json()
                                 if pr.get('pairs'): all_pairs.extend(pr['pairs'][:2])
             except: continue
-        try:
-            sr=requests.get("https://api.dexscreener.com/latest/dex/search/?q=SOL", timeout=8).json()
-            if sr.get('pairs'): all_pairs.extend(sr['pairs'][:30])
-        except: pass
+        for q in ["SOL","BONK","WIF","PEPE","PUMP"]:
+            try:
+                sr=requests.get(f"https://api.dexscreener.com/latest/dex/search/?q={q}", timeout=8).json()
+                if sr.get('pairs'): all_pairs.extend(sr['pairs'][:20])
+            except: pass
         seen=set()
         for p in all_pairs:
             try:
@@ -166,21 +109,22 @@ def get_meme_whales():
                 seen.add(addr)
                 fdv=float(p.get('fdv',0) or 0); liq=float(p.get('liquidity',{}).get('usd',0) or 0); price=float(p.get('priceUsd',0) or 0)
                 if price==0: continue
-                if not (12000 <= liq <= 120000): continue
-                if not (50000 <= fdv <= 700000): continue
+                if not (5000 <= liq <= 200000): continue
+                if not (20000 <= fdv <= 1500000): continue
                 vol_m5=float(p.get('volume',{}).get('m5',0) or 0); ch_m5=float(p.get('priceChange',{}).get('m5',0) or 0); ch_24=float(p.get('priceChange',{}).get('h24',0) or 0)
                 txns=p.get('txns',{}); buys_m5=int(txns.get('m5',{}).get('buys',0) or 0)
-                if vol_m5 < 2000: continue
-                if buys_m5 < 2: continue
-                if ch_24 < -60: continue
-                if ch_m5 > 250: continue
-                if ch_m5 < -45: continue
+                if vol_m5 < 800: continue
+                if buys_m5 < 1: continue
+                if ch_24 < -80: continue
+                if ch_m5 > 400: continue
+                if ch_m5 < -60: continue
                 whale_est=vol_m5*0.65; score=vol_m5*(1+ch_m5/100)+buys_m5*400
                 if ch_m5>15: score*=1.6
+                if ch_m5>25: score*=1.4
                 whales.append({"prod":f"{base}-USD","symbol":base[:10],"price":price,"c1":ch_m5,"c24":ch_24,"cg_id":addr,"fdv":fdv,"liq":liq,"vol_m5":vol_m5,"buys_m5":buys_m5,"sells_m5":int(txns.get('m5',{}).get('sells',0) or 0),"whale_usd":whale_est,"score":score,"chain":"solana","pair_url":p.get('url',''),"is_meme_whale":True})
             except: continue
         whales.sort(key=lambda x: x['score'], reverse=True)
-        return whales[:8]
+        return whales[:10]
     except Exception as e:
         print(f"whale err {e}")
         return []
@@ -283,7 +227,6 @@ def do_tick_10_fee():
         except:
             new_open.append(tr)
 
-    # DAILY GOAL $50 LOGIC - SHARK FOOTPRINT STRATEGY
     if daily >= DAILY_GOAL:
         data["FUND_CAP"]=cap; data["FUND_OPEN"]=new_open; data["FUND_CLOSED"]=closed; data["FUND_WINS"]=wins; data["FUND_LOSSES"]=losses; data["FUND_DAILY_PNL"]=daily; data["FUND_DAILY_GROSS"]=dg; data["FUND_DAILY_FEE"]=df; data["LEARN_STATS"]=learn; data["LAST_LOSS_TIME"]=last_loss; data["DAILY_GOAL_HIT"]=daily
         rset_single(data)
@@ -291,7 +234,7 @@ def do_tick_10_fee():
     if daily <= DAILY_STOP:
         data["FUND_CAP"]=cap; data["FUND_OPEN"]=new_open; data["FUND_CLOSED"]=closed; data["FUND_WINS"]=wins; data["FUND_LOSSES"]=losses; data["FUND_DAILY_PNL"]=daily; data["FUND_DAILY_GROSS"]=dg; data["FUND_DAILY_FEE"]=df; data["LEARN_STATS"]=learn; data["LAST_LOSS_TIME"]=last_loss; data["DAILY_GOAL_HIT"]=daily
         rset_single(data)
-        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"pump":fast_pump,"top":fast_top,"dump":fast_dump,"whale":fast_whale,"btc":btc_p,"btc1h":btc_1h,"kv":f"STOP LOSS ${daily:.2f} <= ${DAILY_STOP} - PROTECT - SHARK STOP"}
+        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"pump":fast_pump,"top":fast_top,"dump":fast_dump,"whale":fast_whale,"btc":btc_p,"btc1h":btc_1h,"kv":f"STOP LOSS ${daily:.2f} <= ${DAILY_STOP} - PROTECT"}
 
     stable_open=len([x for x in new_open if not x.get('is_meme')])
     candidates=fast_pump+fast_top+fast_dump
@@ -318,9 +261,9 @@ def do_tick_10_fee():
             sym=m['symbol']
             if any(x['symbol']==sym for x in new_open): continue
             if any(x.get('cg_id')==m['cg_id'] for x in new_open): continue
-            if m['fdv']<40000 or m['fdv']>800000: continue
-            if m['liq']<10000: continue
-            if sym in last_loss and now-float(last_loss.get(sym,0) or 0)<7200: continue
+            if m['fdv']<20000 or m['fdv']>1500000: continue
+            if m['liq']<5000: continue
+            if sym in last_loss and now-float(last_loss.get(sym,0) or 0)<3600: continue
             reason=f"SHARK WHALE {m.get('buys_m5',0)} BUYS VOL M5 ${m.get('vol_m5',0):.0f} WHALE ${m.get('whale_usd',0):.0f} FDV ${m.get('fdv',0):.0f} LIQ ${m.get('liq',0):.0f} {m.get('c1',0):.1f}% M5 TP 12% SL 8%"
             new_open.append({"symbol":sym,"prod":m['prod'],"entry":m['price'],"ts":now,"side":"LONG","reason":reason,"target":12.0,"stop":8.0,"last_price":m['price'],"pos":30.0,"c1":m['c1'],"c24":m['c24'],"cg_id":m['cg_id'],"is_meme":True,"whale_usd":m.get('whale_usd',0),"fdv":m.get('fdv',0)})
             whale_open+=1
@@ -328,9 +271,9 @@ def do_tick_10_fee():
 
     data["FUND_CAP"]=cap; data["FUND_OPEN"]=new_open; data["FUND_CLOSED"]=closed; data["FUND_WINS"]=wins; data["FUND_LOSSES"]=losses; data["FUND_DAILY_PNL"]=daily; data["FUND_DAILY_GROSS"]=dg; data["FUND_DAILY_FEE"]=df; data["LEARN_STATS"]=learn; data["LAST_LOSS_TIME"]=last_loss
     rset_single(data)
-    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"pump":fast_pump,"top":fast_top,"dump":fast_dump,"whale":fast_whale,"btc":btc_p,"btc1h":btc_1h,"kv":f"SHARK FOOTPRINT MODE - GOAL ${DAILY_GOAL}/DAY - STOP ${DAILY_STOP} - 1 CMD"}
+    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"pump":fast_pump,"top":fast_top,"dump":fast_dump,"whale":fast_whale,"btc":btc_p,"btc1h":btc_1h,"kv":f"SHARK FOOTPRINT MODE - GOAL ${DAILY_GOAL}/DAY - EARLY CATCH $12/$25 - 1 CMD"}
 
-HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v570.2 $50 GOAL</title><style>
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v570.3 EARLY SHARK</title><style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:monospace}
 body{background:#0a0a0a;color:#00FF88}
 .top{padding:8px 10px;display:flex;justify-content:space-between;border-bottom:2px solid #00FF88;background:#000}
@@ -345,21 +288,21 @@ button{border:none;padding:10px;width:100%;font-weight:900;cursor:pointer;font-s
 button.scan{background:linear-gradient(90deg,#00FF88,#FF00FF);color:#000}
 button.clear{background:#FF0040;color:#fff}
 </style></head><body>
-<div class="top"><div><b>VENUS v570.2 SHARK FOOTPRINT - $50/DAY GOAL - 10 STABLE + 5 MEME - TP 1.0% SL 0.50% + WHALE 12% SL 8%</b> <span style="color:#888;font-size:7px">GOAL $50 STOP $10 LOSS - 1 CMD</span></div><div style="font-size:8px;color:#00FF88" id="time"></div></div>
+<div class="top"><div><b>VENUS v570.3 SHARK EARLY - $50/DAY GOAL - VOL $800 - BRINGS BACK $12/$25 SHARK</b> <span style="color:#888;font-size:7px">EARLY CATCH - 1 CMD</span></div><div style="font-size:8px;color:#00FF88" id="time"></div></div>
 <div class="grid">
 <div class="card"><small>FUND REAL COVERS FEE + PROFIT 15 - SINGLE KEY</small><b id="cap" class="green">$1000</b><small class="green" id="capSub">COVERS FEE - 1 CMD</small></div>
-<div class="card"><small>OPEN 15/15 STABLE 10 WHALE 5 - LOW CMD MODE</small><b id="open" class="green">0/15</b><small class="green" id="wr">COVERS FEE - KV OK</small></div>
+<div class="card"><small>OPEN 15/15 STABLE 10 WHALE 5 - EARLY SHARK MODE</small><b id="open" class="green">0/15</b><small class="green" id="wr">COVERS FEE - KV OK</small></div>
 <div class="card"><small>DAILY GROSS - FEE = NET COVERS FEE - GOAL $50</small><b id="daily" class="green">+$0.00</b><small id="dailySub" style="color:#666">COVERS FEE</small></div>
-<div class="card"><small>PERFORMANCE - GOAL $50/DAY - STOP LOSS $10</small><b id="wl">0W / 0L</b><small class="green" id="wlSub">COVERS FEE + PROFIT</small></div>
+<div class="card"><small>PERFORMANCE - EARLY SHARK $12/$25 MODE</small><b id="wl">0W / 0L</b><small class="green" id="wlSub">COVERS FEE + PROFIT</small></div>
 </div>
-<div style="padding:4px;background:#1a001a;border-bottom:2px solid #FF00FF"><div style="font-size:7px;color:#FF00FF">TOP 8 WHALE MEME DETECTED - SHARK FOOTPRINT - 3000% POTENTIAL - FDV $60k-700k LIQ $12k-120k VOL M5 $2k+ - GOAL $50</div><div id="whalelist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
+<div style="padding:4px;background:#1a001a;border-bottom:2px solid #FF00FF"><div style="font-size:7px;color:#FF00FF">TOP 10 WHALE MEME DETECTED - EARLY SHARK FOOTPRINT - VOL $800+ - BRINGS BACK $12/$25 WIN - GOAL $50</div><div id="whalelist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
 <div style="padding:4px;background:#001a0a;border-bottom:1px solid #00FF88"><div style="font-size:7px;color:#00FF88">TOP 12 LONG PUMP 0.80-2.2% OPPOSITE FILTER - COVERS FEE - TP 1.0% GROSS $0.30 FEE $0.06 NET +$0.24 - SHARK LONG</div><div id="pumplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
 <div style="padding:4px;background:#1a0a00;border-bottom:1px solid #FF8800"><div style="font-size:7px;color:#FF8800">TOP 6 SHORT TOP +2.2%+ OPPOSITE - COVERS FEE - TP 1.0% NET +$0.24 - SHARK SHORT</div><div id="toplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
 <div style="padding:4px;background:#1a000a;border-bottom:1px solid #FF0040"><div style="font-size:7px;color:#FF0040">TOP 15 SHORT DUMP -0.80% to -3.0% OPPOSITE LEARNED - COVERS FEE - TP 1.0% NET +$0.24 - SHARK SHORT</div><div id="dumplist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
-<div id="openwrap"><div style="display:grid;grid-template-columns:1fr 50px 65px 110px 45px 30px;padding:4px 5px;font-size:6px;color:#666;background:#111"><span>15 TRADES 10 STABLE +5 WHALE COVERS FEE - SHARK FOOTPRINT</span><span>SIDE</span><span>ENTRY FEE COVERS</span><span>TICK FEE DEDUCTED COVERS FEE + TP/SL NET COVERS</span><span>TP/SL NET COVERS</span><span>AGE</span></div><div id="openlist"></div></div>
-<button class="scan" onclick="tick()">SCAN SHARK FOOTPRINT - $50 GOAL - 10 STABLE TP 1.0% SL 0.50% + 5 WHALE 12% TP 8% SL - 1 CMD</button>
+<div id="openwrap"><div style="display:grid;grid-template-columns:1fr 50px 65px 110px 45px 30px;padding:4px 5px;font-size:6px;color:#666;background:#111"><span>15 TRADES 10 STABLE +5 WHALE COVERS FEE - EARLY SHARK</span><span>SIDE</span><span>ENTRY FEE COVERS</span><span>TICK FEE DEDUCTED COVERS FEE + TP/SL NET COVERS</span><span>TP/SL NET COVERS</span><span>AGE</span></div><div id="openlist"></div></div>
+<button class="scan" onclick="tick()">SCAN EARLY SHARK - $50 GOAL - BRINGS BACK $12/$25 TYPE - VOL $800 - 1 CMD</button>
 <button class="clear" onclick="clearFake()">CLEAR - START CLEAN 15 TRADES - KEEPS LEARN - 1 CMD</button>
-<div style="padding:4px;background:#000"><div style="font-size:8px;color:#00FF88;margin-bottom:3px">CLOSED LAST 30 - WHALE + STABLE - GOAL $50 MODE</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SYMBOL</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SIDE</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">NET / GROSS / FEE COVERS</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">REASON - SHARK FOOTPRINT - 1 CMD</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">FEE</th></tr></thead><tbody id="closed"></tbody></table></div>
+<div style="padding:4px;background:#000"><div style="font-size:8px;color:#00FF88;margin-bottom:3px">CLOSED LAST 30 - WHALE + STABLE - EARLY SHARK $50 MODE</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SYMBOL</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SIDE</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">NET / GROSS / FEE COVERS</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">REASON - EARLY SHARK - 1 CMD</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">FEE</th></tr></thead><tbody id="closed"></tbody></table></div>
 <script>
 function fmtPrice(p){ if(p==null||isNaN(p)) return '$0'; if(p>=1000) return '$'+Number(p).toFixed(2); if(p>=1) return '$'+Number(p).toFixed(4); if(p>=0.01) return '$'+Number(p).toFixed(6); return '$'+Number(p).toFixed(8); }
 async function load(){
@@ -369,16 +312,16 @@ async function load(){
  document.getElementById('capSub').innerText='1 CMD MODE GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' BTC '+Number(j.btc1h||0).toFixed(2)+'%';
  document.getElementById('open').innerText=(j.open_trades||[]).length+'/15 STABLE '+(j.open_trades||[]).filter(x=>!x.is_meme).length+'/10 WHALE '+(j.open_trades||[]).filter(x=>x.is_meme).length+'/5';
  let wr=j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0;
- document.getElementById('wr').innerText='WR '+wr+'% '+j.wins+'W/'+j.losses+'L BTC '+Number(j.btc1h||0).toFixed(2)+'% KV '+(j.kv||'1 CMD')+' - SHARK GOAL $50';
+ document.getElementById('wr').innerText='WR '+wr+'% '+j.wins+'W/'+j.losses+'L BTC '+Number(j.btc1h||0).toFixed(2)+'% KV '+(j.kv||'1 CMD')+' - EARLY $12/$25';
  document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+Number(j.daily||0).toFixed(3);
  document.getElementById('daily').style.color=(j.daily||0)>=0?'#00FF88':'#FF0040';
  document.getElementById('dailySub').innerText='1 CMD GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' GOAL $50 BTC '+Number(j.btc1h||0).toFixed(2)+'%';
  document.getElementById('wl').innerHTML=j.wins+'W / '+j.losses+'L';
- document.getElementById('wlSub').innerText='WR '+wr+'% - TP 1.0% SL 0.50% + WHALE 12% SL 8% BTC '+Number(j.btc1h||0).toFixed(2)+'% GOAL $50/DAY';
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' NET $'+Number(j.daily||0).toFixed(3)+' GOAL $50 BTC $'+Number(j.btc||0).toFixed(0)+' 1H '+Number(j.btc1h||0).toFixed(2)+'% SHARK';
+ document.getElementById('wlSub').innerText='WR '+wr+'% - TP 1.0% SL 0.50% + WHALE 12% SL 8% BTC '+Number(j.btc1h||0).toFixed(2)+'% EARLY $12/$25';
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' NET $'+Number(j.daily||0).toFixed(3)+' GOAL $50 BTC $'+Number(j.btc||0).toFixed(0)+' 1H '+Number(j.btc1h||0).toFixed(2)+'% EARLY';
  let wl=document.getElementById('whalelist'); wl.innerHTML='';
  (j.whale||[]).forEach((m,i)=>{ wl.innerHTML+=`<div style="border:1px solid #FF00FF;padding:2px 4px;font-size:7px;color:#FF00FF">#${i+1} WHALE ${m.symbol} +${Number(m.c1).toFixed(1)}% M5 $${Number(m.price).toFixed(8)}<br><span style="color:#FFD000">WHALE $${Number(m.whale_usd||0).toFixed(0)} ${m.buys_m5} BUYS VOL M5 $${Number(m.vol_m5||0).toFixed(0)} LIQ $${Number(m.liq||0).toFixed(0)} FDV $${Number(m.fdv||0).toFixed(0)} POT 3000%</span></div>`; });
- if((j.whale||[]).length==0) wl.innerHTML='<div style="font-size:7px;color:#666">No whale buys now - SHARK MODE scanning Solana every 30s - GOAL $50</div>';
+ if((j.whale||[]).length==0) wl.innerHTML='<div style="font-size:7px;color:#666">No whale buys now - EARLY SHARK MODE scanning Solana every 30s - VOL $800 - GOAL $50</div>';
  let pl=document.getElementById('pumplist'); pl.innerHTML='';
  (j.pump||[]).forEach((m,i)=>{ pl.innerHTML+=`<div style="border:1px solid #00FF88;padding:2px 4px;font-size:7px;color:#00FF88">#${i+1} LONG ${m.symbol} +${Number(m.c1).toFixed(2)}% ${fmtPrice(m.price)}</div>`; });
  if((j.pump||[]).length==0) pl.innerHTML='<div style="font-size:7px;color:#666">No pump 0.80-2.2% now - waiting shark footprint</div>';
@@ -395,15 +338,15 @@ async function load(){
    let side=t.side||'LONG'; let sideColor=side=='LONG'?'#00FF88':'#FF0040'; if(t.is_meme) sideColor='#FF00FF';
    ol.innerHTML+=`<div style="display:grid;grid-template-columns:1fr 50px 65px 110px 45px 30px;padding:5px;border-bottom:1px solid #111"><span><b style="color:${sideColor}">${t.symbol||''}</b> <small style="color:${t.is_meme?'#FF00FF':'#666'}">${t.is_meme?'WHALE MEME':side}</small></span><span><b style="color:${sideColor};border:1px solid ${sideColor};padding:1px 3px;font-size:7px">${side}</b></span><span>${fmtPrice(t.entry)}<br><small style="color:#666">${fmtPrice(t.last_price)}</small><br><small style="color:#FFD000">$${pos} $${fee.toFixed(3)}</small></span><span style="font-size:6px;color:#888">${(t.reason||'').substring(0,90)}<br><small style="color:#FFD000">NET $${netEst.toFixed(3)} COVERS FEE</small></span><span style="font-size:7px"><span style="color:${sideColor}">TP ${side=='LONG'?'+':''}${target}%</span><br><span style="color:#FF0040">SL ${t.is_meme?'8%':'0.50%'}</span><br><small style="color:#FFD000">NET $${netEst.toFixed(3)} COVERS</small></span><span>${age}s</span></div>`;
  });
- if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#00FF88;padding:10px;font-size:10px">GOAL HIT or No open - SHARK FOOTPRINT - $50/DAY MODE - 1 CMD</div>';
+ if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#00FF88;padding:10px;font-size:10px">GOAL HIT or No open - EARLY SHARK - $50/DAY MODE - 1 CMD</div>';
  let cb=document.getElementById('closed');cb.innerHTML='';
  (j.closed||[]).slice(-30).reverse().forEach(c=>{
    let col=c.net>=0.02?'#00FF88':'#FF0040'; let side=c.side||'LONG'; let sideColor=c.is_meme?'#FF00FF':(side=='SHORT'?'#FF0040':'#00FF88');
    cb.innerHTML+=`<tr><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:#00FF88"><b style="color:${sideColor}">${c.symbol||''}</b><br><small style="color:${sideColor}">${side}${c.is_meme?' WHALE':''}</small></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px"><b style="color:${sideColor};border:1px solid ${sideColor};padding:1px 3px;font-size:7px">${side}</b></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:${col}">${c.net>=0?'+':''}$${Number(c.net).toFixed(4)}<br><small style="color:#888">GROSS $${Number(c.gross||0).toFixed(4)} ${Number(c.pct||0).toFixed(3)}%</small><br><small style="color:#FFD000">FEE $${Number(c.fee||0).toFixed(4)}</small></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:6px;color:${col}">${(c.reason||'').substring(0,180)}</td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:#FFD000">$${Number(c.fee||0).toFixed(3)}<br><small style="color:${col}">${Number(c.pct||0).toFixed(2)}% ${c.net>=0.02?'COVERS':'NOT COVER'}</small></td></tr>`;
  });
 }
-async function tick(){ document.getElementById('openlist').innerHTML='<div style="text-align:center;color:#FF00FF;padding:10px">Scanning shark - $50 GOAL MODE...</div>'; await fetch('/api/cron'); await load(); }
-async function clearFake(){ if(!confirm('CLEAR - $50 GOAL MODE - KEEPS LEARN?')) return; await fetch('/api/clear_closed_fake'); await load(); }
+async function tick(){ document.getElementById('openlist').innerHTML='<div style="text-align:center;color:#FF00FF;padding:10px">Scanning early shark - $12/$25 TYPE...</div>'; await fetch('/api/cron'); await load(); }
+async function clearFake(){ if(!confirm('CLEAR - EARLY SHARK $50 GOAL - KEEPS LEARN?')) return; await fetch('/api/clear_closed_fake'); await load(); }
 setInterval(load,8000);load();
 </script></body></html>
 """
@@ -415,7 +358,7 @@ def state():
     try: do_tick_10_fee()
     except Exception as e: print(f"tick err {e}")
     data=rget_single()
-    return jsonify({"cap":data.get("FUND_CAP",1000),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0),"dg":data.get("FUND_DAILY_GROSS",0),"df":data.get("FUND_DAILY_FEE",0),"pump":data.get("FAST_PUMP",[]),"top":data.get("FAST_TOP",[]),"dump":data.get("FAST_DUMP",[]),"whale":data.get("FAST_WHALE",[]),"btc":data.get("BTC_PRICE",0),"btc1h":data.get("BTC_1H",0),"kv":f"SHARK $50 GOAL - STOP {DAILY_STOP} - 1 CMD"})
+    return jsonify({"cap":data.get("FUND_CAP",1000),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0),"dg":data.get("FUND_DAILY_GROSS",0),"df":data.get("FUND_DAILY_FEE",0),"pump":data.get("FAST_PUMP",[]),"top":data.get("FAST_TOP",[]),"dump":data.get("FAST_DUMP",[]),"whale":data.get("FAST_WHALE",[]),"btc":data.get("BTC_PRICE",0),"btc1h":data.get("BTC_1H",0),"kv":f"EARLY SHARK $50 GOAL - VOL $800 - BRINGS $12/$25"})
 @app.route("/api/cron")
 def cron():
     return jsonify(do_tick_10_fee())
@@ -426,4 +369,4 @@ def clear_closed_fake():
     rset_single(data)
     data["_last_save"]=0
     rset_single(data)
-    return jsonify({"cleared":True,"msg":"Cleared v570.2 $50 GOAL"})
+    return jsonify({"cleared":True,"msg":"Cleared v570.3 EARLY SHARK"})
