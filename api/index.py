@@ -89,7 +89,7 @@ def scan_positive():
             seen.add(addr)
             fdv=float(p.get('fdv',0) or 0); liq=float(p.get('liquidity',{}).get('usd',0) or 0); price=float(p.get('priceUsd',0) or 0)
             if price==0: continue
-            if not (25000 <= liq <= 600000): continue
+            if not (25000 <= liq <= 700000): continue
             if not (100000 <= fdv <= 9000000): continue
             vol_m5=float(p.get('volume',{}).get('m5',0) or 0); ch_m5=float(p.get('priceChange',{}).get('m5',0) or 0); ch_h1=float(p.get('priceChange',{}).get('h1',0) or 0)
             txns=p.get('txns',{}); buys=int(txns.get('m5',{}).get('buys',0) or 0); sells=int(txns.get('m5',{}).get('sells',0) or 0); buys_h1=int(txns.get('h1',{}).get('buys',0) or 0)
