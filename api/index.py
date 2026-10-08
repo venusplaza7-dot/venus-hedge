@@ -4,19 +4,17 @@ app = Flask(__name__)
 
 UP_URL = (os.getenv("KV_REST_API_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
 UP_TOKEN = os.getenv("KV_REST_API_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or ""
-SINGLE_KEY = "VENUS_V602_BEST_DAY_TIME" # KEEP YOUR WINNING $1001.03 +$1.031 - NOT v603 $979
+SINGLE_KEY = "VENUS_V607_15COIN_ROTATE"
 DAILY_GOAL = 100.0
-DAILY_STOP = -20.0
+DAILY_STOP = -15.0
 CACHE = {"data": None, "ts": 0}
 
-def rget_single():
+def rget():
     global CACHE
     now=time.time()
-    if CACHE["data"] and now - CACHE["ts"] < 8:
-        return CACHE["data"]
+    if CACHE["data"] and now - CACHE["ts"] < 7: return CACHE["data"]
     try:
-        if not UP_URL or not UP_TOKEN:
-            return CACHE["data"] or {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"LEARN_STATS":{},"LAST_LOSS_TIME":{},"LAST_LOSS_PEAK":{},"FAST_WHALE":[],"FAST_LAST":0}
+        if not UP_URL or not UP_TOKEN: return {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"LEARN_STATS":{},"LAST_LOSS_TIME":{},"LAST_LOSS_PEAK":{},"BLACKLIST":{},"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[]}
         r=requests.get(f"{UP_URL}/get/{SINGLE_KEY}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, timeout=5)
         v=r.json().get("result")
         if v:
@@ -24,34 +22,35 @@ def rget_single():
             CACHE["data"]=data; CACHE["ts"]=now
             return data
     except: pass
-    return CACHE["data"] or {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"LEARN_STATS":{},"LAST_LOSS_TIME":{},"LAST_LOSS_PEAK":{},"FAST_WHALE":[],"FAST_LAST":0}
+    return CACHE["data"] or {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"LEARN_STATS":{},"LAST_LOSS_TIME":{},"LAST_LOSS_PEAK":{},"BLACKLIST":{},"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[]}
 
-def rset_single(data):
+def rset(data):
     global CACHE
     CACHE["data"]=data; CACHE["ts"]=time.time()
     try:
         if not UP_URL or not UP_TOKEN: return
         last=float(data.get("_last_save",0) or 0)
-        if time.time()-last < 4: return
+        if time.time()-last < 3: return
         data["_last_save"]=time.time()
         requests.post(f"{UP_URL}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, json=["SET", SINGLE_KEY, json.dumps(data)], timeout=5)
     except: pass
 
-def get_best():
+def scan_big_volume_market():
     whales=[]; all_pairs=[]
     try:
-        for q in ["BONK","WIF","POPCAT","MEW","BOME","WEN","JUP","RAY","MISTAKE","SWORDCAT","FRANK","GARY","SWORDOWL"]:
+        # SCAN BIG VOLUME MARKET - 15 COINS AT A TIME
+        for q in ["SOL","BONK","WIF","POPCAT","MEW","BOME","WEN","JUP","RAY","PYTH","JTO","BODEN","TRUMP","PEPE","MUMU","SLERF","MISTAKE","SWORDCAT","FRANK","SWORDOWL"]:
             try:
                 r=requests.get(f"https://api.dexscreener.com/latest/dex/search/?q={q}", timeout=5).json()
                 if r.get('pairs'):
-                    for p in r['pairs'][:3]:
+                    for p in r['pairs'][:4]:
                         if p.get('chainId')=='solana': all_pairs.append(p)
             except: pass
         for url in ["https://api.dexscreener.com/token-boosts/top/v1","https://api.dexscreener.com/token-boosts/latest/v1"]:
             try:
                 r=requests.get(url, timeout=6).json()
                 if isinstance(r,list):
-                    for it in r[:70]:
+                    for it in r[:80]:
                         if it.get('chainId')=='solana':
                             tk=it.get('tokenAddress')
                             if tk:
@@ -59,47 +58,51 @@ def get_best():
                                 if pr.get('pairs'): all_pairs.extend(pr['pairs'][:1])
             except: pass
     except: pass
-    seen=set(); data=CACHE["data"] or {}; learn=data.get("LEARN_STATS",{}) if isinstance(data, dict) else {}; last_loss=data.get("LAST_LOSS_TIME",{}) if isinstance(data, dict) else {}; last_peak=data.get("LAST_LOSS_PEAK",{}) if isinstance(data, dict) else {}
+    seen=set(); data=CACHE["data"] or {}; learn=data.get("LEARN_STATS",{}); last_loss=data.get("LAST_LOSS_TIME",{}); last_peak=data.get("LAST_LOSS_PEAK",{}); blacklist=data.get("BLACKLIST",{})
     now=time.time()
     for p in all_pairs:
         try:
             if p.get('chainId')!='solana': continue
             base=p.get('baseToken',{}).get('symbol','').upper()
             if base in ['SOL','USDC','USDT','WETH','WBTC','WSOL']: continue
-            if base in last_loss and now - float(last_loss.get(base,0) or 0) < 180: continue # 180s block - fix FRANK 28L
+            if base in blacklist and now - float(blacklist.get(base,0) or 0) < 1800: continue
+            if base in last_loss and now - float(last_loss.get(base,0) or 0) < 300: continue
+            lp=float(last_peak.get(base,10) or 10)
+            if lp==0.0: continue
+            if lp>15 and base in last_loss and now - float(last_loss.get(base,0) or 0) < 600: continue
             addr=p.get('pairAddress')
             if not addr or addr in seen: continue
             seen.add(addr)
             fdv=float(p.get('fdv',0) or 0); liq=float(p.get('liquidity',{}).get('usd',0) or 0); price=float(p.get('priceUsd',0) or 0)
             if price==0: continue
-            if not (50000 <= liq <= 350000): continue
-            if not (200000 <= fdv <= 6000000): continue
+            if not (60000 <= liq <= 400000): continue
+            if not (250000 <= fdv <= 6000000): continue
             vol_m5=float(p.get('volume',{}).get('m5',0) or 0); ch_m5=float(p.get('priceChange',{}).get('m5',0) or 0); ch_h1=float(p.get('priceChange',{}).get('h1',0) or 0); ch_24=float(p.get('priceChange',{}).get('h24',0) or 0)
             txns=p.get('txns',{}); buys=int(txns.get('m5',{}).get('buys',0) or 0); sells=int(txns.get('m5',{}).get('sells',0) or 0); buys_h1=int(txns.get('h1',{}).get('buys',0) or 0)
-            if vol_m5 < 1200: continue
-            if buys < 25: continue
-            if ch_m5 < 1.0 or ch_m5 > 12: continue # FIX: 1-12% not 0.8-25% - avoid GARY 24.74% top
-            if ch_h1 < -2 or ch_h1 > 50: continue # FIX: allow -2 to +50 H1, but prefer +1-40% - blocks H1 -7.31% strong down but allows -2.26% bounce like your winner
-            if ch_24 < -75: continue
-            if buys_h1 < 50: continue
+            # BIG VOLUME FILTER - ALWAYS SOMETHING TRADING BIG VOLUME
+            if vol_m5 < 1800: continue # BIG VOLUME $1800+ not $543 like EGGU
+            if buys < 35: continue # BIG BUYS 35+ not 7 like ZSHIB
+            if ch_m5 < 1.2 or ch_m5 > 8.0: continue # 1.2-8% EARLY - NOT GARY 24% TOP, NOT -2.83% DUMP
+            if ch_h1 < 2 or ch_h1 > 45: continue # H1 +2-45% TREND - NOT 151% TOP, NOT -7% DUMP - LEARNS
+            if ch_24 < -65: continue
+            if buys_h1 < 70: continue # SUSTAINED BIG VOLUME H1 70+ BUYS
             ratio = buys / max(1,sells)
-            if ratio < 1.3: continue
+            if ratio < 1.5: continue
             v_l = vol_m5 / max(1,liq) * 100
-            if not (0.8 <= v_l <= 18): continue
-            lp=float(last_peak.get(base,10) or 10)
-            if lp==0.0: continue # skip GARY 28.9% PEAK 0.0% bug
-            if lp>15 and now - float(last_loss.get(base,0) or 0) < 300: continue
-            score = ch_m5 * buys * v_l * 0.6 + vol_m5*0.12
-            if 2 <= ch_m5 <= 6: score*=2.5 # BEST ENTRY 2-6% like FRANK 5.58%
-            if ch_h1>1 and ch_h1<25: score*=1.8
+            if not (1.0 <= v_l <= 13): continue
             st=learn.get(base,{'w':0,'l':0})
-            if st.get('w',0)>st.get('l',0): score*=5.5
-            if st.get('l',0)>=3: score*=0.2
-            if buys>=80 and sells>=60 and buys/sells < 1.2: continue
-            whales.append({"prod":f"{base}-USD","symbol":base[:12],"price":price,"c1":ch_m5,"ch1":ch_h1,"cg_id":addr,"fdv":fdv,"liq":liq,"vol_m5":vol_m5,"buys_m5":buys,"sells_m5":sells,"buys_h1":buys_h1,"score":score,"tier":"BEST DAY","wins":st.get('w',0),"ratio":ratio,"vl":v_l})
+            if st.get('l',0)>=3: continue
+            if st.get('l',0)>=2: continue
+            score = ch_m5 * buys * v_l * 0.8 + vol_m5*0.18 # BIG VOLUME SCORE
+            if 1.8 <= ch_m5 <= 5.5: score*=3.2 # SWEET 1.8-5.5% LIKE FRANK 5.58% WINNER 6.5%
+            if 4 <= ch_h1 <= 30: score*=2.3
+            if st.get('w',0)>0: score*=6.5
+            if buys>=90: score*=1.5
+            if vol_m5>=5000: score*=1.3 # BIG VOLUME BOOST
+            whales.append({"prod":f"{base}-USD","symbol":base[:12],"price":price,"c1":ch_m5,"ch1":ch_h1,"cg_id":addr,"fdv":fdv,"liq":liq,"vol_m5":vol_m5,"buys_m5":buys,"sells_m5":sells,"buys_h1":buys_h1,"score":score,"tier":"BIG VOL 15","wins":st.get('w',0),"losses":st.get('l',0),"ratio":ratio,"vl":v_l})
         except: continue
     whales.sort(key=lambda x: x['score'], reverse=True)
-    return whales[:20]
+    return whales[:30] # SCAN 30, PICK TOP 15
 
 def get_price(cg_id,last=0):
     try:
@@ -108,24 +111,43 @@ def get_price(cg_id,last=0):
             pair=r.get('pair')
             if pair and pair.get('priceUsd'):
                 p=float(pair['priceUsd'])
-                if p>0: return p,"DEX"
+                if p>0 and last>0 and abs(p-last)/last*100 < 35:
+                    return p,"DEX"
+                elif p>0 and last==0:
+                    return p,"DEX"
     except: pass
     return last,"LAST"
 
 def do_tick():
-    data=rget_single()
+    data=rget()
     cap=float(data.get("FUND_CAP") or 1000.0); open_t=data.get("FUND_OPEN") or []; closed=data.get("FUND_CLOSED") or []
     wins=data.get("FUND_WINS") or 0; losses=data.get("FUND_LOSSES") or 0
     daily=float(data.get("FUND_DAILY_PNL") or 0); dg=float(data.get("FUND_DAILY_GROSS") or 0); df=float(data.get("FUND_DAILY_FEE") or 0)
-    learn=data.get("LEARN_STATS") or {}; last_loss=data.get("LAST_LOSS_TIME") or {}; last_peak=data.get("LAST_LOSS_PEAK") or {}; fast_whale=data.get("FAST_WHALE") or []
+    learn=data.get("LEARN_STATS") or {}; last_loss=data.get("LAST_LOSS_TIME") or {}; last_peak=data.get("LAST_LOSS_PEAK") or {}; blacklist=data.get("BLACKLIST") or {}; fast_whale=data.get("FAST_WHALE") or []
+    rotate_last=float(data.get("ROTATE_LAST") or 0); rotate_coins=data.get("ROTATE_COINS") or []
     now=time.time()
+    # CONTINUOUSLY SCAN MARKET - EVERY 8s SCAN BIG VOLUME
     if now - float(data.get("FAST_LAST") or 0) > 8:
-        w=get_best()
-        if w: fast_whale=w; data["FAST_WHALE"]=w; data["FAST_LAST"]=now
+        w=scan_big_volume_market()
+        if w:
+            fast_whale=w
+            data["FAST_WHALE"]=w
+            data["FAST_LAST"]=now
+            data["BLACKLIST"]=blacklist
+            # ROTATE LOGIC: STICK WITH 15 COINS FOR 5 MINUTES (300s), THEN LOCATE NEW 15
+            if now - rotate_last > 300 or len(rotate_coins)==0:
+                # 5 MIN PASSED - FIND NEW 15 COINS - REAL NEW MONEY
+                top15 = w[:15]
+                rotate_coins = [{"symbol":x['symbol'],"cg_id":x['cg_id'],"price":x['price'],"c1":x['c1'],"ch1":x['ch1'],"score":x['score']} for x in top15]
+                data["ROTATE_COINS"]=rotate_coins
+                data["ROTATE_LAST"]=now
+                rotate_last=now
     base_pos=20.0
     if cap>=1015: base_pos=22.0
     if cap>=1050: base_pos=28.0
     if cap>=1100: base_pos=38.0
+
+    # STICK WITH 15 COINS FOR 5 MIN - CLOSE LOGIC
     new_open=[]
     for tr in open_t:
         try:
@@ -139,106 +161,135 @@ def do_tick():
                 peak=pct; tr['peak_pct']=peak; tr['hh']=hh
             close=False
             trail=-0.5
-            if hh>=5: trail=-1.3
-            elif hh>=3: trail=-1.0
+            if hh>=6: trail=-1.3
+            elif hh>=4: trail=-1.0
             elif hh>=2: trail=-0.7
-            if age>=300: close=True
-            elif age>=180 and peak<0.8: close=True
-            elif age>=90 and peak<0.3: close=True
-            elif peak>=2.5 and pct <= peak + trail: close=True
-            elif pct<=-2.8: close=True
+            # STICK 5 MIN LOGIC: HOLD 5 MIN MAX, BUT POCKET WINNERS EARLY
+            if age>=300: close=True # 5 MIN STICK DONE - ROTATE TO NEW COIN
+            elif peak>=3.0 and pct <= peak + trail: close=True # WINNER TRAIL - POCKET LIKE FRANK 6.5% HH4 +$1.25
+            elif age>=200 and peak<1.0: close=True # 200s no move cut
+            elif age>=100 and peak<0.4: close=True
+            elif pct<=-2.8: close=True # SL
+            elif age>=65 and pct==0 and peak==0: close=True
             if close:
-                closed.append({"symbol":sym,"prod":tr.get('prod',sym),"side":"LONG","entry":entry,"exit":cur,"pct":pct,"peak":peak,"gross":gross,"fee":fee,"net":net,"reason":f"BEST DAY HH {hh} {pct:.1f}% PEAK {peak:.1f}% SRC {src}","ts":now,"is_meme":False,"pos":pos,"hh":hh})
+                closed.append({"symbol":sym,"prod":tr.get('prod',sym),"side":"LONG","entry":entry,"exit":cur,"pct":pct,"peak":peak,"gross":gross,"fee":fee,"net":net,"reason":f"15COIN ROTATE HH {hh} {pct:.1f}% PEAK {peak:.1f}% AGE {int(age)}s SRC {src}","ts":now,"is_meme":False,"pos":pos,"hh":hh})
                 if len(closed)>500: closed=closed[-500:]
                 if net>=0.15: wins+=1
                 else: losses+=1
-                last_loss[sym]=now+180
+                last_loss[sym]=now+300
                 last_peak[sym]=peak
                 st=learn.get(sym,{'w':0,'l':0}); st['w' if net>=0.15 else 'l']=st.get('w' if net>=0.15 else 'l',0)+1; learn[sym]=st
+                if st.get('l',0)>=3: blacklist[sym]=now
                 daily+=net; dg+=gross; df+=fee; cap+=net
             else:
                 tr['last_price']=cur; new_open.append(tr)
         except: new_open.append(tr)
+
     if daily >= DAILY_GOAL or daily <= DAILY_STOP:
-        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"LEARN_STATS":learn,"LAST_LOSS_TIME":last_loss,"LAST_LOSS_PEAK":last_peak})
-        rset_single(data); return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"kv":f"{'GOAL' if daily>=DAILY_GOAL else 'STOP'} ${daily:.2f} BEST DAY"}
-    cnt=len(new_open); idx=0
+        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"LEARN_STATS":learn,"LAST_LOSS_TIME":last_loss,"LAST_LOSS_PEAK":last_peak,"BLACKLIST":blacklist})
+        rset(data); return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"rotate_last":rotate_last,"kv":f"{'GOAL' if daily>=DAILY_GOAL else 'STOP'} ${daily:.2f} 15COIN ROTATE"}
+
+    # OPEN 5 FROM 15 ROTATING COINS - STICK 5 MIN
+    cnt=len(new_open)
     open_syms=set(x['symbol'] for x in new_open)
     open_ids=set(x['cg_id'] for x in new_open)
-    should_force = (now - float(data.get("FAST_LAST",now) or now) > 60) and len(fast_whale)>=1
-    while cnt<5 and idx<len(fast_whale):
+    # USE ROTATE_COINS (15) AS SOURCE, NOT FAST_WHALE DIRECTLY
+    source_coins = rotate_coins if len(rotate_coins)>=3 else fast_whale[:15]
+    idx=0
+    while cnt<5 and idx<len(source_coins):
         try:
-            m=fast_whale[idx]; idx+=1; sym=m['symbol']
-            if sym in open_syms: continue # NO 5x SAME
-            if m['cg_id'] in open_ids: continue
-            if sym in last_loss and not should_force:
-                if now-float(last_loss.get(sym,0) or 0) < 120: continue
+            m=source_coins[idx]; idx+=1
+            sym=m['symbol'] if isinstance(m,dict) and 'symbol' in m else m.get('symbol')
+            cg_id=m['cg_id'] if isinstance(m,dict) and 'cg_id' in m else m.get('cg_id')
+            if not sym or not cg_id: continue
+            if sym in open_syms: continue
+            if cg_id in open_ids: continue
+            if sym in last_loss: continue
+            if sym in blacklist and now - float(blacklist.get(sym,0) or 0) < 1800: continue
+            # FIND FULL DATA FROM FAST_WHALE
+            full=None
+            for fw in fast_whale:
+                if fw['cg_id']==cg_id:
+                    full=fw; break
+            if not full:
+                # use rotate coin data
+                price=m.get('price',0) if isinstance(m,dict) else 0
+                if price==0: continue
+                full={"prod":f"{sym}-USD","symbol":sym,"price":price,"c1":m.get('c1',0),"ch1":m.get('ch1',0),"cg_id":cg_id,"fdv":0}
             pos=base_pos
-            new_open.append({"symbol":sym,"prod":m['prod'],"entry":m['price'],"ts":now,"side":"LONG","reason":f"BEST DAY {m['tier']} {m['c1']:.1f}% M5 H1 {m['ch1']:.1f}%","target":6.0,"stop":2.8,"last_price":m['price'],"pos":pos,"c1":m['c1'],"cg_id":m['cg_id'],"is_meme":False,"fdv":m['fdv'],"peak_pct":0,"hh":0,"tier":m.get('tier','BEST')})
-            open_syms.add(sym); open_ids.add(m['cg_id']); cnt+=1
+            new_open.append({"symbol":sym,"prod":full['prod'],"entry":full['price'],"ts":now,"side":"LONG","reason":f"15COIN ROTATE {full.get('c1',0):.1f}% M5 H1 {full.get('ch1',0):.1f}% BIG VOL","target":6.0,"stop":2.8,"last_price":full['price'],"pos":pos,"c1":full.get('c1',0),"cg_id":cg_id,"is_meme":False,"fdv":full.get('fdv',0),"peak_pct":0,"hh":0,"tier":"15COIN"})
+            open_syms.add(sym); open_ids.add(cg_id); cnt+=1
         except: continue
-    data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"LEARN_STATS":learn,"LAST_LOSS_TIME":last_loss,"LAST_LOSS_PEAK":last_peak})
-    rset_single(data)
-    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"kv":f"v602 WINNING $1001 +$1.03 FRANK 6.5% HH4 BEST DAY VOL 1200+ BUYS 25+ M5 1-12% H1 -2-50% 20 BEST NO 5x SAME GOAL ${DAILY_GOAL}"}
 
-HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v602 WINNING</title><style>
+    data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"LEARN_STATS":learn,"LAST_LOSS_TIME":last_loss,"LAST_LOSS_PEAK":last_peak,"BLACKLIST":blacklist,"ROTATE_COINS":rotate_coins,"ROTATE_LAST":rotate_last})
+    rset(data)
+    rotate_age = int(now - rotate_last) if rotate_last>0 else 0
+    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"rotate_last":rotate_last,"rotate_age":rotate_age,"kv":f"v607 15COIN ROTATE 5MIN STICK VOL 1800+ BUYS 35+ M5 1.2-8% H1 2-45% 15 COINS 5MIN ROTATE {rotate_age}s/300s GOAL ${DAILY_GOAL}"}
+
+HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v607 15COIN ROTATE</title><style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:monospace}
 body{background:#0a0a0a;color:#00FF88}
-.top{padding:8px 10px;display:flex;justify-content:space-between;border-bottom:2px solid #00FF88;background:#000}
-.top b{color:#00FF88;font-size:6px}
+.top{padding:8px 10px;display:flex;justify-content:space-between;border-bottom:2px solid #FFD000;background:#000}
+.top b{color:#FFD000;font-size:7px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#222}
 .card{background:#000;padding:10px}
 .card small{color:#888;font-size:7px}
 .card b{font-size:18px;display:block;color:#fff}
 button{border:none;padding:10px;width:100%;font-weight:900;cursor:pointer;font-size:10px}
-button.scan{background:linear-gradient(90deg,#00FF88,#FFD000);color:#000}
+button.scan{background:linear-gradient(90deg,#FFD000,#00FF88);color:#000}
 button.clear{background:#FF0040;color:#fff}
+.rot{background:#1a1a00;border:2px solid #FFD000;padding:4px;margin:2px 0}
 </style></head><body>
-<div class="top"><div><b>VENUS v602 WINNING BEST DAY TIME 5 BEST ANY COIN - $1001.03 +$1.031 FRANK 6.5% HH4 WINNER - COMPOUND $20->$42 TRAIL HH -0.5% to -1.3% BUYS 25+ VOL 1200+ M5 1-12% H1 -2-50% R>=1.3 V/L 0.8-18% 20 BEST NO 5x SAME</b></div><div style="font-size:8px;color:#00FF88" id="time"></div></div>
+<div class="top"><div><b>VENUS v607 15 COIN ROTATING SCANNER - ALWAYS BIG VOLUME TRADING - SCAN 15 AT A TIME STICK 5 MIN THEN NEW 15 - REAL NEW MONEY - VOL 1800+ BUYS 35+ M5 1.2-8% H1 2-45% R>=1.5 15 COINS 5MIN ROTATE - LEARNS GARY 151% TOP</b></div><div style="font-size:8px;color:#FFD000" id="time"></div></div>
 <div class="grid">
-<div class="card"><small>FUND COMPOUND WINNING BEST DAY TIME 5 BEST ANY COIN - $1001.03 +$1.031 FRANK 6.5% HH4 WINNER</small><b id="cap" class="green">$1001</b><small class="green" id="capSub">WINNING</small></div>
-<div class="card"><small>OPEN 5/5 WINNING BEST DAY TIME 5 BEST MOVING ANY COIN - NO 5x SAME</small><b id="open" class="green">0/5</b><small class="green" id="wr">WINNING</small></div>
-<div class="card"><small>DAILY NET GOAL $100 STOP -$20 COMPOUND POS</small><b id="daily" class="green">+$0.000</b><small id="dailySub" style="color:#666">WINNING</small></div>
-<div class="card"><small>PERF COMPOUND 5 BEST ANY COIN - FRANK 6.5% HH4 WINNER</small><b id="wl">0W / 0L</b><small class="green" id="wlSub">WINNING</small></div>
+<div class="card"><small>FUND 15 COIN ROTATE - SCAN 15 STICK 5 MIN - REAL NEW MONEY - BIG VOLUME</small><b id="cap" class="green">$1000</b><small class="green" id="capSub">15COIN ROTATE</small></div>
+<div class="card"><small>OPEN 5/5 FROM 15 ROTATING - STICK 5 MIN - NO 5x SAME - BLACKLIST 3L</small><b id="open" class="green">0/5</b><small class="green" id="wr">15COIN ROTATE</small></div>
+<div class="card"><small>DAILY NET GOAL $100 STOP -$15 - 15 COIN ROTATE - REAL NEW MONEY</small><b id="daily" class="green">+$0.000</b><small id="dailySub" style="color:#666">15COIN ROTATE</small></div>
+<div class="card"><small>PERF 15 COIN ROTATE - 5 MIN STICK - BLACKLIST GARY 151% - FRANK 6.5% WINNER</small><b id="wl">0W / 0L</b><small class="green" id="wlSub">15COIN ROTATE</small></div>
 </div>
-<div style="padding:4px;background:#1a001a;border-bottom:2px solid #FFD000"><div style="font-size:7px;color:#FFD000">TOP 20 WINNING BEST DAY TIME 5 BEST MOVING ANY COIN - $20->$42 COMPOUND LOCK $1 at 2.5% TRAIL HH -0.5%/-0.7%/-1.0%/-1.3% LOSS $0.50 TIME 90s/180s/300s - WINNING: 5 BEST MOVING ANY COIN - ANY SYMBOL EXCEPT STABLE LIQ 50k-350k FDV 200k-6M VOL 1200+ BUYS 25+ M5 1-12% H1 -2-50% BUYS H1 50+ R>=1.3 V/L 0.8-18% + WINNER x5.5 - SKIP GARY 24% TOP - BUY 2-6% EARLY - 20 BEST - WINNING $1001 +$1.03 FRANK 6.5% HH4</div><div id="whalelist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
-<div id="openwrap"><div style="display:grid;grid-template-columns:1fr 50px 65px 120px 45px 30px;padding:4px 5px;font-size:6px;color:#666;background:#111"><span>5 TRADES SIDE COMPOUND WINNING BEST DAY TIME 5 BEST MOVING - 5/5 ALWAYS ANY COIN - NO 5x SAME</span><span>SIDE</span><span>ENTRY FEE PEAK HH TICK TP/SL NET PEAK TREND</span><span>TP/SL NET AGE</span><span>AGE</span></div><div id="openlist"></div></div>
-<button class="scan" onclick="tick()">SCAN WINNING BEST DAY TIME 5 BEST MOVING ANY COIN NOT MEME ONLY LOW CPU COMPOUND $20->$42 ANY COIN VOL 1200+ BUYS 25+ M5 1-12% H1 -2-50% - 20 BEST - $100 GOAL -$20 STOP - FEE 0.2% - NO 5x SAME - WINNING $1001 +$1.03 FRANK 6.5% HH4 WINNER - COMPOUND 5 BEST ANY COIN - 5/5 ALWAYS ANY COIN FORCE AFTER 60s FEEL MOVEMENT TRADE BEST WINNING</button>
-<button class="clear" onclick="clearFake()">CLEAR - START CLEAN 5 TRADES COMPOUND WINNING BEST DAY TIME 5 BEST - KEEPS LEARN - FEE 0.2% TP 6% SL 2.8% 8s WIN 35s LOSS TREND HH COMPOUND 5 BEST ANY COIN LOW CPU - WINNING $1001 +$1.03</button>
-<div style="padding:4px;background:#000"><div style="font-size:8px;color:#00FF88;margin-bottom:3px">CLOSED LAST 50 - COMPOUND WINNING BEST DAY TIME 5 BEST MOVING ANY COIN LOCK $1 at 2.5% TRAIL HH -0.5%/-1.3% LOSS $0.50 - $100 GOAL - WINNING $1001 +$1.03 FRANK 6.5% HH4 WINNER - COMPOUND 5 BEST ANY COIN x5 ANY COIN NOT MEME ONLY - WINNING</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SYMBOL</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SIDE</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">NET / GROSS / FEE PEAK HH TREND</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">REASON</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">FEE</th></tr></thead><tbody id="closed"></tbody></table></div>
+<div class="rot"><div style="font-size:8px;color:#FFD000">ROTATING 15 COINS - STICK 5 MINUTES - CURRENT 15 - <span id="rotateInfo">0s/300s</span> - REAL NEW MONEY - CONTINUOUSLY SCAN BIG VOLUME MARKET</div><div id="rotatelist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
+<div style="padding:4px;background:#1a001a;border-bottom:2px solid #00FF88"><div style="font-size:7px;color:#00FF88">TOP 30 BIG VOLUME MARKET - ALWAYS SOMETHING TRADING BIG VOLUME - VOL 1800+ BUYS 35+ M5 1.2-8% H1 2-45% BUYS H1 70+ R>=1.5 V/L 1-13% + WINNER x6.5 + BIG VOL x1.3 - 15 COINS AT A TIME - STICK 5 MIN - THEN NEW 15 - REAL NEW MONEY - SCAN 30 PICK 15 - CONTINUOUS SCAN 8s - ROTATE 300s - LEARNS FROM MISTAKES</div><div id="whalelist" style="display:flex;flex-wrap:wrap;gap:2px;margin-top:2px"></div></div>
+<div id="openwrap"><div style="display:grid;grid-template-columns:1fr 50px 65px 120px 45px 30px;padding:4px 5px;font-size:6px;color:#666;background:#111"><span>5 TRADES FROM 15 ROTATING - STICK 5 MIN - REAL NEW MONEY - NO 5x SAME</span><span>SIDE</span><span>ENTRY PEAK HH TRAIL NET</span><span>TP/SL NET AGE</span><span>AGE</span></div><div id="openlist"></div></div>
+<button class="scan" onclick="tick()">SCAN 15 COIN ROTATE - ALWAYS BIG VOLUME - SCAN 15 AT A TIME STICK 5 MIN THEN NEW 15 - VOL 1800+ BUYS 35+ M5 1.2-8% H1 2-45% - 15 COINS - 5MIN ROTATE - $100 GOAL -$15 STOP - REAL NEW MONEY - CONTINUOUS SCAN MARKET - 15 AT A TIME - 5 MIN STICK - THEN NEW COIN - FEEL MOVEMENT TRADE BIG VOLUME</button>
+<button class="clear" onclick="clearFake()">CLEAR - START CLEAN 15 COIN ROTATE - KEEPS LEARN + BLACKLIST + ROTATE - FEE 0.2% TP 6% SL 2.8% 15 COINS 5 MIN STICK REAL NEW MONEY</button>
+<div style="padding:4px;background:#000"><div style="font-size:8px;color:#FFD000;margin-bottom:3px">CLOSED LAST 50 - 15 COIN ROTATE - STICK 5 MIN - REAL NEW MONEY - 15 AT A TIME - 5 MIN ROTATE - ALWAYS BIG VOLUME - LEARNS GARY 151% TOP</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SYMBOL</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">SIDE</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">NET / GROSS / PEAK HH TREND AGE</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">REASON</th><th style="font-size:6px;color:#666;text-align:left;padding:3px;border-bottom:1px solid #222">FEE</th></tr></thead><tbody id="closed"></tbody></table></div>
 <script>
 function fmtPrice(p){ if(p==null||isNaN(p)) return '$0'; if(p>=1000) return '$'+Number(p).toFixed(2); if(p>=1) return '$'+Number(p).toFixed(4); if(p>=0.01) return '$'+Number(p).toFixed(6); return '$'+Number(p).toFixed(8); }
 async function load(){
  try{ await fetch('/api/cron'); }catch(e){}
  let r=await fetch('/api/state');let j=await r.json();
  document.getElementById('cap').innerText='$'+Number(j.cap||1000).toFixed(2)+' POS $'+(j.open_trades&&j.open_trades[0]?Number(j.open_trades[0].pos||20).toFixed(2):'20');
- document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' WINNING BEST DAY TIME FRANK 6.5% HH4';
- document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 WINNING BEST DAY TIME 5 BEST ANY COIN VOL 1200+ BUYS 25+ M5 1-12% H1 -2-50% FEE $0.040 TP 6% SL 2.8% TRAIL HH 5/5 ALWAYS NO 5x SAME';
+ document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' 15COIN ROTATE '+j.rotate_coins.length+' COINS '+j.rotate_age+'s/300s';
+ document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 FROM 15 ROTATE '+j.rotate_coins.length+' COINS '+j.rotate_age+'s/300s VOL 1800+ BUYS 35+ M5 1.2-8% H1 2-45% FEE $0.040 TP 6% SL 2.8% TRAIL HH';
  let wr=j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0;
- document.getElementById('wr').innerText='WR '+wr+'% '+j.wins+'W/'+j.losses+'L KV '+(j.kv||'1 CMD')+' WINNING BEST DAY TIME $1001 +$1.03 FRANK 6.5% HH4';
+ document.getElementById('wr').innerText='WR '+wr+'% '+j.wins+'W/'+j.losses+'L KV '+(j.kv||'1 CMD')+' 15COIN ROTATE '+j.rotate_age+'s/300s BIG VOLUME REAL NEW MONEY';
  document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+Number(j.daily||0).toFixed(3);
- document.getElementById('daily').style.color=(j.daily||0)>=0?'#00FF88':'#FF0040';
- document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' GOAL $100 STOP -$20 POS $'+(j.open_trades&&j.open_trades[0]?Number(j.open_trades[0].pos||20).toFixed(2):'20')+' WINNING BEST DAY TIME FRANK 6.5% HH4';
+ document.getElementById('daily').style.color=(j.daily||0)>=0?'#FFD000':'#FF0040';
+ document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' GOAL $100 STOP -$15 POS $'+(j.open_trades&&j.open_trades[0]?Number(j.open_trades[0].pos||20).toFixed(2):'20')+' 15COIN ROTATE '+j.rotate_age+'s/300s';
  document.getElementById('wl').innerHTML=j.wins+'W / '+j.losses+'L';
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' NET $'+Number(j.daily||0).toFixed(3)+' POS $'+(j.open_trades&&j.open_trades[0]?Number(j.open_trades[0].pos||20).toFixed(2):'20')+' WINNING BEST DAY TIME $1001 +$1.03 FRANK 6.5% HH4 WINNER';
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' NET $'+Number(j.daily||0).toFixed(3)+' POS $'+(j.open_trades&&j.open_trades[0]?Number(j.open_trades[0].pos||20).toFixed(2):'20')+' 15COIN ROTATE '+j.rotate_age+'s/300s '+j.rotate_coins.length+' COINS';
+ document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s - '+j.rotate_coins.length+' COINS - NEXT ROTATE IN '+(300-j.rotate_age)+'s - REAL NEW MONEY';
+ let rl=document.getElementById('rotatelist'); rl.innerHTML='';
+ (j.rotate_coins||[]).forEach((m,i)=>{ rl.innerHTML+=`<div style="border:1px solid #FFD000;padding:2px 4px;font-size:7px;color:#FFD000">#${i+1} ${m.symbol} ${Number(m.c1||0).toFixed(2)}% M5 H1 ${Number(m.ch1||0).toFixed(2)}% $${Number(m.price||0).toFixed(8)}<br><span style="color:#00FF88">15COIN ROTATE ${m.score?Number(m.score).toFixed(0):''} STICK ${j.rotate_age}s</span></div>`; });
+ if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:7px;color:#666">Loading 15 COINS ROTATING - SCAN BIG VOLUME MARKET - VOL 1800+ BUYS 35+ M5 1.2-8% H1 2-45% - 15 AT A TIME - STICK 5 MIN - THEN NEW 15 - REAL NEW MONEY...</div>';
  let wl=document.getElementById('whalelist'); wl.innerHTML='';
- (j.whale||[]).forEach((m,i)=>{ wl.innerHTML+=`<div style="border:1px solid ${m.wins>0?'#FFD000':'#00FF88'};padding:2px 4px;font-size:7px;color:${m.wins>0?'#FFD000':'#00FF88'}">#${i+1} ${m.symbol} ${Number(m.c1||0).toFixed(2)}% M5 H1 ${Number(m.ch1||0).toFixed(2)}% $${Number(m.price||0).toFixed(8)} R ${Number(m.ratio||0).toFixed(1)} V/L ${Number(m.vl||0).toFixed(1)}% VOL $${Number(m.vol_m5||0).toFixed(0)}<br><span style="color:#FFD000">WINNING ${m.buys_m5} BUYS ${m.sells_m5} SELLS BUYS H1 ${m.buys_h1||0} LIQ $${Number(m.liq||0).toFixed(0)} FDV $${Number(m.fdv||0).toFixed(0)} ${m.tier} ${m.wins}W</span></div>`; });
- if((j.whale||[]).length==0) wl.innerHTML='<div style="font-size:7px;color:#666">Scanning WINNING BEST DAY TIME - VOL 1200+ BUYS 25+ M5 1-12% H1 -2-50% BUYS H1 50+ R>=1.3 V/L 0.8-18% + WINNER x5.5 - SKIP GARY 24% TOP - BUY 2-6% EARLY - 20 BEST - WINNING $1001 +$1.03 FRANK 6.5% HH4 WINNER - DAY TIME BEST MOVERS WINNING</div>';
+ (j.whale||[]).slice(0,30).forEach((m,i)=>{ wl.innerHTML+=`<div style="border:1px solid ${m.wins>0?'#FFD000':'#00FF88'};padding:2px 4px;font-size:7px;color:${m.wins>0?'#FFD000':'#00FF88'}">#${i+1} ${m.symbol} ${Number(m.c1||0).toFixed(2)}% M5 H1 ${Number(m.ch1||0).toFixed(2)}% $${Number(m.price||0).toFixed(8)} R ${Number(m.ratio||0).toFixed(1)} V/L ${Number(m.vl||0).toFixed(1)}% VOL $${Number(m.vol_m5||0).toFixed(0)}<br><span style="color:#FFD000">BIG VOL ${m.buys_m5} BUYS ${m.sells_m5} SELLS BUYS H1 ${m.buys_h1||0} LIQ $${Number(m.liq||0).toFixed(0)} FDV $${Number(m.fdv||0).toFixed(0)} ${m.tier} ${m.wins}W/${m.losses||0}L</span></div>`; });
+ if((j.whale||[]).length==0) wl.innerHTML='<div style="font-size:7px;color:#666">Scanning BIG VOLUME MARKET - ALWAYS SOMETHING TRADING BIG VOLUME - VOL 1800+ BUYS 35+ M5 1.2-8% H1 2-45% BUYS H1 70+ R>=1.5 V/L 1-13% + WINNER x6.5 + BIG VOL x1.3 - SCAN 30 PICK 15 - CONTINUOUS SCAN 8s - ROTATE 300s - 15 COINS AT A TIME - STICK 5 MIN - REAL NEW MONEY</div>';
  let ol=document.getElementById('openlist'); ol.innerHTML='';
  (j.open_trades||[]).forEach(t=>{
    let age=Math.floor(Date.now()/1000 - (t.ts||Date.now()/1000));
    let pos=Number(t.pos||20); let fee=pos*0.002; let target=6.0; let netEst=pos*target/100 - fee; let peak=Number(t.peak_pct||0); let hh=Number(t.hh||0);
-   ol.innerHTML+=`<div style="display:grid;grid-template-columns:1fr 50px 65px 120px 45px 30px;padding:5px;border-bottom:1px solid #111"><span><b style="color:#00FF88">${t.symbol||''}</b> <small style="color:#00FF88">$${pos.toFixed(2)} SHARK HH ${hh} WINNING</small></span><span><b style="color:#00FF88;border:1px solid #00FF88;padding:1px 3px;font-size:7px">LONG</b></span><span>${fmtPrice(t.entry)}<br><small style="color:#666">${fmtPrice(t.last_price)}</small><br><small style="color:#FFD000">$${pos.toFixed(2)} $${fee.toFixed(3)} PEAK ${peak.toFixed(1)}% HH ${hh} WINNING</small></span><span style="font-size:6px;color:#888">${(t.reason||'').substring(0,90)}<br><small style="color:#FFD000">NET $${netEst.toFixed(3)} PEAK ${peak.toFixed(1)}% TREND HH ${hh} WINNING</small></span><span style="font-size:7px"><span style="color:#00FF88">TP 6% $${(pos*0.06).toFixed(2)}</span><br><span style="color:#FF0040">SL 2.8% $${(pos*0.028).toFixed(2)}</span><br><small style="color:#FFD000">NET $${netEst.toFixed(2)} PEAK ${peak.toFixed(1)}% HH ${hh} WINNING 5s WINNER</small></span><span>${age}s</span></div>`;
+   ol.innerHTML+=`<div style="display:grid;grid-template-columns:1fr 50px 65px 120px 45px 30px;padding:5px;border-bottom:1px solid #111"><span><b style="color:#FFD000">${t.symbol||''}</b> <small style="color:#00FF88">$${pos.toFixed(2)} HH ${hh} 15COIN ${j.rotate_age}s</small></span><span><b style="color:#00FF88;border:1px solid #00FF88;padding:1px 3px;font-size:7px">LONG</b></span><span>${fmtPrice(t.entry)}<br><small style="color:#666">${fmtPrice(t.last_price)}</small><br><small style="color:#FFD000">$${pos.toFixed(2)} $${fee.toFixed(3)} PEAK ${peak.toFixed(1)}% HH ${hh} 15COIN</small></span><span style="font-size:6px;color:#888">${(t.reason||'').substring(0,90)}<br><small style="color:#FFD000">NET $${netEst.toFixed(3)} PEAK ${peak.toFixed(1)}% HH ${hh} 15COIN ${j.rotate_age}s</small></span><span style="font-size:7px"><span style="color:#00FF88">TP 6% $${(pos*0.06).toFixed(2)}</span><br><span style="color:#FF0040">SL 2.8% $${(pos*0.028).toFixed(2)}</span><br><small style="color:#FFD000">NET $${netEst.toFixed(2)} PEAK ${peak.toFixed(1)}% HH ${hh} 15COIN</small></span><span>${age}s</span></div>`;
  });
- if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#00FF88;padding:10px;font-size:10px">No open - WINNING BEST DAY TIME $1001 +$1.03 FRANK 6.5% HH4 will fill 5/5 ALWAYS - NO 5x SAME - 1 CMD</div>';
+ if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#FFD000;padding:10px;font-size:10px">No open - 15 COIN ROTATE will fill 5/5 FROM 15 - STICK 5 MIN - REAL NEW MONEY - SCAN 15 AT A TIME - 5 MIN STICK - THEN NEW 15 - 1 CMD</div>';
  let cb=document.getElementById('closed');cb.innerHTML='';
  (j.closed||[]).slice(-50).reverse().forEach(c=>{
-   let col=c.net>=0.15?'#00FF88':'#FF0040';
-   cb.innerHTML+=`<tr><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:#00FF88"><b style="color:${c.net>=0.15?'#FFD000':'#FF00FF'}">${c.symbol||''}</b><br><small style="color:${c.net>=0.15?'#FFD000':'#FF00FF'}">LONG $${Number(c.pos||20).toFixed(2)} HH ${Number(c.hh||0)} ${c.net>=0.15?'WINNER WINNING':'LOSER WINNING'}</small></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px"><b style="color:${c.net>=0.15?'#FFD000':'#FF00FF'};border:1px solid ${c.net>=0.15?'#FFD000':'#FF00FF'};padding:1px 3px;font-size:7px">LONG</b></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:${col}">${c.net>=0?'+':''}$${Number(c.net).toFixed(4)}<br><small style="color:#888">GROSS $${Number(c.gross||0).toFixed(4)} ${Number(c.pct||0).toFixed(3)}% PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)}</small><br><small style="color:#FFD000">FEE $${Number(c.fee||0).toFixed(4)} WINNING HH ${Number(c.hh||0)}</small></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:6px;color:${col}">${(c.reason||'').substring(0,200)}</td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:#FFD000">$${Number(c.fee||0).toFixed(3)}<br><small style="color:${col}">${Number(c.pct||0).toFixed(2)}% PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} WINNING</small></td></tr>`;
+   let col=c.net>=0.15?'#FFD000':'#FF0040';
+   cb.innerHTML+=`<tr><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:#FFD000"><b style="color:${c.net>=0.15?'#FFD000':'#FF00FF'}">${c.symbol||''}</b><br><small style="color:${c.net>=0.15?'#FFD000':'#FF00FF'}">LONG $${Number(c.pos||20).toFixed(2)} HH ${Number(c.hh||0)} ${c.net>=0.15?'WINNER 15COIN':'LOSER 15COIN'}</small></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px"><b style="color:${c.net>=0.15?'#FFD000':'#FF00FF'};border:1px solid ${c.net>=0.15?'#FFD000':'#FF00FF'};padding:1px 3px;font-size:7px">LONG</b></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:${col}">${c.net>=0?'+':''}$${Number(c.net).toFixed(4)}<br><small style="color:#888">GROSS $${Number(c.gross||0).toFixed(4)} ${Number(c.pct||0).toFixed(3)}% PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} AGE ${c.reason.match(/AGE (\\d+)s/)?c.reason.match(/AGE (\\d+)s/)[1]:''}s</small><br><small style="color:#FFD000">FEE $${Number(c.fee||0).toFixed(4)} 15COIN HH ${Number(c.hh||0)}</small></td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:6px;color:${col}">${(c.reason||'').substring(0,200)}</td><td style="padding:5px 3px;border-bottom:1px solid #111;font-size:9px;color:#FFD000">$${Number(c.fee||0).toFixed(3)}<br><small style="color:${col}">${Number(c.pct||0).toFixed(2)}% PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} 15COIN</small></td></tr>`;
  });
 }
-async function tick(){ document.getElementById('openlist').innerHTML='<div style="text-align:center;color:#FFD000;padding:10px">Scanning WINNING BEST DAY TIME $1001 +$1.03 FRANK 6.5% HH4 WINNER - FEEL MOVEMENT TRADE BEST WINNING...</div>'; await fetch('/api/cron'); await load(); }
-async function clearFake(){ if(!confirm('CLEAR WINNING BEST DAY TIME - KEEPS LEARN?')) return; await fetch('/api/clear_closed_fake'); await load(); }
+async function tick(){ document.getElementById('openlist').innerHTML='<div style="text-align:center;color:#FFD000;padding:10px">Scanning 15 COIN ROTATE - ALWAYS BIG VOLUME - 15 AT A TIME - STICK 5 MIN - THEN NEW 15 - REAL NEW MONEY - CONTINUOUS SCAN BIG VOLUME MARKET...</div>'; await fetch('/api/cron'); await load(); }
+async function clearFake(){ if(!confirm('CLEAR 15 COIN ROTATE - KEEPS LEARN + BLACKLIST + ROTATE?')) return; await fetch('/api/clear_closed_fake'); await load(); }
 setInterval(load,3000);load();
 </script></body></html>
 """
@@ -251,13 +302,13 @@ def home():
 def state():
     try: do_tick()
     except Exception as e: print(f"tick {e}")
-    data=rget_single()
-    return jsonify({"cap":data.get("FUND_CAP",1000),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0),"dg":data.get("FUND_DAILY_GROSS",0),"df":data.get("FUND_DAILY_FEE",0),"whale":data.get("FAST_WHALE",[]),"kv":f"v602 WINNING $1001.03 +$1.031 FRANK 6.5% HH4 VOL 1200+ BUYS 25+ M5 1-12% H1 -2-50% 20 BEST NO 5x SAME GOAL ${DAILY_GOAL}"})
+    data=rget()
+    return jsonify({"cap":data.get("FUND_CAP",1000),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0),"dg":data.get("FUND_DAILY_GROSS",0),"df":data.get("FUND_DAILY_FEE",0),"whale":data.get("FAST_WHALE",[]),"rotate_coins":data.get("ROTATE_COINS",[]),"rotate_age":int(time.time()-float(data.get("ROTATE_LAST",0) or 0)) if data.get("ROTATE_LAST") else 0,"kv":f"v607 15COIN ROTATE 5MIN STICK VOL 1800+ BUYS 35+ M5 1.2-8% H1 2-45% 15 COINS ROTATE GOAL ${DAILY_GOAL}"})
 @app.route("/api/cron")
 def cron(): return jsonify(do_tick())
 @app.route("/api/clear_closed_fake")
 def clear_closed_fake():
-    data=rget_single()
+    data=rget()
     data["FUND_CLOSED"]=[]; data["FUND_DAILY_PNL"]=0; data["FUND_DAILY_GROSS"]=0; data["FUND_DAILY_FEE"]=0; data["FUND_OPEN"]=[]; data["LAST_LOSS_TIME"]={}; data["LAST_LOSS_PEAK"]={}
-    rset_single(data); data["_last_save"]=0; rset_single(data)
+    rset(data); data["_last_save"]=0; rset(data)
     return jsonify({"cleared":True})
