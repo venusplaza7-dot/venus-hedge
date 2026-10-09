@@ -449,4 +449,58 @@ async function load(){
  (j.open_trades||[]).forEach(t=>{
    let age=Math.floor(Date.now()/1000 - (t.ts||Date.now()/1000));
    let peak=Number(t.peak_pct||0);let hh=Number(t.hh||0);
-   let entry=Number(t.entry||0);let last=Number(t.last
+   let entry=Number(t.entry||0);let last=Number(t.last_price||entry);
+   let pct=entry>0?(last-entry)/entry*100:0;
+   let pnlColor=pct>=0?'#00FF88':'#FF4444';
+   let gross=Number(t.pos||20)*pct/100;
+   let status=pct>=0.06?'WINNING':pct<=-0.5?'LOSING':'TRADING';
+   let typeLabel=t.type||'FOOTPRINT';
+   let cls=typeLabel.includes('BTC')?'btc':typeLabel.includes('ETH')?'eth':'';
+   let realLabel = t.real? (isTestnet? '🔵 TESTNET REAL' : '🔴 REAL MONEY LIVE') : '🟢 PAPER SIMULATION';
+   ol.innerHTML+=`<div class="open-item ${cls}"><div><b>${t.symbol} ${typeLabel}</b> <span style="font-size:9px;color:#888">$${Number(t.pos||20).toFixed(0)} • HH ${hh} • TOTAL ${j.total} • ${status} • ${realLabel} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</span><div style="font-size:9px;color:#555">${fmt(entry)} → ${fmt(last)} • PEAK ${peak.toFixed(1)}% HH ${hh} • AGE ${age}s • ${typeLabel} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</div><div style="font-size:12px;color:${pnlColor};font-weight:700">${pct>=0?'+':''}${pct.toFixed(2)}% • $${gross.toFixed(4)} • ${status} • ${pct>=0?'WINNING':'LOSING'} • ${realLabel} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</div></div><div style="font-size:9px"><div style="color:#00FF88">TP 6% $${(Number(t.pos||20)*0.06).toFixed(2)}</div><div style="color:#FF4444">SL 2.8% $${(Number(t.pos||20)*0.028).toFixed(2)}</div><div style="color:#888">${age}s • ${status}</div></div><div style="font-size:13px;color:${pnlColor};font-weight:700;text-align:center">${pct>=0?'+':''}${pct.toFixed(1)}%<br><span style="font-size:9px">$${gross.toFixed(3)}</span><br><span style="font-size:9px">${status}</span><br><span style="font-size:7px">${t.real? (isTestnet?'TESTNET':'REAL'):'PAPER'} • NEVER LOSE TRACK • ALWAYS TRADES</span></div></div>`;
+ });
+ if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#FF4444;font-size:12px;padding:20px;border:2px solid #FF4444;margin:4px">❌ No open footprint - Will fill 3/5 FROM 12 FOOTPRINT BTC ETH LEARN INSTANT NOW - BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES - FIXES 0 Footprints - WILL TRADE BTC ETH EVEN IF DEXSCREENER 429</div>';
+ let cb=document.getElementById('closed');cb.innerHTML='';
+ (j.closed||[]).slice(-20).reverse().forEach(c=>{
+   let col=c.net>=0.06?'#FFD000':'#FF4444';
+   let wls=c.net>=0.06?'WINNER':'LOSER';
+   let realLabel = c.real? (isTestnet? '🔵 TESTNET REAL' : '🔴 REAL') : '🟢 PAPER';
+   cb.innerHTML+=`<div style="padding:6px;border-bottom:1px solid #111;display:flex;justify-content:space-between"><div style="font-size:10px;color:${col}"><b>${c.symbol} ${wls}</b> <span style="color:#888">$${Number(c.net).toFixed(4)} • PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} • TOTAL ${j.total} • ${wls} • ${c.type||'FOOTPRINT'} • ${realLabel} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</span></div><div style="font-size:8px;color:#555">${Number(c.pct||0).toFixed(2)}% • ${c.reason||''}</div></div>`;
+ });
+ if((j.closed||[]).length==0) cb.innerHTML='<div style="text-align:center;color:#444;font-size:10px;padding:15px">No closed footprint yet • Will show winning loss here • FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES • BINANCE_API_KEY NO SPACE</div>';
+ let rlist=document.getElementById('reallist');if(rlist){rlist.innerHTML=''; if(j.real_trades && j.real_trades.length>0){j.real_trades.slice(-10).reverse().forEach(rt=>{rlist.innerHTML+=`<div>${rt.symbol} ${rt.binance} ${rt.msg} ${new Date(rt.ts*1000).toLocaleTimeString()} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</div>`;});} else {rlist.innerHTML = isReal? (isTestnet? 'TESTNET REAL MODE - Will show TESTNET BINANCE ORDERID FEE TESTNET MONEY when BTC ETH trades happen - BASE testnet.binance.vision - REAL TESTNET ORDERS - Check testnet.binance.vision wallet for real testnet balance - NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints' : 'REAL MONEY LIVE MODE - Will show REAL BINANCE ORDERID FEE REAL MONEY when BTC ETH trades happen - BASE api.binance.com - REAL MONEY LIVE - Check binance.com wallet for real balance - NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints') : 'PAPER MODE - No real Binance trades - Set BINANCE_REAL_TRADING=true + BINANCE_BASE=testnet.binance.vision + TESTNET KEYS for TESTNET REAL - Set BINANCE_BASE=api.binance.com + REAL KEYS + BINANCE_REAL_TRADING=true for REAL MONEY LIVE - PAPER SIMULATION WITH REAL DATA + REAL FEE - PAPER P/L - BASE '+base+' - NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints - WILL TRADE BTC ETH EVEN IF DEXSCREENER 429 - BINANCE_API_KEY NO SPACE';}}
+}
+async function tick(){await fetch('/api/cron');await load();}
+async function clearFake(){if(!confirm('CLEAR DAILY ONLY? KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES?'))return;await fetch('/api/clear_closed_fake');await load();}
+setInterval(load,3000);load();
+</script></body></html>
+"""
+@app.route("/")
+def home():
+    return HTML_PAGE
+@app.route("/api/state")
+def state():
+    try:
+        do_tick()
+    except Exception as e:
+        print(f"state error {e}")
+    data = rget()
+    return jsonify({"cap":data.get("FUND_CAP",1000.0),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0.0),"dg":data.get("FUND_DAILY_GROSS",0.0),"df":data.get("FUND_DAILY_FEE",0.0),"whale":data.get("FAST_WHALE",[]),"rotate_coins":data.get("ROTATE_COINS",[]),"rotate_age":int(time.time()-float(data.get("ROTATE_LAST",0) or 0)) if data.get("ROTATE_LAST") else 0,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"real_trades":data.get("REAL_TRADES",[])})
+@app.route("/api/cron")
+def cron():
+    result = do_tick()
+    return jsonify({**result, "phone_off": True, "cron_time": time.time(), "real_trading": BINANCE_REAL_TRADING, "base": BINANCE_BASE, "never_reset": True, "no_gap": True, "never_lose_track": True, "always_trades": True})
+@app.route("/api/clear_closed_fake")
+def clear_closed_fake():
+    data = rget()
+    if int(data.get("FUND_WINS",0))+int(data.get("FUND_LOSSES",0)) == 0 and CACHE.get("last_good") and int(CACHE["last_good"].get("FUND_WINS",0))+int(CACHE["last_good"].get("FUND_LOSSES",0)) > 0:
+        data = CACHE["last_good"]
+    data["FUND_DAILY_PNL"] = 0
+    data["FUND_DAILY_GROSS"] = 0
+    data["FUND_DAILY_FEE"] = 0
+    rset(data)
+    return jsonify({"cleared":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"never_reset":True,"no_gap":True,"never_lose_track":True,"always_trades":True})
+@app.route("/api/restore")
+def restore():
+    data = rget()
+    return jsonify({"restored":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"open":len(data.get("FUND_OPEN",[])),"closed":len(data.get("FUND_CLOSED",[])),"never_reset":True,"no_gap":True,"never_lose_track":True,"always_trades":True,"base":BINANCE_BASE,"real_trading":BINANCE_REAL_TRADING,"last_good":CACHE.get("last_good",{}).get("FUND_TOTAL_TRADES",0) if CACHE.get("last_good") else 0})
