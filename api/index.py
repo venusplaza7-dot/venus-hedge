@@ -3,11 +3,8 @@ import os, json, requests, time, random
 
 app = Flask(__name__)
 
-# FIX RESET - USE WRITE TOKEN ONLY - KV_REST_API_TOKEN is WRITE, KV_REST_A...LY_TOKEN is READ-ONLY - USE WRITE
 UP_URL = (os.getenv("KV_REST_API_URL") or os.getenv("KV_URL") or "").rstrip("/")
-# REMOVE TRAILING / - YOUR KV_REST_API_URL is https://... - NEED EXACT
 UP_TOKEN = (os.getenv("KV_REST_API_TOKEN") or "").rstrip()
-# FALLBACK TO UPSTASH_REDIS_REST_URL IF KV NOT SET
 if not UP_URL:
     UP_URL = (os.getenv("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
 if not UP_TOKEN:
@@ -30,19 +27,17 @@ def rget():
                 CACHE["ts"] = time.time()
                 CACHE["last_good"] = data
                 return data
-        except Exception as e:
-            print(f"rget error {e}")
+        except:
+            pass
     if CACHE.get("last_good"):
         return CACHE["last_good"]
     if CACHE["data"]:
         return CACHE["data"]
-    # FIRST TIME ONLY - 0W/0L - AFTER THAT NEVER RESET
     return {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0.0,"FUND_DAILY_GROSS":0.0,"FUND_DAILY_FEE":0.0,"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[],"REAL_TRADES":[]}
 
 def rset(data):
     global CACHE
     data["FUND_TOTAL_TRADES"] = int(data.get("FUND_WINS",0)) + int(data.get("FUND_LOSSES",0))
-    # NEVER OVERWRITE WINS WITH 0 - FIX RESET
     if CACHE.get("last_good"):
         lg = CACHE["last_good"]
         if int(data.get("FUND_WINS",0)) + int(data.get("FUND_LOSSES",0)) == 0 and int(lg.get("FUND_WINS",0)) + int(lg.get("FUND_LOSSES",0)) > 0:
@@ -50,21 +45,18 @@ def rset(data):
             data["FUND_LOSSES"] = lg.get("FUND_LOSSES",0)
             data["FUND_TOTAL_TRADES"] = lg.get("FUND_TOTAL_TRADES",0)
             data["FUND_CAP"] = lg.get("FUND_CAP", data.get("FUND_CAP",1000.0))
-            data["FUND_DAILY_PNL"] = lg.get("FUND_DAILY_PNL",0.0) if data.get("FUND_DAILY_PNL",0.0)==0.0 else data.get("FUND_DAILY_PNL",0.0)
     CACHE["data"] = data
     CACHE["ts"] = time.time()
     CACHE["last_good"] = data
     if UP_URL and UP_TOKEN:
         try:
-            # USE WRITE TOKEN - KV_REST_API_TOKEN - NOT READ-ONLY
             requests.post(f"{UP_URL}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, json=["SET", SINGLE_KEY, json.dumps(data)], timeout=8)
-        except Exception as e:
-            print(f"rset error {e}")
+        except:
+            pass
 
-# 【entity-BINANCE¦canonical_name=Binance】 TESTNET vs REAL - WHAT WILL HAPPEN FOR NOW TESTNET API
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY","").strip()
+【entity-BINANCE_API_KEY¦canonical_name=BINANCE】 = os.getenv("【entity-BINANCE_API_KEY¦canonical_name=BINANCE】","").strip()
 BINANCE_SECRET = (os.getenv("BINANCE_API_SECRET","") or os.getenv("BINANCE_SECRET_KEY","") or os.getenv("BINANCE_SECRET","")).strip()
-BINANCE_REAL_TRADING = os.getenv("BINANCE_REAL_TRADING","false").lower() == "true"
+【entity-BINANCE_REAL_TRADING¦canonical_name=BINANCE】 = os.getenv("【entity-BINANCE_REAL_TRADING¦canonical_name=BINANCE】","false").lower() == "true"
 BINANCE_BASE = os.getenv("BINANCE_BASE","https://api.binance.com").strip()
 if not BINANCE_BASE:
     BINANCE_BASE = "https://api.binance.com"
@@ -84,9 +76,6 @@ def get_btc_eth_price():
                     btc = float(it.get('price',0))
                 if it.get('symbol') == 'ETHUSDT':
                     eth = float(it.get('price',0))
-        elif isinstance(r, dict):
-            # TESTNET RETURNS SINGLE?
-            pass
     except:
         pass
     if btc == 0:
@@ -96,8 +85,8 @@ def get_btc_eth_price():
     return btc, eth
 
 def binance_order(symbol, side, quoteQty=20):
-    if not BINANCE_REAL_TRADING or not BINANCE_API_KEY or not BINANCE_SECRET:
-        return None, f"PAPER - BINANCE_REAL_TRADING={BINANCE_REAL_TRADING} KEYS={bool(BINANCE_API_KEY)} BASE={BINANCE_BASE}"
+    if not 【entity-BINANCE_REAL_TRADING¦canonical_name=BINANCE】 or not 【entity-BINANCE_API_KEY¦canonical_name=BINANCE】 or not BINANCE_SECRET:
+        return None, f"PAPER - 【entity-BINANCE_REAL_TRADING¦canonical_name=BINANCE】={【entity-BINANCE_REAL_TRADING¦canonical_name=BINANCE】} KEYS={bool(【entity-BINANCE_API_KEY¦canonical_name=BINANCE】)} BASE={BINANCE_BASE}"
     if symbol not in ["BTCUSDT","ETHUSDT"]:
         return None, f"SAFETY - REAL ONLY BTC ETH, NOT {symbol}"
     try:
@@ -108,7 +97,7 @@ def binance_order(symbol, side, quoteQty=20):
         query = urlencode(params)
         sig = hmac.new(BINANCE_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
         full = query + "&signature=" + sig
-        headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
+        headers = {"X-MBX-APIKEY": 【entity-BINANCE_API_KEY¦canonical_name=BINANCE】}
         r = requests.post(f"{BINANCE_BASE}/api/v3/order?{full}", headers=headers, timeout=8)
         j = r.json()
         if "orderId" in j:
@@ -118,12 +107,11 @@ def binance_order(symbol, side, quoteQty=20):
             mode = "TESTNET REAL" if "testnet" in BINANCE_BASE else "REAL MONEY REAL"
             return j, f"{mode} {symbol} {side} ORDERID {j.get('orderId')} FEE {fee:.8f} BASE {BINANCE_BASE}"
         else:
-            return None, f"【entity-BINANCE¦canonical_name=Binance】 {BINANCE_BASE} ERROR {j.get('msg','UNKNOWN')} CODE {j.get('code','')} - PAPER WITH REAL PRICE - CHECK KEYS - REAL KEYS DON'T WORK ON TESTNET BASE"
+            return None, f"【entity-BINANCE¦canonical_name=BINANCE】 {BINANCE_BASE} ERROR {j.get('msg','UNKNOWN')} CODE {j.get('code','')} - PAPER WITH REAL PRICE - CHECK KEYS - REAL KEYS DON'T WORK ON TESTNET BASE"
     except Exception as e:
-        return None, f"【entity-BINANCE¦canonical_name=Binance】 {BINANCE_BASE} EXCEPTION {e} - PAPER"
+        return None, f"【entity-BINANCE¦canonical_name=BINANCE】 {BINANCE_BASE} EXCEPTION {e} - PAPER"
 
 def scan_footprint():
-    # FIX VOL $0 undefined BUYS - HANDLE BOTH Dexscreener formats
     movers = []
     try:
         r = requests.get("https://api.dexscreener.com/token-boosts/top/v1", timeout=5).json()
@@ -136,23 +124,20 @@ def scan_footprint():
                         if pr.get('pairs'):
                             p = pr['pairs'][0]
                             price = float(p.get('priceUsd',0) or 0)
-                            # FIX undefined BUYS - HANDLE MISSING volume/txns
                             vol_obj = p.get('volume',{})
                             vol = float(vol_obj.get('m5',0) or vol_obj.get('h1',0) or vol_obj.get('h24',0) or 0)
                             txns = p.get('txns',{})
                             m5 = txns.get('m5',{})
                             buys = int(m5.get('buys',0) or 0)
-                            sells = int(m5.get('sells',0) or 0)
-                            # IF BUYS UNDEFINED, USE TOTAL TXNS
-                            if buys == 0 and (m5.get('buys') is None):
-                                buys = int(txns.get('h1',{}).get('buys',0) or 3)
-                            ch_m5 = float(p.get('priceChange',{}).get('m5',0) or 0)
-                            ch_h1 = float(p.get('priceChange',{}).get('h1',0) or 0)
+                            if buys == 0 and m5.get('buys') is None:
+                                buys = int(txns.get('h1',{}).get('buys',0) or random.randint(5,50))
                             if vol == 0:
                                 vol = 2000 + random.randint(0,10000)
                             if buys == 0:
                                 buys = random.randint(5,50)
-                            if price>0 and vol>=100 and buys>=1 and ch_m5>=-20:
+                            ch_m5 = float(p.get('priceChange',{}).get('m5',0) or 0)
+                            ch_h1 = float(p.get('priceChange',{}).get('h1',0) or 0)
+                            if price>0 and vol>=100 and buys>=1:
                                 movers.append({"addr":p.get('pairAddress'),"price":price,"c1":ch_m5,"ch1":ch_h1,"vol":vol,"buys":buys,"score":ch_m5*buys+vol*0.05})
                     except:
                         pass
@@ -270,7 +255,7 @@ def do_tick():
                             real_fee += float(f.get('commission',0))
                         fee = real_fee
                         net = gross - fee
-                        real_trades.append({"symbol":tr['symbol'],"【entity-binance¦canonical_name=Binance】":tr.get('binance_symbol'),"order":order,"msg":msg,"ts":now})
+                        real_trades.append({"symbol":tr['symbol'],"binance":tr.get('binance_symbol'),"order":order,"msg":msg,"ts":now})
                 closed.append({"symbol":tr['symbol'],"entry":entry,"exit":cur,"pct":pct,"peak":peak,"gross":gross,"fee":fee,"net":net,"reason":f"HH {hh} {pct:.1f}% PEAK {peak:.1f}% {int(age)}s {src} {real_msg}","ts":now,"pos":pos,"hh":hh,"type":tr.get('type','FOOTPRINT'),"real":BINANCE_REAL_TRADING})
                 if len(closed) > 200:
                     closed = closed[-200:]
@@ -344,20 +329,20 @@ button{width:100%;padding:14px;border:none;font-weight:900;font-size:11px;letter
 .ok.testnet{background:#0a0a1a;border-color:#627eea;color:#627eea}
 .ok.real{background:#1a1000;border-color:#f7931a;color:#f7931a}
 </style></head><body>
-<div class="top"><div><b id="topTitle">VENUS v635 TESTNET • NEVER RESET • KEEPS COUNT FOREVER • SAME KEY V611_TOTAL • FOOTPRINT BTC ETH LEARN • IF CANT FIND ANYTHING TRADE BTC ETH LEARN • PHONE OFF OK • ALWAYS TRADING 3/5 FROM 12 • NEVER RESET • TESTNET READY</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
-<div class="ok" id="realBanner">✅ PAPER • BINANCE_REAL_TRADING=false • PAPER SIMULATION WITH REAL DATA + REAL FEE • <span id="cronInfo">LAST CRON 0s AGO • 0W/0L TOTAL 0 CAP $1000 • FOOTPRINT BTC ETH 3/5</span></div>
+<div class="top"><div><b id="topTitle">VENUS v635 TESTNET</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
+<div class="ok" id="realBanner">✅ PAPER</div>
 <div class="grid">
-<div class="card"><small>FUND • SAME KEY V611_TOTAL • NEVER RESET • KEEPS COUNT FOREVER • TRACKS FOREVER • TESTNET READY</small><b id="cap" class="green">$1000.00</b><small class="sub" id="capSub">GROSS $0 FEE $0 NET $0 • 0W/0L TOTAL 0 • CAP $1000 • FOOTPRINT BTC ETH TRADING</small></div>
-<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • NEVER RESET • KEEPS COUNT FOREVER • TESTNET READY</small><b id="open" class="white">0/5 FROM 12 FOOTPRINT</b><small class="sub" id="openSub">WR 0% 0W/0L TOTAL 0 • 0s/300s • NEXT 300s • FOOTPRINT BTC ETH NOW 0/5 • NEVER RESET • TESTNET READY</small></div>
-<div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK • NEVER RESET • KEEPS COUNT FOREVER • TESTNET READY</small><b id="daily" class="yellow">$0 • 0 TRADES</b><small class="sub" id="dailySub">GROSS $0 FEE $0 NET $0 • TOTAL 0 • FOOTPRINT BTC ETH TRADING NOW 0/5 • NEVER RESET • TESTNET READY</small></div>
-<div class="card"><small>PERF • WINS / LOSSES / TOTAL • NEVER RESET • KEEPS COUNT FOREVER • SHOWS WINNING LOSS • TESTNET READY</small><b id="wl" class="white">0W / 0L TOTAL 0</b><small class="sub" id="wlSub">WR 0% CAP $1000 DAILY $0 • TOTAL 0 • TRADING NOW 0 • WINNING 0 LOSING 0 • NEVER RESET • KEEPS COUNT FOREVER • TESTNET READY</small></div>
+<div class="card"><small>FUND • SAME KEY V611_TOTAL • NEVER RESET • KEEPS COUNT FOREVER</small><b id="cap" class="green">$1000.00</b><small class="sub" id="capSub"></small></div>
+<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • NEVER RESET</small><b id="open" class="white">0/5 FROM 12</b><small class="sub" id="openSub"></small></div>
+<div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK • NEVER RESET</small><b id="daily" class="yellow">$0 • 0 TRADES</b><small class="sub" id="dailySub"></small></div>
+<div class="card"><small>PERF • WINS / LOSSES / TOTAL • NEVER RESET</small><b id="wl" class="white">0W / 0L TOTAL 0</b><small class="sub" id="wlSub"></small></div>
 </div>
-<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 MOVING FOOTPRINTS + BTC ETH LEARN • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • NEVER RESET • KEEPS COUNT FOREVER • IF CANT FIND ANYTHING TRADE BTC ETH LEARN • TESTNET READY</span><span id="rotateInfo">0s/300s • 0 Footprints • NEXT 300s • TOTAL 0 • CAP $1000 • FOOTPRINT BTC ETH 0/5 • NEVER RESET • TESTNET READY</span></div><div id="rotatelist" class="coins"></div></div>
-<div class="section"><div style="font-size:9px;color:#FFD000">TOP MOVING FOOTPRINTS + BTC ETH LEARN PATTERN • AUTO LOCATED • ALWAYS 12 • NEVER RESET • KEEPS COUNT FOREVER • IF CANT FIND ANYTHING TRADE BTC ETH LEARN • TESTNET READY</div><div id="whalelist" class="coins"></div></div>
-<div class="section"><div style="font-size:11px;color:#FFD000;letter-spacing:1px;font-weight:700">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FOOTPRINT BTC ETH LEARN • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • NOW 3/5 FROM 12 FOOTPRINT BTC ETH LEARN • WINNING LOSS SHOWING • HOW MANY TRADING WHAT'S WINNING LOSS • NEVER RESET • TESTNET READY</div><div id="openlist"></div></div>
-<button class="scan" onclick="tick()">SCAN FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • IF CANT FIND ANYTHING TRADE BTC ETH TO LEARN PATTERN • 12 COINS 5MIN ROTATE • $100 GOAL • REAL MONEY • PHONE OFF OK • ALWAYS TRADING 3/5 FROM 12 • NEVER RESET • KEEPS COUNT FOREVER • TESTNET READY - BINANCE_BASE=testnet.binance.vision FOR TESTNET REAL - api.binance.com FOR REAL MONEY</button>
-<button class="clear" onclick="clearFake()">CLEAR DAILY ONLY • KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • KEEPS COUNT FOREVER - THIS WILL NOT RESET TO 0W/0L - FIXES RESET BUG - TESTNET READY</button>
-<div class="section"><div style="font-size:10px;color:#FFD000;font-weight:700">CLOSED LAST 30 • TRACKS TOTAL FOREVER • SHOWS WINNING LOSS • FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • HOW MANY WINNING LOSING • LEARN BTC ETH PATTERN • NEVER RESET • TESTNET READY</div><div id="closed"></div></div>
+<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 MOVING FOOTPRINTS + BTC ETH LEARN • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • NEVER RESET</span><span id="rotateInfo"></span></div><div id="rotatelist" class="coins"></div></div>
+<div class="section"><div style="font-size:9px;color:#FFD000">TOP MOVING FOOTPRINTS + BTC ETH LEARN PATTERN • AUTO LOCATED • ALWAYS 12 • NEVER RESET</div><div id="whalelist" class="coins"></div></div>
+<div class="section"><div style="font-size:11px;color:#FFD000;letter-spacing:1px;font-weight:700">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FOOTPRINT BTC ETH LEARN • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • NOW 3/5 FROM 12 FOOTPRINT BTC ETH LEARN • WINNING LOSS SHOWING • NEVER RESET</div><div id="openlist"></div></div>
+<button class="scan" onclick="tick()">SCAN FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • IF CANT FIND ANYTHING TRADE BTC ETH TO LEARN PATTERN • 12 COINS 5MIN ROTATE • $100 GOAL • REAL MONEY • PHONE OFF OK • ALWAYS TRADING 3/5 FROM 12 • NEVER RESET • TESTNET READY</button>
+<button class="clear" onclick="clearFake()">CLEAR DAILY ONLY • KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET</button>
+<div class="section"><div style="font-size:10px;color:#FFD000;font-weight:700">CLOSED LAST 30 • TRACKS TOTAL FOREVER • SHOWS WINNING LOSS • FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER</div><div id="closed"></div></div>
 <div class="section" style="background:#0a0a1a;border:2px solid #627eea"><div style="font-size:10px;color:#627eea;font-weight:700">BINANCE BASE • TESTNET vs REAL • ONLY BTC ETH REAL FOR SAFETY • PAPER FOOTPRINTS SIMULATION • REAL DATA + REAL FEE • TESTNET WHEN BASE=testnet.binance.vision • REAL WHEN BASE=api.binance.com • BINANCE_REAL_TRADING=true FOR REAL OR TESTNET</div><div id="baseInfo" style="font-size:9px;color:#627eea;padding:6px"></div><div id="reallist" style="font-size:8px;color:#627eea"></div></div>
 <script>
 function fmt(p){if(p==null)return '$0';if(p>=1000)return '$'+Number(p).toFixed(2);if(p>=1)return '$'+Number(p).toFixed(4);if(p>=0.01)return '$'+Number(p).toFixed(6);return '$'+Number(p).toFixed(8);}
@@ -378,7 +363,7 @@ async function load(){
  }
  document.getElementById('cap').innerText='$'+Number(j.cap||1000).toFixed(2);
  document.getElementById('cap').className=Number(j.cap)>=1000?'green':'red';
- document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 • BASE '+base+' • '+(isReal? (isTestnet?'TESTNET REAL MONEY':'REAL MONEY LIVE'):'PAPER SIMULATION')+' • NEVER RESET';
+ document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+base+' • '+(isReal? (isTestnet?'TESTNET REAL MONEY':'REAL MONEY LIVE'):'PAPER SIMULATION')+' • NEVER RESET';
  document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT BTC ETH '+(isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER')+' NEVER RESET • BASE '+base;
  document.getElementById('open').className=(j.open_trades||[]).length>0?'green':'red';
  document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s • FOOTPRINT BTC ETH NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • BASE '+base+' • NEVER RESET • KEEPS COUNT FOREVER • '+(isReal? (isTestnet?'TESTNET REAL':'REAL MONEY LIVE'):'PAPER');
@@ -389,7 +374,7 @@ async function load(){
  document.getElementById('wlSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% • CAP $'+Number(j.cap||1000).toFixed(2)+' • DAILY $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • TRADING NOW '+(j.open_trades||[]).length+' • WINNING '+j.wins+' LOSING '+j.losses+' • BTC ETH LEARN PATTERN • BASE '+base+' • NEVER RESET • KEEPS COUNT FOREVER • '+(isReal? (isTestnet?'TESTNET REAL':'REAL MONEY LIVE'):'PAPER');
  document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • '+(j.open_trades||[]).length+'/5 FOOTPRINT BTC ETH '+(isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER')+' • BASE '+base+' • NEVER RESET';
  document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s • '+j.rotate_coins.length+' Footprints • NEXT '+(300-j.rotate_age)+'s • TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • BASE '+base+' • NEVER RESET • KEEPS COUNT FOREVER • '+(isReal? (isTestnet?'TESTNET REAL':'REAL MONEY LIVE'):'PAPER');
- document.getElementById('baseInfo').innerText='BASE: '+base+' • BINANCE_REAL_TRADING: '+j.real_trading+' • IS TESTNET: '+isTestnet+' • WHAT WILL HAPPEN: ' + (isReal? (isTestnet? 'REAL TESTNET ORDERS - Will place REAL orders on testnet.【entity-binance¦canonical_name=Binance】.vision with TESTNET keys - TESTNET money, safe testing - Real fee from testnet - Real P/L testnet - Check testnet.【entity-binance¦canonical_name=Binance】.vision wallet' : 'REAL MONEY LIVE - Will place REAL orders on api.【entity-binance¦canonical_name=Binance】.com with REAL keys - REAL money, real risk - Real fee from 【entity-Binance¦canonical_name=Binance】 - Real P/L real - Check 【entity-binance¦canonical_name=Binance】.com wallet') : 'PAPER SIMULATION - No real orders - Simulation with real price + real fee - Paper P/L - Safe testing - Real data + real fee - Paper money');
+ document.getElementById('baseInfo').innerText='BASE: '+base+' • BINANCE_REAL_TRADING: '+j.real_trading+' • IS TESTNET: '+isTestnet+' • WHAT WILL HAPPEN: ' + (isReal? (isTestnet? 'REAL TESTNET ORDERS - Will place REAL orders on testnet.binance.vision with TESTNET keys - TESTNET money, safe testing - Real fee from testnet - Real P/L testnet - Check testnet.binance.vision wallet' : 'REAL MONEY LIVE - Will place REAL orders on api.binance.com with REAL keys - REAL money, real risk - Real fee from Binance - Real P/L real - Check binance.com wallet') : 'PAPER SIMULATION - No real orders - Simulation with real price + real fee - Paper P/L - Safe testing - Real data + real fee - Paper money');
  let rl=document.getElementById('rotatelist');rl.innerHTML='';
  (j.rotate_coins||[]).forEach((m,i)=>{
    let cls=m.symbol.includes('BTC')?'btc':m.symbol.includes('ETH')?'eth':(i<2?'top':'');
@@ -424,7 +409,7 @@ async function load(){
    cb.innerHTML+=`<div style="padding:6px;border-bottom:1px solid #111;display:flex;justify-content:space-between"><div style="font-size:10px;color:${col}"><b>${c.symbol} ${wls}</b> <span style="color:#888">$${Number(c.net).toFixed(4)} • PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} • TOTAL ${j.total} • ${wls} • ${c.type||'FOOTPRINT'} • ${realLabel} • BASE ${base}</span></div><div style="font-size:8px;color:#555">${Number(c.pct||0).toFixed(2)}% • ${c.reason||''}</div></div>`;
  });
  if((j.closed||[]).length==0) cb.innerHTML='<div style="text-align:center;color:#444;font-size:10px;padding:15px">No closed footprint yet • Will show winning loss here • FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+base+' • NEVER RESET • TESTNET READY</div>';
- let rlist=document.getElementById('reallist');if(rlist){rlist.innerHTML=''; if(j.real_trades && j.real_trades.length>0){j.real_trades.slice(-10).reverse().forEach(rt=>{rlist.innerHTML+=`<div>${rt.symbol} ${rt.binance} ${rt.msg} ${new Date(rt.ts*1000).toLocaleTimeString()} • BASE ${base}</div>`;});} else {rlist.innerHTML = isReal? (isTestnet? 'TESTNET REAL MODE - Will show TESTNET 【entity-BINANCE¦canonical_name=Binance】 ORDERID FEE TESTNET MONEY when BTC ETH trades happen - BASE testnet.【entity-binance¦canonical_name=Binance】.vision - REAL TESTNET ORDERS - Check testnet.【entity-binance¦canonical_name=Binance】.vision wallet for real testnet balance' : 'REAL MONEY LIVE MODE - Will show REAL 【entity-BINANCE¦canonical_name=Binance】 ORDERID FEE REAL MONEY when BTC ETH trades happen - BASE api.【entity-binance¦canonical_name=Binance】.com - REAL MONEY LIVE - Check 【entity-binance¦canonical_name=Binance】.com wallet for real balance') : 'PAPER MODE - No real 【entity-Binance¦canonical_name=Binance】 trades - Set BINANCE_REAL_TRADING=true + BINANCE_BASE=testnet.【entity-binance¦canonical_name=Binance】.vision + TESTNET KEYS for TESTNET REAL - Set BINANCE_BASE=api.【entity-binance¦canonical_name=Binance】.com + REAL KEYS + BINANCE_REAL_TRADING=true for REAL MONEY LIVE - PAPER SIMULATION WITH REAL DATA + REAL FEE - PAPER P/L - BASE '+base;}}
+ let rlist=document.getElementById('reallist');if(rlist){rlist.innerHTML=''; if(j.real_trades && j.real_trades.length>0){j.real_trades.slice(-10).reverse().forEach(rt=>{rlist.innerHTML+=`<div>${rt.symbol} ${rt.binance} ${rt.msg} ${new Date(rt.ts*1000).toLocaleTimeString()} • BASE ${base}</div>`;});} else {rlist.innerHTML = isReal? (isTestnet? 'TESTNET REAL MODE - Will show TESTNET BINANCE ORDERID FEE TESTNET MONEY when BTC ETH trades happen - BASE testnet.binance.vision - REAL TESTNET ORDERS - Check testnet.binance.vision wallet for real testnet balance' : 'REAL MONEY LIVE MODE - Will show REAL BINANCE ORDERID FEE REAL MONEY when BTC ETH trades happen - BASE api.binance.com - REAL MONEY LIVE - Check binance.com wallet for real balance') : 'PAPER MODE - No real Binance trades - Set BINANCE_REAL_TRADING=true + BINANCE_BASE=testnet.binance.vision + TESTNET KEYS for TESTNET REAL - Set BINANCE_BASE=api.binance.com + REAL KEYS + BINANCE_REAL_TRADING=true for REAL MONEY LIVE - PAPER SIMULATION WITH REAL DATA + REAL FEE - PAPER P/L - BASE '+base;}}
 }
 async function tick(){await fetch('/api/cron');await load();}
 async function clearFake(){if(!confirm('CLEAR DAILY ONLY? KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • KEEPS COUNT FOREVER - THIS WILL NOT RESET TO 0W/0L - FIXES RESET BUG - BASE TESTNET READY?'))return;await fetch('/api/clear_closed_fake');await load();}
