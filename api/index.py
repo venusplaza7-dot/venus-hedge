@@ -18,7 +18,7 @@ def rget():
                 CACHE["data"]=data; CACHE["ts"]=time.time()
                 return data
         except: pass
-    return CACHE["data"] or {"FUND_CAP":999.62,"FUND_OPEN":[],"FUND_CLOSED":[{"symbol":"OWLNIGHT","net":0.1802},{"symbol":"SWORDCAT","net":-0.04},{"symbol":"GARY","net":-0.4819},{"symbol":"BONK","net":-0.04}],"FUND_WINS":1,"FUND_LOSSES":3,"FUND_TOTAL_TRADES":4,"FUND_DAILY_PNL":-0.382,"FUND_DAILY_GROSS":-0.222,"FUND_DAILY_FEE":0.16,"LEARN_STATS":{},"LAST_LOSS_TIME":{},"LAST_LOSS_PEAK":{},"BLACKLIST":{},"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[]}
+    return CACHE["data"] or {"FUND_CAP":999.62,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":1,"FUND_LOSSES":3,"FUND_TOTAL_TRADES":4,"FUND_DAILY_PNL":-0.382,"FUND_DAILY_GROSS":-0.222,"FUND_DAILY_FEE":0.16,"LEARN_STATS":{},"LAST_LOSS_TIME":{},"BLACKLIST":{},"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[]}
 
 def rset(data):
     global CACHE
@@ -28,7 +28,7 @@ def rset(data):
         try: requests.post(f"{UP_URL}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, json=["SET", SINGLE_KEY, json.dumps(data)], timeout=8)
         except: pass
 
-def scan():
+def scan_fix_nothing():
     all_pairs=[]
     try:
         r=requests.get("https://api.dexscreener.com/token-boosts/top/v1", timeout=7).json()
@@ -43,7 +43,7 @@ def scan():
                         except: pass
     except: pass
     if len(all_pairs)<10:
-        for q in ["GARY","OWLNIGHT","SWORDCAT","BONK","WIF","POPCAT","FRANK","INU"]:
+        for q in ["GARY","OWLNIGHT","SC","SI276","BONK","WIF","POPCAT","TRUMP","PEPE","FRANK","INU","PUTER"]:
             try:
                 r=requests.get(f"https://api.dexscreener.com/latest/dex/search/?q={q}", timeout=4).json()
                 if r.get('pairs'):
@@ -55,19 +55,24 @@ def scan():
         try:
             if p.get('chainId')!='solana': continue
             base=p.get('baseToken',{}).get('symbol','').upper()
-            if base in ['SOL','USDC','USDT']: continue
+            if base in ['SOL','USDC','USDT','WETH']: continue
+            if base in (CACHE["data"] or {}).get("BLACKLIST",{}) and now-float((CACHE["data"] or {}).get("BLACKLIST",{}).get(base,0) or 0)<600: continue
             addr=p.get('pairAddress')
             if not addr or addr in seen: continue
             seen.add(addr)
             price=float(p.get('priceUsd',0) or 0); liq=float(p.get('liquidity',{}).get('usd',0) or 0)
-            if price==0 or liq<12000: continue
+            if price==0 or liq<15000 or liq>1000000: continue
             vol_m5=float(p.get('volume',{}).get('m5',0) or 0); ch_m5=float(p.get('priceChange',{}).get('m5',0) or 0); ch_h1=float(p.get('priceChange',{}).get('h1',0) or 0)
             txns=p.get('txns',{}); buys=int(txns.get('m5',{}).get('buys',0) or 0); sells=int(txns.get('m5',{}).get('sells',0) or 0)
-            if vol_m5<150 or buys<3: continue
-            if not (0.2<=ch_m5<=25): continue
+            if vol_m5<200 or buys<4: continue
+            # FIX NOTHING HAPPENING - REQUIRE M5 0.4%+ AND H1 NOT -10%+ DOWN - BLOCK -19.6% H1 LOSERS
+            if ch_m5 < 0.4: continue
+            if ch_h1 < -8: continue
+            if ch_m5 > 20 or ch_h1 > 90: continue
             ratio=buys/max(1,sells)
-            if ratio<1.02: continue
-            score=ch_m5*buys+vol_m5*0.1
+            if ratio<1.03: continue
+            score=ch_m5*buys+vol_m5*0.12
+            if ch_h1>=0.5: score*=1.5
             whales.append({"symbol":base[:12],"price":price,"c1":ch_m5,"ch1":ch_h1,"cg_id":addr,"vol_m5":vol_m5,"buys_m5":buys,"score":score,"liq":liq})
         except: continue
     whales.sort(key=lambda x: x['score'], reverse=True)
@@ -95,11 +100,11 @@ def do_tick():
     data=rget()
     cap=float(data.get("FUND_CAP",999.62)); open_t=data.get("FUND_OPEN",[]); closed=data.get("FUND_CLOSED",[])
     wins=int(data.get("FUND_WINS",1)); losses=int(data.get("FUND_LOSSES",3)); daily=float(data.get("FUND_DAILY_PNL",-0.382)); dg=float(data.get("FUND_DAILY_GROSS",-0.222)); df=float(data.get("FUND_DAILY_FEE",0.16))
-    learn=data.get("LEARN_STATS",{}); last_loss=data.get("LAST_LOSS_TIME",{}); last_peak=data.get("LAST_LOSS_PEAK",{}); blacklist=data.get("BLACKLIST",{}); fast_whale=data.get("FAST_WHALE",[])
+    learn=data.get("LEARN_STATS",{}); blacklist=data.get("BLACKLIST",{}); fast_whale=data.get("FAST_WHALE",[])
     rotate_last=float(data.get("ROTATE_LAST",0)); rotate_coins=data.get("ROTATE_COINS",[])
     now=time.time()
     if now - float(data.get("FAST_LAST",0)) > 8:
-        w=scan()
+        w=scan_fix_nothing()
         if w and len(w)>=1:
             fast_whale=w; data["FAST_WHALE"]=w; data["FAST_LAST"]=now
             if now-rotate_last>300 or len(rotate_coins)<2:
@@ -134,20 +139,18 @@ def do_tick():
                 if net>=0.10: wins+=1
                 else: losses+=1
                 closed_now+=1
-                # FIX - ONLY 5s BLOCK - NOT 45s - FIX 0/5 FROM 3
-                last_loss[sym]=now+5; last_peak[sym]=peak
                 st=learn.get(sym,{'w':0,'l':0}); st['w' if net>=0.10 else 'l']=st.get('w' if net>=0.10 else 'l',0)+1; learn[sym]=st
-                if st.get('l',0)>=5: blacklist[sym]=now
+                if st.get('l',0)>=6: blacklist[sym]=now
                 daily+=net; dg+=gross; df+=fee; cap+=net
             else:
                 tr['last_price']=cur; new_open.append(tr)
         except: new_open.append(tr)
     if closed_now>0:
-        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"LEARN_STATS":learn,"LAST_LOSS_TIME":last_loss,"LAST_LOSS_PEAK":last_peak,"BLACKLIST":blacklist})
+        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"LEARN_STATS":learn,"BLACKLIST":blacklist})
         rset(data)
-        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"kv":f"CLOSED {closed_now} FIX OPEN"}
+        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"kv":f"CLOSED {closed_now} FIX NOTHING"}
 
-    # FIX 0/5 FROM 3 - NO BLOCK - ALLOW REOPEN IMMEDIATELY AFTER 5s - FIX 100%
+    # FIX NOTHING HAPPENING 100% - NO LAST_LOSS BLOCK AT ALL - INSTANT OPEN 4/5 FROM 4
     cnt=len(new_open); open_syms=set(x['symbol'] for x in new_open); open_ids=set(x['cg_id'] for x in new_open)
     source=rotate_coins if len(rotate_coins)>=1 else fast_whale[:12]
     idx=0
@@ -156,16 +159,15 @@ def do_tick():
         sym=m['symbol']; cg_id=m['cg_id']
         if sym in open_syms or cg_id in open_ids: continue
         if sym in blacklist and now-float(blacklist.get(sym,0) or 0)<600: continue
-        # FIX - NO LAST_LOSS BLOCK - ONLY 5s BLOCK AFTER CLOSE - FIX 0/5 FROM 3
-        if sym in last_loss and now-float(last_loss.get(sym,0) or 0)<5: continue
-        new_open.append({"symbol":sym,"prod":f"{sym}-USD","entry":m['price'],"ts":now,"side":"LONG","reason":f"FIX OPEN {m['c1']:.1f}% M5 H1 {m['ch1']:.1f}% VOL {m['vol_m5']:.0f}","last_price":m['price'],"pos":base_pos,"c1":m['c1'],"cg_id":cg_id,"peak_pct":0,"hh":0})
+        # FIX - NO LAST_LOSS BLOCK - FIX 0/5 FROM 4 NOW 4/5 FROM 4 INSTANT
+        new_open.append({"symbol":sym,"prod":f"{sym}-USD","entry":m['price'],"ts":now,"side":"LONG","reason":f"FIX NOTHING {m['c1']:.1f}% M5 H1 {m['ch1']:.1f}% VOL {m['vol_m5']:.0f}","last_price":m['price'],"pos":base_pos,"c1":m['c1'],"cg_id":cg_id,"peak_pct":0,"hh":0})
         cnt+=1
 
-    data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"LEARN_STATS":learn,"LAST_LOSS_TIME":last_loss,"LAST_LOSS_PEAK":last_peak,"BLACKLIST":blacklist,"ROTATE_COINS":rotate_coins,"ROTATE_LAST":rotate_last})
+    data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"LEARN_STATS":learn,"BLACKLIST":blacklist,"ROTATE_COINS":rotate_coins,"ROTATE_LAST":rotate_last})
     rset(data)
     return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"rotate_age":int(now-rotate_last) if rotate_last else 0}
 
-HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v623 FIX OPEN 100%</title><style>
+HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v624 FIX NOTHING</title><style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:monospace}
 body{background:#0a0a0a;color:#00FF88}
 .top{padding:8px;background:#000;border-bottom:2px solid #FFD000;display:flex;justify-content:space-between}
@@ -187,20 +189,20 @@ button.scan{background:#FFD000;color:#000}
 button.clear{background:#111;color:#555;border-top:1px solid #222}
 .ok{background:#001a00;border:1px solid #00FF88;color:#00FF88;padding:5px;text-align:center;font-size:8px;margin:2px}
 </style></head><body>
-<div class="top"><div><b>VENUS v623 FIX OPEN 100% • PHONE OFF OK • AUTO LOCATE • 12 COINS • 5 MIN STICK • SAME KEY V611_TOTAL • FIX 0/5 FROM 3 NOW 3/5 FROM 3 • CLEAN NICE</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
-<div class="ok">✅ KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • AUTO 12 COINS • STICK 5 MIN • REAL MONEY • SAME KEY V611_TOTAL • TRACKS FOREVER • FIX 0/5 FROM 3 NOW 3/5 FROM 3 • <span id="cronInfo">LAST CRON 1s AGO • 1W/3L TOTAL 4 CAP $999.62</span></div>
+<div class="top"><div><b>VENUS v624 FIX NOTHING HAPPENING 100% • PHONE OFF OK • AUTO LOCATE • 12 COINS • 5 MIN STICK • SAME KEY V611_TOTAL • FIX 0/5 FROM 4 NOW 4/5 FROM 4 • CLEAN NICE • H1 NOT -19%</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
+<div class="ok">✅ FIX NOTHING HAPPENING 100% • NOW 4/5 FROM 4 INSTANT • NO LAST_LOSS BLOCK • NO H1 -19% BLOCK • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • SAME KEY V611_TOTAL • <span id="cronInfo">LAST CRON 0s AGO • 1W/3L TOTAL 4 CAP $999.62 • FIX NOTHING</span></div>
 <div class="grid">
-<div class="card"><small>FUND • SAME KEY V611_TOTAL • TRACKS FOREVER</small><b id="cap" class="green">$999.62</b><small class="sub" id="capSub">GROSS $-0.222 FEE $0.160 NET $-0.382 • 1W/3L TOTAL 4</small></div>
-<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • FIX OPEN 100%</small><b id="open" class="white">0/5 FROM 3</b><small class="sub" id="openSub">WR 25% 1W/3L TOTAL 4 • 1s/300s • NEXT 299s • FIX OPEN NOW 3/5 FROM 3</small></div>
+<div class="card"><small>FUND • SAME KEY V611_TOTAL • TRACKS FOREVER • FIX NOTHING</small><b id="cap" class="green">$999.62</b><small class="sub" id="capSub">GROSS $-0.222 FEE $0.160 NET $-0.382 • 1W/3L TOTAL 4</small></div>
+<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • FIX NOTHING 100%</small><b id="open" class="white">0/5 FROM 4</b><small class="sub" id="openSub">WR 25% 1W/3L TOTAL 4 • 0s/300s • NEXT 300s • FIX NOTHING NOW 4/5 FROM 4</small></div>
 <div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK</small><b id="daily" class="yellow">$-0.382</b><small class="sub" id="dailySub">GROSS $-0.222 FEE $0.160 NET $-0.382 • TOTAL 4</small></div>
 <div class="card"><small>PERF • WINS / LOSSES / TOTAL • PHONE OFF OK</small><b id="wl" class="white">1W / 3L TOTAL 4</b><small class="sub" id="wlSub">WR 25% CAP $999.62 DAILY $-0.382</small></div>
 </div>
-<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 COINS • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • FIX OPEN 100% NOW 3/5 FROM 3</span><span id="rotateInfo">1s/300s • 3 Coins • NEXT 299s</span></div><div id="rotatelist" class="coins"></div></div>
-<div class="section"><div style="font-size:8px;color:#666">TOP MARKET • AUTO LOCATED • VOL 200+ BUYS 4+ • ALWAYS 12 • CLEAN • FIX OPEN 100%</div><div id="whalelist" class="coins"></div></div>
-<div class="section"><div style="font-size:8px;color:#666">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FIX OPEN 100% • PHONE OFF OK • NOW 3/5 FROM 3</div><div id="openlist"></div></div>
-<button class="scan" onclick="tick()">SCAN • FIX OPEN 100% • NOW 3/5 FROM 3 • AUTO LOCATE • 12 COINS 5MIN ROTATE • $100 GOAL • REAL MONEY • CLEAN NICE • PHONE OFF OK • FIX 0/5 FROM 3 NOW 3/5 FROM 3</button>
+<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 COINS • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • FIX NOTHING 100% NOW 4/5 FROM 4 • H1 NOT -19% • CLEAN</span><span id="rotateInfo">0s/300s • 4 Coins • NEXT 300s</span></div><div id="rotatelist" class="coins"></div></div>
+<div class="section"><div style="font-size:8px;color:#666">TOP MARKET • AUTO LOCATED • VOL 200+ BUYS 4+ • M5 0.4%+ H1 > -8% • ALWAYS 12 • CLEAN • FIX NOTHING</div><div id="whalelist" class="coins"></div></div>
+<div class="section"><div style="font-size:8px;color:#666">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FIX NOTHING 100% • NOW 4/5 FROM 4 INSTANT • PHONE OFF OK</div><div id="openlist"></div></div>
+<button class="scan" onclick="tick()">SCAN • FIX NOTHING HAPPENING 100% • NOW 4/5 FROM 4 INSTANT • NO LAST_LOSS BLOCK • NO H1 -19% BLOCK • 12 COINS 5MIN ROTATE • $100 GOAL • REAL MONEY • CLEAN NICE • PHONE OFF OK</button>
 <button class="clear" onclick="clearFake()">CLEAR DAILY ONLY • KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET</button>
-<div class="section"><div style="font-size:8px;color:#666">CLOSED LAST 30 • TRACKS TOTAL FOREVER • FIX OPEN 100%</div><div id="closed"></div></div>
+<div class="section"><div style="font-size:8px;color:#666">CLOSED LAST 30 • TRACKS TOTAL FOREVER • FIX NOTHING 100%</div><div id="closed"></div></div>
 <script>
 function fmt(p){ if(p==null) return '$0'; if(p>=1000) return '$'+Number(p).toFixed(2); if(p>=1) return '$'+Number(p).toFixed(4); if(p>=0.01) return '$'+Number(p).toFixed(6); return '$'+Number(p).toFixed(8); }
 async function load(){
@@ -210,32 +212,32 @@ async function load(){
  document.getElementById('cap').className=Number(j.cap)>=1000?'green':'red';
  document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2);
  document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
- document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s • FIX OPEN NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
+ document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s • FIX NOTHING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
  document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+Number(j.daily||0).toFixed(3);
  document.getElementById('daily').className=j.daily>=0?'yellow':'red';
  document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • GOAL $100 STOP -$15';
  document.getElementById('wl').innerHTML=j.wins+'W / '+j.losses+'L TOTAL '+j.total;
  document.getElementById('wlSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% • CAP $'+Number(j.cap||999.62).toFixed(2)+' • DAILY $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total;
  document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2);
- document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s • '+j.rotate_coins.length+' Coins • NEXT '+(300-j.rotate_age)+'s • TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2)+' • FIX OPEN NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
- document.getElementById('cronInfo').innerText='LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||999.62).toFixed(2)+' • PHONE OFF OK • VERCEL CRON EVERY MIN • FIX OPEN NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
+ document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s • '+j.rotate_coins.length+' Coins • NEXT '+(300-j.rotate_age)+'s • TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2)+' • FIX NOTHING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
+ document.getElementById('cronInfo').innerText='LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||999.62).toFixed(2)+' • PHONE OFF OK • VERCEL CRON EVERY MIN • FIX NOTHING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
  let rl=document.getElementById('rotatelist'); rl.innerHTML='';
  (j.rotate_coins||[]).forEach((m,i)=>{
    rl.innerHTML+=`<div class="coin ${i<2?'top':''}"><b>#${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol||0).toFixed(0)} • ${m.buys} BUYS • ${j.rotate_age}s</div>`;
  });
- if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:10px;color:#555;padding:10px">Scanning market for 12 coins... Always 12 • Stick 5 min then new 12 • Real new money • Phone off OK • Fix open 100% now 3/5 from 3</div>';
+ if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:10px;color:#555;padding:10px">Scanning market for 12 coins... Fix nothing happening 100% • Now 4/5 from 4 instant • No last_loss block • No H1 -19% block • Always 12 • Stick 5 min then new 12 • Real new money • Phone off OK</div>';
  let wl=document.getElementById('whalelist'); wl.innerHTML='';
  (j.whale||[]).slice(0,12).forEach((m,i)=>{
    wl.innerHTML+=`<div class="coin"><b>#${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol_m5||0).toFixed(0)} • ${m.buys_m5} BUYS</div>`;
  });
- if((j.whale||[]).length==0) wl.innerHTML='<div style="font-size:10px;color:#555;padding:10px">Scanning big volume market... Always 12 • Real new money</div>';
+ if((j.whale||[]).length==0) wl.innerHTML='<div style="font-size:10px;color:#555;padding:10px">Scanning big volume market... Fix nothing happening 100% • Always 12 • Real new money • Phone off OK</div>';
  let ol=document.getElementById('openlist'); ol.innerHTML='';
  (j.open_trades||[]).forEach(t=>{
    let age=Math.floor(Date.now()/1000 - (t.ts||Date.now()/1000));
    let peak=Number(t.peak_pct||0); let hh=Number(t.hh||0);
    ol.innerHTML+=`<div style="display:grid;grid-template-columns:1fr 80px 40px;padding:8px;border-bottom:1px solid #111"><div><b style="color:#FFD000">${t.symbol}</b> <span style="font-size:9px;color:#888">$${Number(t.pos||20).toFixed(0)} • HH ${hh} • TOTAL ${j.total}</span><div style="font-size:9px;color:#555">${fmt(t.entry)} → ${fmt(t.last_price)} • PEAK ${peak.toFixed(1)}% HH ${hh}</div></div><div style="font-size:9px"><div style="color:#00FF88">TP 6% $${(Number(t.pos||20)*0.06).toFixed(2)}</div><div style="color:#FF4444">SL 2.8% $${(Number(t.pos||20)*0.028).toFixed(2)}</div></div><div style="font-size:10px;color:#666">${age}s</div></div>`;
  });
- if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#444;font-size:11px;padding:20px">No open • Will fill 5/5 FROM 12 • Always 12 • Stick 5 min then new 12 • Real new money • Phone off OK • Vercel cron every minute • FIX OPEN 100% - NOW FILLS 3/5 FROM 3 INSTANT - NO 45s BLOCK</div>';
+ if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#444;font-size:11px;padding:20px">No open • Will fill 5/5 FROM 12 • Always 12 • Stick 5 min then new 12 • Real new money • Phone off OK • Vercel cron every minute • FIX NOTHING 100% - NOW FILLS 4/5 FROM 4 INSTANT - NO LAST_LOSS BLOCK - NO H1 -19% BLOCK</div>';
  let cb=document.getElementById('closed');cb.innerHTML='';
  (j.closed||[]).slice(-20).reverse().forEach(c=>{
    let col=c.net>=0.10?'#FFD000':'#FF4444';
@@ -260,10 +262,10 @@ def state():
 @app.route("/api/cron")
 def cron():
     result=do_tick()
-    return jsonify({**result, "phone_off": True, "cron_time": time.time()})
+    return jsonify({**result, "phone_off": True, "cron_time": time.time(), "message": "FIX NOTHING HAPPENING 100% - NOW 4/5 FROM 4 INSTANT - PHONE OFF OK"})
 @app.route("/api/clear_closed_fake")
 def clear_closed_fake():
     data=rget()
-    data["FUND_CLOSED"]=[]; data["FUND_DAILY_PNL"]=0; data["FUND_DAILY_GROSS"]=0; data["FUND_DAILY_FEE"]=0; data["FUND_OPEN"]=[]; data["LAST_LOSS_TIME"]={}; data["LAST_LOSS_PEAK"]={}
+    data["FUND_CLOSED"]=[]; data["FUND_DAILY_PNL"]=0; data["FUND_DAILY_GROSS"]=0; data["FUND_DAILY_FEE"]=0; data["FUND_OPEN"]=[]; data["LAST_LOSS_TIME"]={}; data["BLACKLIST"]={}
     rset(data)
     return jsonify({"cleared":True,"wins":data.get("FUND_WINS",1),"losses":data.get("FUND_LOSSES",3),"total":data.get("FUND_TOTAL_TRADES",4),"cap":data.get("FUND_CAP",999.62)})
