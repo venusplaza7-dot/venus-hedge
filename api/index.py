@@ -97,7 +97,7 @@ if "testnet" in BINANCE_BASE.lower():
 # NEW - POS_SIZE ENV - 20 X 5 TO TEST - YOU CAN CHANGE TO 40 X 5, 100 X 5 WITHOUT CODE
 POS_SIZE = float(os.getenv("POS_SIZE","20").strip() or "20")
 if POS_SIZE < 5:
-    POS_SIZE = 20
+    POS_SIZE = 16
 if POS_SIZE > 200:
     POS_SIZE = 200
 
