@@ -1,4 +1,4 @@
-lfrom flask import Flask, jsonify
+from flask import Flask, jsonify
 import os, json, requests, time, random
 app = Flask(__name__)
 
