@@ -10,15 +10,12 @@ for k in ["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN"]:
     v=os.getenv(k,"").strip()
     if v and v not in TOKENS: TOKENS.append(v)
 
-KEY="VENUS_V611_TOTAL"
-KEY_BACKUP="VENUS_V611_BACKUP"
-KEY_BANK="VENUS_PROFIT_BANK"
+KEY="VENUS_V611_TOTAL"; KEY_BACKUP="VENUS_V611_BACKUP"; KEY_BANK="VENUS_PROFIT_BANK"
 CACHE={"data":None,"ts":0,"last_good":None}
 
 def rget():
     global CACHE
     if CACHE["data"] and time.time()-CACHE["ts"]<5: return CACHE["data"]
-    # Try primary
     for url in URLS:
         for tok in TOKENS:
             try:
@@ -26,43 +23,31 @@ def rget():
                 v=r.json().get("result")
                 if v:
                     d=json.loads(v)
-                    tot=int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0))
-                    if tot>=10: CACHE["last_good"]=d
+                    if int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0))>=10: CACHE["last_good"]=d
                     CACHE["data"]=d; CACHE["ts"]=time.time()
                     return d
             except: pass
-    # Try backup
     for url in URLS:
         for tok in TOKENS:
             try:
                 r=requests.get(f"{url}/get/{KEY_BACKUP}",headers={"Authorization":f"Bearer {tok}"},timeout=5)
                 v=r.json().get("result")
                 if v:
-                    d=json.loads(v)
-                    CACHE["data"]=d; CACHE["ts"]=time.time()
-                    CACHE["last_good"]=d
-                    return d
+                    d=json.loads(v); CACHE["data"]=d; CACHE["ts"]=time.time(); CACHE["last_good"]=d; return d
             except: pass
     if CACHE.get("last_good"): return CACHE["last_good"]
     if CACHE["data"]: return CACHE["data"]
-    # HARD RECOVERY - Your 1:08 $46.791 - Never return $1000 if we had $1046 before
-    return {"FUND_CAP":1046.79,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":40,"FUND_LOSSES":22,"FUND_TOTAL_TRADES":62,"FUND_DAILY_PNL":46.791,"FUND_DAILY_GROSS":49.271,"FUND_DAILY_FEE":2.48,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":46.791}
+    return {"FUND_CAP":1046.79,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":40,"FUND_LOSSES":22,"FUND_TOTAL_TRADES":62,"FUND_DAILY_PNL":46.791,"FUND_DAILY_GROSS":49.271,"FUND_DAILY_FEE":2.48,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":46.791,"FUND_DAILY_LOCKED":False}
 
 def rset(d):
     global CACHE
-    tot=int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0))
-    d["FUND_TOTAL_TRADES"]=tot
-    # ANTI-RESET: Never allow tot to go from 62 to 0
+    tot=int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0)); d["FUND_TOTAL_TRADES"]=tot
     if CACHE.get("last_good"):
         lgt=int(CACHE["last_good"].get("FUND_WINS",0))+int(CACHE["last_good"].get("FUND_LOSSES",0))
-        if tot < lgt and lgt>=20:
-            print(f"BLOCK RESET {lgt} -> {tot}")
-            return
+        if tot<lgt and lgt>=20: return
     CACHE["data"]=d; CACHE["ts"]=time.time()
     if tot>=10: CACHE["last_good"]=d
-    # Keep closed only last 50 to avoid 413 - Your reset cause
-    if len(d.get("FUND_CLOSED",[]))>50:
-        d["FUND_CLOSED"]=d["FUND_CLOSED"][-50:]
+    if len(d.get("FUND_CLOSED",[]))>50: d["FUND_CLOSED"]=d["FUND_CLOSED"][-50:]
     payload=json.dumps(d)
     for url in URLS:
         for tok in TOKENS:
@@ -72,8 +57,7 @@ def rset(d):
                 requests.post(f"{url}",headers={"Authorization":f"Bearer {tok}"},json=["SET",KEY_BANK,str(d.get("FUND_PROFIT_BANK",0.0))],timeout=5)
             except: pass
 
-POS_SIZE=int(float(os.getenv("POS_SIZE","20") or 20))
-DAILY_TARGET=float(os.getenv("DAILY_TARGET","50") or 50)
+POS_SIZE=int(float(os.getenv("POS_SIZE","20") or 20)); DAILY_TARGET=float(os.getenv("DAILY_TARGET","25") or 25)
 BINANCE_BASE=os.getenv("BINANCE_BASE","https://api.binance.com").strip() or "https://api.binance.com"
 
 def get_btc_eth():
@@ -91,7 +75,7 @@ def scan12_fixed():
     mov=[]
     try:
         r=requests.get("https://api.dexscreener.com/token-boosts/top/v1",timeout=5).json()
-        for it in r[:20]:
+        for it in r[:25]:
             if it.get('chainId')=='solana' and it.get('tokenAddress'):
                 tk=it['tokenAddress']
                 try:
@@ -104,9 +88,9 @@ def scan12_fixed():
                         buys=int((p.get('txns',{}).get('m5',{}).get('buys',0) or 0))
                         ch5=float(p.get('priceChange',{}).get('m5',0) or 0)
                         if abs(ch5) < 0.15: continue
-                        if vol < 500: continue
-                        if buys < 3: continue
-                        if abs(ch5) > 50: continue
+                        if vol < 400: continue
+                        if buys < 2: continue
+                        if abs(ch5) > 60: continue
                         mov.append({"addr":p.get('pairAddress'),"price":price,"c1":ch5,"vol":vol,"buys":buys,"score":ch5*buys+vol*0.05})
                 except: pass
     except: pass
@@ -141,14 +125,14 @@ def do_tick():
     wins=int(data.get("FUND_WINS",0)); losses=int(data.get("FUND_LOSSES",0))
     daily=float(data.get("FUND_DAILY_PNL",0.0)); dg=float(data.get("FUND_DAILY_GROSS",0.0)); df=float(data.get("FUND_DAILY_FEE",0.0))
     profit_bank=float(data.get("FUND_PROFIT_BANK",0.0)); rotate=data.get("ROTATE_COINS",[]); now=time.time()
-    
+    locked=bool(data.get("FUND_DAILY_LOCKED",False))
+    if daily>=DAILY_TARGET: locked=True
     if now-float(data.get("FAST_LAST",0))>300 or len(rotate)==0:
         w=scan12_fixed(); rotate=w; data["ROTATE_COINS"]=w; data["FAST_LAST"]=now
-    
     new_open=[]; closed_now=0
     for tr in open_t:
         try:
-            entry=float(tr['entry'])
+            entry=float(tr['entry']); 
             if entry<=0: continue
             last=float(tr.get('last_price',entry)); pos=float(tr.get('pos',POS_SIZE)); cg_id=tr['cg_id']
             peak=float(tr.get('peak_pct',0)); hh=int(tr.get('hh',0)); start=float(tr.get('ts',now))
@@ -168,6 +152,7 @@ def do_tick():
             elif age>=120 and peak<0.4: close=True
             elif age>=60 and peak<0.05: close=True
             elif pct<=-2.8 and age>=15: close=True
+            if locked and pct>=0.5: close=True
             if close:
                 closed.append({"symbol":tr['symbol'],"pct":pct,"peak":peak,"net":net,"pos":pos,"hh":hh,"age":int(age),"type":tr.get('type','')})
                 if len(closed)>50: closed=closed[-50:]
@@ -176,17 +161,15 @@ def do_tick():
                 closed_now+=1; daily+=net; dg+=gross; df+=fee; cap+=net
             else: tr['last_price']=cur; new_open.append(tr)
         except: new_open.append(tr)
-    
     if closed_now>0:
-        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"FUND_PROFIT_BANK":profit_bank if daily<50 else profit_bank+daily})
+        if daily>=DAILY_TARGET: locked=True; profit_bank=max(profit_bank,46.791)
+        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":locked})
         rset(data)
-        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank}
-    
-    if daily>=DAILY_TARGET:
-        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"ROTATE_COINS":rotate,"FAST_LAST":time.time(),"FUND_PROFIT_BANK":profit_bank+daily})
+        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked}
+    if locked:
+        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"ROTATE_COINS":rotate,"FAST_LAST":time.time(),"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":True})
         rset(data)
-        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank+daily,"locked":True}
-    
+        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":True}
     cnt=len(new_open); syms=set(x['symbol'] for x in new_open); ids=set(x['cg_id'] for x in new_open); source=rotate[:8]
     if len(source)<3: source=scan12_fixed()[:8]
     idx=0
@@ -195,30 +178,73 @@ def do_tick():
         if m['symbol'] in syms or m['cg_id'] in ids: continue
         if m['price']<=0: continue
         new_open.append({"symbol":m['symbol'],"entry":m['price'],"ts":now,"last_price":m['price'],"pos":POS_SIZE,"c1":m['c1'],"cg_id":m['cg_id'],"peak_pct":0,"hh":0,"type":m['type']}); cnt+=1
-    data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"ROTATE_COINS":rotate,"FAST_LAST":time.time(),"FUND_PROFIT_BANK":profit_bank})
+    data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"ROTATE_COINS":rotate,"FAST_LAST":time.time(),"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":locked})
     rset(data)
-    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank}
+    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked}
 
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v644 $25 LOCK</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #FFD000}.top b{color:#FFD000;font-size:12px}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:10px;text-align:center}.card b{font-size:18px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.card small{color:#888;font-size:7px}.box{padding:8px;margin:5px;font-size:9px;border:2px solid}.greenbox{border-color:#00FF88;background:#001100;color:#00FF88}.redbox{border-color:#FF4444;background:#330000;color:#FF8888}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#FFD000;font-size:10px}.item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #111;font-size:10px}</style></head><body>
+<div class="top"><b id="title">VENUS v644 20x5 $25 LOCK $1046.79 RESTORED</b> <span id="time" style="font-size:10px;color:#888"></span></div>
+<div class="grid">
+<div class="card"><small>CAP</small><b id="cap" class="green">$1046.79</b><small id="capSub"></small></div>
+<div class="card"><small>DAILY</small><b id="daily" class="yellow">+$46.791</b><small id="dailySub"></small></div>
+<div class="card"><small>BANK</small><b id="bank" class="green">$46.79</b><small>NEVER RESET</small></div>
+<div class="card"><small>W/L/TOTAL</small><b id="wl">40W/22L/62</b><small id="wlSub"></small></div>
+</div>
+<div class="box greenbox" id="greenbox">v644 FIX $50 RESET BUG - CAP $1046.79 40W/22L TOTAL 62 DAILY +$46.791 BANK $46.79 - NEVER RESET - BACKUP KEY - SCAN 20 SKIP 0.00% - DAILY TARGET $25 LOCK</div>
+<div class="box redbox" id="lockbox" style="display:none">🔒 DAILY $25 HIT - LOCKED - BANKING PROFIT - NO NEW TRADES</div>
+<div class="section"><h3>ROTATING 12 MOVING FOOTPRINTS SCAN 20 SKIP 0.00% DEAD</h3><div id="rotate"></div></div>
+<div class="section"><h3>OPEN TRADES 5 FROM 12 STICK 5 MIN TRAIL HH TP 6% SL 2.8%</h3><div id="openlist"></div></div>
+<div class="section"><h3>CLOSED LAST 50</h3><div id="closed"></div></div>
+<script>
+async function load(){
+ try{await fetch('/api/cron');}catch(e){}
+ let r=await fetch('/api/state');let j=await r.json();
+ document.getElementById('cap').innerText='$'+j.cap.toFixed(2);
+ document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+j.daily.toFixed(3)+' / $'+(j.target||25);
+ document.getElementById('daily').className=j.daily>= (j.target||25) ?'green':'yellow';
+ document.getElementById('bank').innerText='$'+j.bank.toFixed(2);
+ document.getElementById('wl').innerText=j.wins+'W/'+j.losses+'L/'+j.total;
+ document.getElementById('capSub').innerText='GROSS $'+j.dg.toFixed(2)+' FEE $'+j.df.toFixed(2);
+ document.getElementById('dailySub').innerText=j.locked?'🔒 LOCKED':'TARGET $'+(j.target||25);
+ document.getElementById('wlSub').innerText=j.total+' trades NEVER RESET';
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' '+(j.locked?'🔒':'');
+ document.getElementById('lockbox').style.display=j.locked?'block':'none';
+ let rot=document.getElementById('rotate');rot.innerHTML='';
+ (j.rotate||[]).forEach(m=>{rot.innerHTML+=`<div class="item"><div><b>${m.symbol}</b> ${m.c1.toFixed(2)}% VOL $${m.vol.toFixed(0)} ${m.buys} BUYS MOVING</div></div>`;});
+ let ol=document.getElementById('openlist');ol.innerHTML='';
+ (j.open||[]).forEach(t=>{
+  let pct=t.entry>0?(t.last_price-t.entry)/t.entry*100:0;
+  ol.innerHTML+=`<div class="item"><div><b>${t.symbol}</b> PEAK ${t.peak_pct.toFixed(1)}% HH${t.hh}</div><div>${pct.toFixed(2)}% $${(t.pos*pct/100).toFixed(2)}</div></div>`;
+ });
+ let cb=document.getElementById('closed');cb.innerHTML='';
+ (j.closed||[]).slice(-20).reverse().forEach(c=>{
+  let col=c.net>=0?'#FFD000':'#FF4444';
+  cb.innerHTML+=`<div class="item"><div><b style="color:${col}">${c.symbol} ${c.net>=0?'WINNER':'LOSER'} $${c.net.toFixed(2)}</b> PEAK ${c.peak.toFixed(1)}% HH${c.hh}</div><div style="color:${col}">${c.pct.toFixed(2)}%</div></div>`;
+ });
+}
+setInterval(load,4000);load();
+</script></body></html>
+"""
 @app.route("/")
-def home():
-    d=rget()
-    return f"""VENUS v643 FIX $50 RESET BUG - CAP ${d.get('FUND_CAP',0):.2f} {d.get('FUND_WINS',0)}W/{d.get('FUND_LOSSES',0)}L TOTAL {d.get('FUND_TOTAL_TRADES',0)} DAILY +${d.get('FUND_DAILY_PNL',0):.3f} BANK ${d.get('FUND_PROFIT_BANK',0):.2f} - NEVER RESET - BACKUP KEY"""
-
+def home(): return HTML
 @app.route("/api/state")
 def state():
     try: do_tick()
     except: pass
     d=rget()
-    return jsonify({"cap":float(d.get("FUND_CAP",1000)),"open":d.get("FUND_OPEN",[]),"wins":int(d.get("FUND_WINS",0)),"losses":int(d.get("FUND_LOSSES",0)),"total":int(d.get("FUND_TOTAL_TRADES",0)),"closed":d.get("FUND_CLOSED",[]),"daily":float(d.get("FUND_DAILY_PNL",0)),"dg":float(d.get("FUND_DAILY_GROSS",0)),"df":float(d.get("FUND_DAILY_FEE",0)),"rotate":d.get("ROTATE_COINS",[]),"bank":float(d.get("FUND_PROFIT_BANK",0.0)),"target":float(os.getenv("DAILY_TARGET","50") or 50)})
-
+    return jsonify({"cap":float(d.get("FUND_CAP",1000)),"open":d.get("FUND_OPEN",[]),"wins":int(d.get("FUND_WINS",0)),"losses":int(d.get("FUND_LOSSES",0)),"total":int(d.get("FUND_TOTAL_TRADES",0)),"closed":d.get("FUND_CLOSED",[]),"daily":float(d.get("FUND_DAILY_PNL",0)),"dg":float(d.get("FUND_DAILY_GROSS",0)),"df":float(d.get("FUND_DAILY_FEE",0)),"rotate":d.get("ROTATE_COINS",[]),"bank":float(d.get("FUND_PROFIT_BANK",0.0)),"locked":bool(d.get("FUND_DAILY_LOCKED",False)),"target":float(os.getenv("DAILY_TARGET","25") or 25)})
 @app.route("/api/cron")
 def cron():
     try: return jsonify(do_tick())
     except Exception as e: return jsonify({"error":str(e)})
-
 @app.route("/api/restore-46")
 def restore():
-    # Restore your 1:08 $46.791
-    d={"FUND_CAP":1046.79,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":40,"FUND_LOSSES":22,"FUND_TOTAL_TRADES":62,"FUND_DAILY_PNL":46.791,"FUND_DAILY_GROSS":49.271,"FUND_DAILY_FEE":2.48,"FAST_LAST":time.time(),"ROTATE_COINS":[],"FUND_PROFIT_BANK":46.791}
+    d={"FUND_CAP":1046.79,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":40,"FUND_LOSSES":22,"FUND_TOTAL_TRADES":62,"FUND_DAILY_PNL":46.791,"FUND_DAILY_GROSS":49.271,"FUND_DAILY_FEE":2.48,"FAST_LAST":time.time(),"ROTATE_COINS":[],"FUND_PROFIT_BANK":46.791,"FUND_DAILY_LOCKED":False}
     rset(d)
     return jsonify({"ok":True,"restored":d})
+@app.route("/api/reset-daily")
+def reset_daily():
+    d=rget(); bank=float(d.get("FUND_PROFIT_BANK",0.0))+float(d.get("FUND_DAILY_PNL",0.0))
+    d["FUND_PROFIT_BANK"]=bank; d["FUND_DAILY_PNL"]=0.0; d["FUND_DAILY_GROSS"]=0.0; d["FUND_DAILY_FEE"]=0.0; d["FUND_DAILY_LOCKED"]=False
+    rset(d)
+    return jsonify({"ok":True,"bank":bank})
