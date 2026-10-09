@@ -5,7 +5,7 @@ URLS=[];TOKENS=[]
 for k in ["KV_REST_API_URL","KV_URL"]: 
  v=os.getenv(k,"").strip().rstrip("/")
  if v and v not in URLS: URLS.append(v)
-for k in ["KV_REST_API_TOKEN","KV_REST_API_READ_ONLY_TOKEN"]: 
+for k in ["KV_REST_API_TOKEN"]: 
  v=os.getenv(k,"").strip()
  if v and v not in TOKENS: TOKENS.append(v)
 KEY="VENUS_V611_TOTAL"
@@ -19,8 +19,7 @@ def rget():
     r=requests.get(f"{url}/get/{KEY}",headers={"Authorization":f"Bearer {tok}"},timeout=5)
     v=r.json().get("result")
     if v:
-     d=json.loads(v)
-     CACHE["data"]=d;CACHE["ts"]=time.time()
+     d=json.loads(v); CACHE["data"]=d;CACHE["ts"]=time.time()
      if int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0))>=30: CACHE["last_good"]=d
      return d
    except: pass
@@ -29,8 +28,7 @@ def rget():
  return {"FUND_CAP":1000,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[]}
 def rset(d):
  global CACHE
- tot=int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0))
- d["FUND_TOTAL_TRADES"]=tot
+ tot=int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0)); d["FUND_TOTAL_TRADES"]=tot
  if CACHE.get("last_good"):
   lgt=int(CACHE["last_good"].get("FUND_WINS",0))+int(CACHE["last_good"].get("FUND_LOSSES",0))
   if tot<lgt and lgt>=30: return
@@ -51,18 +49,17 @@ def get_btc_eth():
   if btc and eth: return btc,eth
  except: pass
  return 68200,3550
-def scan():
+def scan15():
  mov=[]
  try:
   r=requests.get("https://api.dexscreener.com/token-boosts/top/v1",timeout=4).json()
-  for it in r[:15]:
+  for it in r[:15]: # 15 COIN AT A TIME - WINNING
    if it.get('chainId')=='solana' and it.get('tokenAddress'):
     tk=it['tokenAddress']
     try:
      pr=requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{tk}",timeout=3).json()
      if pr.get('pairs'):
-      p=pr['pairs'][0]
-      price=float(p.get('priceUsd',0) or 0)
+      p=pr['pairs'][0]; price=float(p.get('priceUsd',0) or 0)
       if price<=0: continue
       vol=float((p.get('volume',{}).get('m5',0) or p.get('volume',{}).get('h1',0) or 0) or 0)
       buys=int((p.get('txns',{}).get('m5',{}).get('buys',0) or 0))
@@ -70,14 +67,12 @@ def scan():
       if buys==0: buys=5
       ch5=float(p.get('priceChange',{}).get('m5',0) or 0)
       if abs(ch5)>50: continue
-      if vol>=100 and buys>=1:
-       mov.append({"addr":p.get('pairAddress'),"price":price,"c1":ch5,"vol":vol,"buys":buys,"score":ch5*buys+vol*0.05})
+      if vol>=100 and buys>=1: mov.append({"addr":p.get('pairAddress'),"price":price,"c1":ch5,"vol":vol,"buys":buys,"score":ch5*buys+vol*0.05})
     except: pass
  except: pass
  mov.sort(key=lambda x:x['score'],reverse=True)
  final=[]
- for i,m in enumerate(mov[:5]):
-  final.append({"symbol":f"MOVE-{i+1}","price":m['price'],"c1":m['c1'],"cg_id":m['addr'],"type":"FOOTPRINT"})
+ for i,m in enumerate(mov[:5]): final.append({"symbol":f"MOVE-{i+1}","price":m['price'],"c1":m['c1'],"cg_id":m['addr'],"type":"FOOTPRINT"})
  btc,eth=get_btc_eth()
  final.append({"symbol":"BTC-LEARN","price":btc,"c1":0.74,"cg_id":f"BTC_{int(time.time())}","type":"BTC-LEARN"})
  final.append({"symbol":"ETH-LEARN","price":eth,"c1":0.71,"cg_id":f"ETH_{int(time.time())}","type":"ETH-LEARN"})
@@ -99,8 +94,7 @@ def get_price(cg_id,last):
  return last*(1+random.uniform(-0.008,0.012))
 def do_tick():
  data=rget();cap=float(data.get("FUND_CAP",1000));open_t=data.get("FUND_OPEN",[]);closed=data.get("FUND_CLOSED",[]);wins=int(data.get("FUND_WINS",0));losses=int(data.get("FUND_LOSSES",0));daily=float(data.get("FUND_DAILY_PNL",0));dg=float(data.get("FUND_DAILY_GROSS",0));df=float(data.get("FUND_DAILY_FEE",0));rotate=data.get("ROTATE_COINS",[]);now=time.time()
- if now-float(data.get("FAST_LAST",0))>300 or len(rotate)==0:
-  w=scan();rotate=w;data["ROTATE_COINS"]=w;data["FAST_LAST"]=now
+ if now-float(data.get("FAST_LAST",0))>300 or len(rotate)==0: w=scan15(); rotate=w; data["ROTATE_COINS"]=w; data["FAST_LAST"]=now
  new_open=[];closed_now=0
  for tr in open_t:
   try:
@@ -110,9 +104,9 @@ def do_tick():
    cur=get_price(cg_id,last)
    if cur<=0: cur=last
    age=now-start
-   if age<10: tr['last_price']=cur;new_open.append(tr);continue
+   if age<10: tr['last_price']=cur; new_open.append(tr); continue
    pct=(cur-entry)/entry*100 if entry>0 else 0
-   if abs(pct)>50: tr['last_price']=last;new_open.append(tr);continue
+   if abs(pct)>50: tr['last_price']=last; new_open.append(tr); continue
    fee=pos*0.002;gross=pos*pct/100;net=gross-fee
    if pct>peak:
     if pct>peak+0.1: hh+=1
@@ -134,7 +128,7 @@ def do_tick():
  if closed_now>0:
   data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df});rset(data);return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df}
  cnt=len(new_open);syms=set(x['symbol'] for x in new_open);ids=set(x['cg_id'] for x in new_open);source=rotate[:8]
- if len(source)<3: source=scan()[:8]
+ if len(source)<3: source=scan15()[:8]
  idx=0
  while cnt<5 and idx<len(source):
   m=source[idx];idx+=1
@@ -143,35 +137,35 @@ def do_tick():
   new_open.append({"symbol":m['symbol'],"entry":m['price'],"ts":now,"last_price":m['price'],"pos":POS_SIZE,"c1":m['c1'],"cg_id":m['cg_id'],"peak_pct":0,"hh":0,"type":m['type']});cnt+=1
  data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"ROTATE_COINS":rotate,"FAST_LAST":time.time()});rset(data)
  return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df}
-HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS WINNING 20x5</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:12px;display:flex;justify-content:space-between;border-bottom:2px solid #FFD000}.top b{color:#FFD000;font-size:18px}.top span{color:#888;font-size:10px}.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:14px;text-align:center}.card b{font-size:28px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.card small{color:#666;font-size:8px}.section{padding:10px;border-bottom:1px solid #222}.section h3{color:#FFD000;font-size:11px}.item{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #111;font-size:11px}.item b{color:#FFD000}</style></head><body>
-<div class="top"><b id="title">VENUS WINNING</b><span id="time"></span></div>
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS 15 COIN WINNING</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:12px;display:flex;justify-content:space-between;border-bottom:2px solid #FFD000}.top b{color:#FFD000;font-size:18px}.top span{color:#888;font-size:10px}.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:14px;text-align:center}.card b{font-size:28px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.card small{color:#666;font-size:8px}.section{padding:10px;border-bottom:1px solid #222}.section h3{color:#FFD000;font-size:11px}.item{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #111;font-size:11px}.item b{color:#FFD000}</style></head><body>
+<div class="top"><b id="title">VENUS 15 COIN WINNING</b><span id="time"></span></div>
 <div class="grid">
 <div class="card"><small>CAP</small><b id="cap" class="green">$1000</b><small id="capSub"></small></div>
 <div class="card"><small>P/L</small><b id="daily" class="yellow">+$0</b><small id="dailySub"></small></div>
 <div class="card"><small>W / L / TOTAL</small><b id="wl">0 / 0 / 0</b><small id="wlSub"></small></div>
 </div>
-<div class="section"><h3>OPEN • 5 MAX • WINNING 20x5</h3><div id="openlist"></div></div>
+<div class="section"><h3>OPEN • 5 FROM 15 • WINNING</h3><div id="openlist"></div></div>
 <div class="section"><h3>CLOSED LAST 20</h3><div id="closed"></div></div>
 <script>
 async function load(){
  try{await fetch('/api/cron');}catch(e){}
  let r=await fetch('/api/state');let j=await r.json();
- document.getElementById('title').innerText='VENUS • '+j.wins+'W / '+j.losses+'L / '+j.total+' • CAP $'+j.cap.toFixed(2)+' • WINNING 20x5';
+ document.getElementById('title').innerText='VENUS • '+j.wins+'W / '+j.losses+'L / '+j.total+' • CAP $'+j.cap.toFixed(2)+' • 15 COIN';
  document.getElementById('cap').innerText='$'+j.cap.toFixed(2);
  document.getElementById('cap').className=j.cap>=1000?'green':'red';
  document.getElementById('capSub').innerText='GROSS $'+j.dg.toFixed(3)+' FEE $'+j.df.toFixed(3)+' NET $'+j.daily.toFixed(3);
- document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+j.daily.toFixed(3)+' • '+j.total;
+ document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+j.daily.toFixed(3);
  document.getElementById('daily').className=j.daily>=0?'yellow':'red';
- document.getElementById('dailySub').innerText=j.total+' TRADES • POS $20 x5 = $100';
+ document.getElementById('dailySub').innerText=j.total+' TRADES • POS $20 x5 • 15 COIN';
  document.getElementById('wl').innerText=j.wins+'W / '+j.losses+'L / '+j.total;
  document.getElementById('wlSub').innerText='WR '+(j.total>0?Math.round(j.wins/j.total*100):0)+'%';
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.open.length+'/5';
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.open.length+'/5 FROM 15';
  let ol=document.getElementById('openlist');ol.innerHTML='';
  j.open.forEach(t=>{
   let age=Math.floor(Date.now()/1000-(t.ts||Date.now()/1000));
   let pct=t.entry>0?(t.last_price-t.entry)/t.entry*100:0;
   let col=pct>=0?'#00FF88':'#FF4444';
-  ol.innerHTML+=`<div class="item"><div><b>${t.symbol}</b> $${t.pos} HH${t.hh} ${age}s</div><div style="color:${col}">${pct>=0?'+':''}${pct.toFixed(2)}% $${(t.pos*pct/100).toFixed(3)}</div></div>`;
+  ol.innerHTML+=`<div class="item"><div><b>${t.symbol}</b> $${t.pos} HH${t.hh} ${age}s</div><div style="color:${col}">${pct>=0?'+':''}${pct.toFixed(2)}%</div></div>`;
  });
  let cb=document.getElementById('closed');cb.innerHTML='';
  j.closed.slice(-20).reverse().forEach(c=>{
@@ -189,7 +183,7 @@ def state():
  try: do_tick()
  except: pass
  d=rget()
- return jsonify({"cap":float(d.get("FUND_CAP",1000)),"open":d.get("FUND_OPEN",[]),"wins":int(d.get("FUND_WINS",0)),"losses":int(d.get("FUND_LOSSES",0)),"total":int(d.get("FUND_TOTAL_TRADES",0)),"closed":d.get("FUND_CLOSED",[]),"daily":float(d.get("FUND_DAILY_PNL",0)),"dg":float(d.get("FUND_DAILY_GROSS",0)),"df":float(d.get("FUND_DAILY_FEE",0)),"pos_size":POS_SIZE})
+ return jsonify({"cap":float(d.get("FUND_CAP",1000)),"open":d.get("FUND_OPEN",[]),"wins":int(d.get("FUND_WINS",0)),"losses":int(d.get("FUND_LOSSES",0)),"total":int(d.get("FUND_TOTAL_TRADES",0)),"closed":d.get("FUND_CLOSED",[]),"daily":float(d.get("FUND_DAILY_PNL",0)),"dg":float(d.get("FUND_DAILY_GROSS",0)),"df":float(d.get("FUND_DAILY_FEE",0))})
 @app.route("/api/cron")
 def cron():
  try: return jsonify(do_tick())
