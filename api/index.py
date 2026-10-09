@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+Jofrom flask import Flask, jsonify
 import os, json, requests, time
 app = Flask(__name__)
 UP_URL = (os.getenv("KV_REST_API_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
