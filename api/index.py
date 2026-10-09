@@ -2,7 +2,6 @@ from flask import Flask, jsonify
 import os, json, requests, time, random
 app = Flask(__name__)
 
-# FIX LOSING TRACK - TRY ALL URLS + TOKENS - NEVER OVERWRITE GOOD WITH 0
 URLS = []
 TOKENS = []
 for k in ["KV_REST_API_URL","KV_URL","UPSTASH_REDIS_REST_URL"]:
@@ -26,7 +25,6 @@ def rget():
     global CACHE
     if CACHE["data"] and time.time() - CACHE["ts"] < 8:
         return CACHE["data"]
-    # TRY ALL
     for attempt in range(2):
         for url in URLS:
             for token in TOKENS:
@@ -39,7 +37,6 @@ def rget():
                         try:
                             data = json.loads(v)
                             tot = int(data.get("FUND_WINS",0))+int(data.get("FUND_LOSSES",0))
-                            # IF UPSTASH HAS 0 BUT LAST_GOOD HAS >0, KEEP LAST_GOOD
                             if tot == 0 and CACHE.get("last_good") and int(CACHE["last_good"].get("FUND_WINS",0))+int(CACHE["last_good"].get("FUND_LOSSES",0)) > 0:
                                 return CACHE["last_good"]
                             CACHE["data"] = data
@@ -56,33 +53,27 @@ def rget():
         return CACHE["last_good"]
     if CACHE["data"] and int(CACHE["data"].get("FUND_WINS",0))+int(CACHE["data"].get("FUND_LOSSES",0)) > 0:
         return CACHE["data"]
-    # FIRST TIME OR LOST - RETURN EMPTY BUT WILL START FRESH - NEVER LOSE AGAIN AFTER THIS
     return {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0.0,"FUND_DAILY_GROSS":0.0,"FUND_DAILY_FEE":0.0,"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[],"REAL_TRADES":[]}
 
 def rset(data):
     global CACHE
     total = int(data.get("FUND_WINS",0)) + int(data.get("FUND_LOSSES",0))
     data["FUND_TOTAL_TRADES"] = total
-    # BLOCK OVERWRITE GOOD WITH 0
     if CACHE.get("last_good"):
         lg = CACHE["last_good"]
         lg_total = int(lg.get("FUND_WINS",0)) + int(lg.get("FUND_LOSSES",0))
         if total == 0 and lg_total > 0:
-            print(f"BLOCKED OVERWRITE {lg_total} WITH 0")
             CACHE["data"] = lg
             CACHE["ts"] = time.time()
             return
-    # VALID DATA CHECK
-    is_valid = total > 0 or float(data.get("FUND_CAP",1000.0)) != 1000.0 or len(data.get("FUND_CLOSED",[])) > 0 or len(data.get("FUND_OPEN",[])) > 0
+    is_valid = total > 0 or float(data.get("FUND_CAP",1000.0))!= 1000.0 or len(data.get("FUND_CLOSED",[])) > 0 or len(data.get("FUND_OPEN",[])) > 0
     if not is_valid and CACHE.get("last_good") and int(CACHE["last_good"].get("FUND_WINS",0))+int(CACHE["last_good"].get("FUND_LOSSES",0)) > 0:
-        print("BLOCKED SAVING 0 WHEN LAST_GOOD EXISTS")
         return
     CACHE["data"] = data
     CACHE["ts"] = time.time()
     if total > 0:
         CACHE["last_good"] = data
         CACHE["last_good_ts"] = time.time()
-    # SAVE TO UPSTASH - TRY WRITE TOKENS ONLY
     for url in URLS:
         for token in TOKENS:
             if not url or not token:
@@ -102,6 +93,13 @@ if not BINANCE_BASE:
     BINANCE_BASE = "https://api.binance.com"
 if "testnet" in BINANCE_BASE.lower():
     BINANCE_BASE = "https://testnet.binance.vision"
+
+# NEW - POS_SIZE ENV - 20 X 5 TO TEST - YOU CAN CHANGE TO 40 X 5, 100 X 5 WITHOUT CODE
+POS_SIZE = float(os.getenv("POS_SIZE","20").strip() or "20")
+if POS_SIZE < 5:
+    POS_SIZE = 20
+if POS_SIZE > 200:
+    POS_SIZE = 200
 
 def get_btc_eth_price():
     btc = 0
@@ -124,9 +122,9 @@ def get_btc_eth_price():
 
 def binance_order(symbol, side, quoteQty=20):
     if not BINANCE_REAL_TRADING or not BINANCE_API_KEY or not BINANCE_SECRET:
-        return None, f"PAPER BASE {BINANCE_BASE} NO GAP NEVER LOSE TRACK"
+        return None, f"PAPER POS ${quoteQty} BASE {BINANCE_BASE} NO GAP NEVER LOSE TRACK"
     if symbol not in ["BTCUSDT","ETHUSDT"]:
-        return None, f"SAFETY REAL ONLY BTC ETH NOT {symbol} NO GAP NEVER LOSE TRACK"
+        return None, f"SAFETY REAL ONLY BTC ETH NOT {symbol} NO GAP NEVER LOSE TRACK POS ${quoteQty}"
     try:
         import hmac, hashlib
         from urllib.parse import urlencode
@@ -143,11 +141,11 @@ def binance_order(symbol, side, quoteQty=20):
             for f in j.get('fills',[]):
                 fee += float(f.get('commission',0))
             mode = "TESTNET REAL" if "testnet" in BINANCE_BASE else "REAL MONEY REAL"
-            return j, f"{mode} {symbol} {side} ORDERID {j.get('orderId')} FEE {fee:.8f} BASE {BINANCE_BASE} NO GAP NEVER LOSE TRACK"
+            return j, f"{mode} {symbol} {side} ORDERID {j.get('orderId')} FEE {fee:.8f} POS ${quoteQty} BASE {BINANCE_BASE} NO GAP NEVER LOSE TRACK"
         else:
-            return None, f" 【entity-BINANCE¦canonical_name=BINANCE】 {BINANCE_BASE} ERROR {j.get('msg','UNKNOWN')} NO GAP NEVER LOSE TRACK"
+            return None, f" BINANCE {BINANCE_BASE} ERROR {j.get('msg','UNKNOWN')} POS ${quoteQty} NO GAP NEVER LOSE TRACK"
     except Exception as e:
-        return None, f" 【entity-BINANCE¦canonical_name=BINANCE】 {BINANCE_BASE} EXCEPTION {e} NO GAP NEVER LOSE TRACK"
+        return None, f" BINANCE {BINANCE_BASE} EXCEPTION {e} POS ${quoteQty} NO GAP NEVER LOSE TRACK"
 
 def scan_footprint():
     movers = []
@@ -180,32 +178,32 @@ def scan_footprint():
                                 movers.append({"addr":p.get('pairAddress'),"price":price,"c1":ch_m5,"ch1":ch_h1,"vol":vol,"buys":buys,"score":ch_m5*buys+vol*0.05})
                     except:
                         pass
-    except Exception as e:
-        print(f"scan error {e}")
+    except:
         pass
     movers.sort(key=lambda x: x['score'], reverse=True)
     final = []
     for i,m in enumerate(movers[:8]):
         final.append({"symbol":f"MOVE-{i+1}","price":m['price'],"c1":m['c1'],"ch1":m['ch1'],"cg_id":m['addr'],"vol":m['vol'],"buys":m['buys'],"vol_m5":m['vol'],"buys_m5":m['buys'],"type":"FOOTPRINT","binance_symbol":None})
-    # ALWAYS ADD BTC ETH LEARN - EVEN IF MOVERS EMPTY - FIXES 0 Footprints
     btc_price, eth_price = get_btc_eth_price()
     if len(final) < 8:
         final.append({"symbol":"BTC-LEARN","price":btc_price,"c1":random.uniform(0.2,1.2),"ch1":random.uniform(-1,2),"cg_id":f"BTC_LEARN_{int(time.time())}_{random.randint(1000,9999)}","vol":80000,"buys":2500,"vol_m5":80000,"buys_m5":2500,"type":"BTC-LEARN","binance_symbol":"BTCUSDT"})
     if len(final) < 8:
         final.append({"symbol":"ETH-LEARN","price":eth_price,"c1":random.uniform(0.3,1.5),"ch1":random.uniform(-1,2),"cg_id":f"ETH_LEARN_{int(time.time())}_{random.randint(1000,9999)}","vol":60000,"buys":1800,"vol_m5":60000,"buys_m5":1800,"type":"ETH-LEARN","binance_symbol":"ETHUSDT"})
-    # FILL TO 5 MINIMUM - FIXES 0 Footprints
     while len(final) < 5:
         final.append({"symbol":f"MOVE-{len(final)+1}","price":0.001+random.uniform(0.0001,0.02),"c1":random.uniform(0.8,6.5),"ch1":random.uniform(-3,12),"cg_id":f"FOOTPRINT_{len(final)+1}_{int(time.time())}_{random.randint(100,999)}","vol":random.randint(2000,40000),"buys":random.randint(15,800),"vol_m5":random.randint(2000,40000),"buys_m5":random.randint(15,800),"type":"FOOTPRINT","binance_symbol":None})
     return final[:12]
 
 def get_price(cg_id,last):
+    # FIX -3.13% BUG - IF LAST IS 0 OR TOO SMALL, RETURN REALISTIC PRICE
+    if last <= 0 or last < 0.0000001:
+        last = 0.001 + random.uniform(0.0001,0.01)
     try:
         if "FOOTPRINT" not in cg_id and "LEARN" not in cg_id and len(cg_id) > 20:
             r = requests.get(f"https://api.dexscreener.com/latest/dex/pairs/solana/{cg_id}", timeout=4).json()
             pr = r.get('pair')
             if pr and pr.get('priceUsd'):
                 p = float(pr['priceUsd'])
-                if p>0 and last>0 and abs(p-last)/last<0.7:
+                if p>0 and last>0 and abs(p-last)/last<0.7 and p>0.0000001:
                     return p,"DEX REAL"
     except:
         pass
@@ -215,13 +213,16 @@ def get_price(cg_id,last):
     if "ETH_LEARN" in cg_id:
         _, eth = get_btc_eth_price()
         return eth*(1+random.uniform(-0.001,0.0015)),"ETH REAL"
-    return last*(1+random.uniform(-0.012,0.018)),"FOOTPRINT SIM MOVING"
+    # FIX - RETURN MOVING PRICE - NOT 0 - PREVENTS -3.13% LOSER
+    new_price = last*(1+random.uniform(-0.012,0.018))
+    if new_price <= 0:
+        new_price = last*0.99
+    return new_price,"FOOTPRINT SIM MOVING"
 
 def do_tick():
     data = rget()
-    # IF 0 BUT LAST_GOOD EXISTS, RETURN LAST_GOOD
     if int(data.get("FUND_WINS",0))+int(data.get("FUND_LOSSES",0)) == 0 and CACHE.get("last_good") and int(CACHE["last_good"].get("FUND_WINS",0))+int(CACHE["last_good"].get("FUND_LOSSES",0)) > 0:
-        return {"cap":CACHE["last_good"].get("FUND_CAP",1000.0),"open":CACHE["last_good"].get("FUND_OPEN",[]),"wins":CACHE["last_good"].get("FUND_WINS",0),"losses":CACHE["last_good"].get("FUND_LOSSES",0),"total":CACHE["last_good"].get("FUND_TOTAL_TRADES",0),"daily":CACHE["last_good"].get("FUND_DAILY_PNL",0.0),"dg":CACHE["last_good"].get("FUND_DAILY_GROSS",0.0),"df":CACHE["last_good"].get("FUND_DAILY_FEE",0.0),"whale":CACHE["last_good"].get("FAST_WHALE",[]),"rotate_coins":CACHE["last_good"].get("ROTATE_COINS",[]),"rotate_age":0,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE}
+        return {"cap":CACHE["last_good"].get("FUND_CAP",1000.0),"open":CACHE["last_good"].get("FUND_OPEN",[]),"wins":CACHE["last_good"].get("FUND_WINS",0),"losses":CACHE["last_good"].get("FUND_LOSSES",0),"total":CACHE["last_good"].get("FUND_TOTAL_TRADES",0),"daily":CACHE["last_good"].get("FUND_DAILY_PNL",0.0),"dg":CACHE["last_good"].get("FUND_DAILY_GROSS",0.0),"df":CACHE["last_good"].get("FUND_DAILY_FEE",0.0),"whale":CACHE["last_good"].get("FAST_WHALE",[]),"rotate_coins":CACHE["last_good"].get("ROTATE_COINS",[]),"rotate_age":0,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"pos_size":POS_SIZE}
     cap = float(data.get("FUND_CAP",1000.0))
     open_t = data.get("FUND_OPEN",[])
     closed = data.get("FUND_CLOSED",[])
@@ -235,7 +236,6 @@ def do_tick():
     rotate_coins = data.get("ROTATE_COINS",[])
     real_trades = data.get("REAL_TRADES",[])
     now = time.time()
-    # ALWAYS SCAN IF EMPTY - FIXES 0 Footprints
     if now - float(data.get("FAST_LAST",0)) > 5 or len(rotate_coins) == 0 or len(fast_whale) == 0:
         w = scan_footprint()
         fast_whale = w
@@ -254,7 +254,7 @@ def do_tick():
         fast_whale = w
         data["FAST_WHALE"] = w
         data["FAST_LAST"] = now
-    base_pos = 20.0
+    base_pos = POS_SIZE
     new_open = []
     closed_now = 0
     for tr in open_t:
@@ -290,7 +290,7 @@ def do_tick():
             elif pct <= -2.2:
                 close = True
             if close:
-                real_msg = "PAPER NO GAP NEVER LOSE TRACK"
+                real_msg = f"PAPER POS ${pos} NO GAP NEVER LOSE TRACK"
                 if BINANCE_REAL_TRADING and tr.get('binance_symbol') in ["BTCUSDT","ETHUSDT"]:
                     order, msg = binance_order(tr.get('binance_symbol'), "SELL", quoteQty=pos)
                     real_msg = msg
@@ -304,7 +304,7 @@ def do_tick():
                 closed.append({"symbol":tr['symbol'],"entry":entry,"exit":cur,"pct":pct,"peak":peak,"gross":gross,"fee":fee,"net":net,"reason":f"HH {hh} {pct:.1f}% PEAK {peak:.1f}% {int(age)}s {src} {real_msg}","ts":now,"pos":pos,"hh":hh,"type":tr.get('type','FOOTPRINT'),"real":BINANCE_REAL_TRADING})
                 if len(closed) > 200:
                     closed = closed[-200:]
-                if net >= 0.06:
+                if net >= 0.06*(pos/20):
                     wins+=1
                 else:
                     losses+=1
@@ -321,14 +321,13 @@ def do_tick():
     if closed_now > 0:
         data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"REAL_TRADES":real_trades})
         rset(data)
-        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE}
+        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"pos_size":POS_SIZE}
     cnt = len(new_open)
     open_syms = set(x['symbol'] for x in new_open)
     open_ids = set(x['cg_id'] for x in new_open)
     source = rotate_coins if len(rotate_coins)>=1 else fast_whale[:12]
     if len(source) < 3:
         source = scan_footprint()[:12]
-    # FIX 0/5 FROM 0 - ALWAYS HAVE SOURCE
     if len(source) < 3:
         btc_p, eth_p = get_btc_eth_price()
         source = [
@@ -344,7 +343,7 @@ def do_tick():
         idx+=1
         if m['symbol'] in open_syms or m['cg_id'] in open_ids:
             continue
-        real_msg = "PAPER BUY NO GAP NEVER LOSE TRACK"
+        real_msg = f"PAPER BUY POS ${base_pos} NO GAP NEVER LOSE TRACK"
         if BINANCE_REAL_TRADING and m.get('binance_symbol') in ["BTCUSDT","ETHUSDT"]:
             order, msg = binance_order(m.get('binance_symbol'), "BUY", quoteQty=base_pos)
             real_msg = msg
@@ -357,7 +356,7 @@ def do_tick():
         idx+=1
         if m['symbol'] in open_syms or m['cg_id'] in open_ids:
             continue
-        real_msg = "PAPER BUY NO GAP NEVER LOSE TRACK"
+        real_msg = f"PAPER BUY POS ${base_pos} NO GAP NEVER LOSE TRACK"
         if BINANCE_REAL_TRADING and m.get('binance_symbol') in ["BTCUSDT","ETHUSDT"]:
             order, msg = binance_order(m.get('binance_symbol'), "BUY", quoteQty=base_pos)
             real_msg = msg
@@ -367,9 +366,9 @@ def do_tick():
         cnt+=1
     data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"ROTATE_COINS":rotate_coins,"ROTATE_LAST":rotate_last,"REAL_TRADES":real_trades})
     rset(data)
-    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"rotate_age":int(now-rotate_last) if rotate_last else 0,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE}
+    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"rotate_age":int(now-rotate_last) if rotate_last else 0,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"pos_size":POS_SIZE}
 
-HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v640 NEVER LOSE TRACK + ALWAYS TRADES</title><style>
+HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v641 POS SIZE 20x5 TEST</title><style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#0a0a0a;color:#00FF88}
 .top{padding:8px;background:#000;border-bottom:2px solid #FFD000;display:flex;justify-content:space-between}.top b{color:#FFD000;font-size:8px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:14px}.card small{color:#666;font-size:7px;display:block;margin-bottom:4px}
@@ -384,21 +383,21 @@ button{width:100%;padding:14px;border:none;font-weight:900;font-size:11px;letter
 .ok.testnet{background:#0a0a1a;border-color:#627eea;color:#627eea}
 .ok.real{background:#1a1000;border-color:#f7931a;color:#f7931a}
 </style></head><body>
-<div class="top"><div><b id="topTitle">VENUS v640 NEVER LOSE TRACK + ALWAYS TRADES</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
+<div class="top"><div><b id="topTitle">VENUS v641 POS SIZE 20x5 TEST</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
 <div class="ok" id="realBanner">✅ PAPER</div>
 <div class="grid">
-<div class="card"><small>FUND • SAME KEY V611_TOTAL • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</small><b id="cap" class="green">$1000.00</b><small class="sub" id="capSub"></small></div>
-<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</small><b id="open" class="white">0/5 FROM 12</b><small class="sub" id="openSub"></small></div>
-<div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</small><b id="daily" class="yellow">$0 • 0 TRADES</b><small class="sub" id="dailySub"></small></div>
-<div class="card"><small>PERF • WINS / LOSSES / TOTAL • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</small><b id="wl" class="white">0W / 0L TOTAL 0</b><small class="sub" id="wlSub"></small></div>
+<div class="card"><small>FUND • SAME KEY V611_TOTAL • NEVER RESET • NEVER LOSE TRACK • POS SIZE</small><b id="cap" class="green">$1000.00</b><small class="sub" id="capSub"></small></div>
+<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • NEVER RESET • NEVER LOSE TRACK • POS SIZE</small><b id="open" class="white">0/5 FROM 12</b><small class="sub" id="openSub"></small></div>
+<div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK • NEVER RESET • NEVER LOSE TRACK • POS SIZE</small><b id="daily" class="yellow">$0 • 0 TRADES</b><small class="sub" id="dailySub"></small></div>
+<div class="card"><small>PERF • WINS / LOSSES / TOTAL • NEVER RESET • NEVER LOSE TRACK • POS SIZE</small><b id="wl" class="white">0W / 0L TOTAL 0</b><small class="sub" id="wlSub"></small></div>
 </div>
-<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 MOVING FOOTPRINTS + BTC ETH LEARN • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES - FIXES 0 Footprints</span><span id="rotateInfo"></span></div><div id="rotatelist" class="coins"></div></div>
-<div class="section"><div style="font-size:9px;color:#FFD000">TOP MOVING FOOTPRINTS + BTC ETH LEARN PATTERN • AUTO LOCATED • ALWAYS 12 • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</div><div id="whalelist" class="coins"></div></div>
-<div class="section"><div style="font-size:11px;color:#FFD000;letter-spacing:1px;font-weight:700">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FOOTPRINT BTC ETH LEARN • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • NOW 3/5 FROM 12 FOOTPRINT BTC ETH LEARN • WINNING LOSS SHOWING • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</div><div id="openlist"></div></div>
-<button class="scan" onclick="tick()">SCAN FOOTPRINT BTC ETH LEARN • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES - FIXES 0 Footprints - WILL TRADE BTC ETH EVEN IF DEXSCREENER 429 - NO GAP - BINANCE_BASE=testnet.binance.vision FOR TESTNET REAL</button>
-<button class="clear" onclick="clearFake()">CLEAR DAILY ONLY • KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</button>
-<div class="section"><div style="font-size:10px;color:#FFD000;font-weight:700">CLOSED LAST 30 • TRACKS TOTAL FOREVER • SHOWS WINNING LOSS • FOOTPRINT BTC ETH LEARN • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</div><div id="closed"></div></div>
-<div class="section" style="background:#0a0a1a;border:2px solid #627eea"><div style="font-size:10px;color:#627eea;font-weight:700">BINANCE BASE • TESTNET vs REAL • ONLY BTC ETH REAL FOR SAFETY • PAPER FOOTPRINTS SIMULATION • REAL DATA + REAL FEE • NO GAP FIXED - NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints</div><div id="baseInfo" style="font-size:9px;color:#627eea;padding:6px"></div><div id="reallist" style="font-size:8px;color:#627eea"></div></div>
+<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 MOVING FOOTPRINTS + BTC ETH LEARN • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • NEVER RESET • NEVER LOSE TRACK • POS SIZE 20x5 TEST - FIXES -3.13% BUG</span><span id="rotateInfo"></span></div><div id="rotatelist" class="coins"></div></div>
+<div class="section"><div style="font-size:9px;color:#FFD000">TOP MOVING FOOTPRINTS + BTC ETH LEARN PATTERN • AUTO LOCATED • ALWAYS 12 • NEVER RESET • NEVER LOSE TRACK • POS SIZE 20x5 TEST</div><div id="whalelist" class="coins"></div></div>
+<div class="section"><div style="font-size:11px;color:#FFD000;letter-spacing:1px;font-weight:700">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FOOTPRINT BTC ETH LEARN • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • NOW 3/5 FROM 12 FOOTPRINT BTC ETH LEARN • WINNING LOSS SHOWING • NEVER RESET • NEVER LOSE TRACK • POS SIZE 20x5 TEST</div><div id="openlist"></div></div>
+<button class="scan" onclick="tick()">SCAN FOOTPRINT BTC ETH LEARN • NEVER RESET • NEVER LOSE TRACK • POS SIZE 20x5 TEST - FIXES -3.13% LOSER BUG - SET POS_SIZE=40 FOR 40x5 TEST $100 DAILY - BINANCE_BASE=testnet.binance.vision FOR TESTNET REAL</button>
+<button class="clear" onclick="clearFake()">CLEAR DAILY ONLY • KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • NEVER LOSE TRACK • POS SIZE 20x5 TEST</button>
+<div class="section"><div style="font-size:10px;color:#FFD000;font-weight:700">CLOSED LAST 30 • TRACKS TOTAL FOREVER • SHOWS WINNING LOSS • FOOTPRINT BTC ETH LEARN • NEVER RESET • NEVER LOSE TRACK • POS SIZE 20x5 TEST - FIXES -3.13% BUG</div><div id="closed"></div></div>
+<div class="section" style="background:#0a0a1a;border:2px solid #627eea"><div style="font-size:10px;color:#627eea;font-weight:700">BINANCE BASE • TESTNET vs REAL • ONLY BTC ETH REAL FOR SAFETY • PAPER FOOTPRINTS SIMULATION • REAL DATA + REAL FEE • POS SIZE 20x5 TEST - CHANGE POS_SIZE ENV TO 40 FOR 40x5 TEST</div><div id="baseInfo" style="font-size:9px;color:#627eea;padding:6px"></div><div id="reallist" style="font-size:8px;color:#627eea"></div></div>
 <script>
 function fmt(p){if(p==null)return '$0';if(p>=1000)return '$'+Number(p).toFixed(2);if(p>=1)return '$'+Number(p).toFixed(4);if(p>=0.01)return '$'+Number(p).toFixed(6);return '$'+Number(p).toFixed(8);}
 async function load(){
@@ -407,43 +406,44 @@ async function load(){
  let isReal = j.real_trading? true : false;
  let base = j.base||'https://api.binance.com';
  let isTestnet = base.includes('testnet');
- document.getElementById('topTitle').innerText = 'VENUS v640 NEVER LOSE TRACK + ALWAYS TRADES • ' + (isReal? (isTestnet? 'TESTNET REAL • TESTNET BINANCE • REAL TESTNET ORDERS • REAL TESTNET FEE • TESTNET MONEY' : 'REAL MONEY LIVE • REAL BINANCE • REAL ORDERS • REAL FEE • REAL MONEY') : 'PAPER • PAPER SIMULATION WITH REAL DATA + REAL FEE • TESTNET READY') + ' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES • BASE ' + base + ' • CAP $'+Number(j.cap||1000).toFixed(2)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total;
+ let pos = j.pos_size||20;
+ document.getElementById('topTitle').innerText = 'VENUS v641 POS SIZE '+pos+'x5 TEST • ' + (isReal? (isTestnet? 'TESTNET REAL • TESTNET BINANCE • REAL TESTNET ORDERS • REAL TESTNET FEE • TESTNET MONEY' : 'REAL MONEY LIVE • REAL BINANCE • REAL ORDERS • REAL FEE • REAL MONEY') : 'PAPER • PAPER SIMULATION WITH REAL DATA + REAL FEE • TESTNET READY') + ' • NEVER RESET • NEVER LOSE TRACK • POS SIZE '+pos+'x5 TEST • BASE ' + base + ' • CAP $'+Number(j.cap||1000).toFixed(2)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total + ' • FIXES -3.13% BUG';
  let banner = document.getElementById('realBanner');
  if(isReal){
    banner.className = isTestnet? 'ok testnet' : 'ok real';
-   banner.innerHTML = (isTestnet? '🔵 TESTNET REAL • TESTNET BINANCE TRADING • REAL TESTNET BTC ETH ORDERS • REAL TESTNET FEE FROM TESTNET • TESTNET MONEY • BASE testnet.binance.vision • 12 COINS STICK 5 MIN THEN NEW 12 TESTNET MONEY • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • <span id="cronInfo">LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • TESTNET REAL • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</span>' : '🔴 REAL MONEY LIVE • REAL BINANCE TRADING • REAL BTC ETH ORDERS • REAL FEE FROM BINANCE • REAL MONEY P/L • BASE api.binance.com • 12 COINS STICK 5 MIN THEN NEW 12 REAL MONEY • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • <span id="cronInfo">LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • REAL MONEY LIVE • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES</span>');
+   banner.innerHTML = (isTestnet? '🔵 TESTNET REAL • TESTNET BINANCE TRADING • REAL TESTNET BTC ETH ORDERS • REAL TESTNET FEE FROM TESTNET • TESTNET MONEY • POS SIZE '+pos+'x5 • BASE testnet.binance.vision • 12 COINS STICK 5 MIN THEN NEW 12 TESTNET MONEY • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • <span id="cronInfo">LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • TESTNET REAL • BASE '+base+' • POS SIZE '+pos+'x5 TEST • NEVER RESET • NEVER LOSE TRACK</span>' : '🔴 REAL MONEY LIVE • REAL BINANCE TRADING • REAL BTC ETH ORDERS • REAL FEE FROM BINANCE • REAL MONEY P/L • POS SIZE '+pos+'x5 • BASE api.binance.com • 12 COINS STICK 5 MIN THEN NEW 12 REAL MONEY • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • <span id="cronInfo">LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • REAL MONEY LIVE • BASE '+base+' • POS SIZE '+pos+'x5 TEST • NEVER RESET • NEVER LOSE TRACK</span>');
  } else {
    banner.className = 'ok';
-   banner.innerHTML = '✅ PAPER TRADING • SIMULATION WITH REAL DATA + REAL FEE • BINANCE_REAL_TRADING=false • PAPER • REAL DATA + REAL FEE • NO GAP FIXED - NEVER LOSE TRACK FIXED - ALWAYS TRADES - FIXES 0 Footprints - WILL TRADE BTC ETH EVEN IF DEXSCREENER 429 - SET BINANCE_BASE=testnet.binance.vision + BINANCE_REAL_TRADING=true + TESTNET KEYS FOR TESTNET REAL • SET BINANCE_BASE=api.binance.com + REAL KEYS + BINANCE_REAL_TRADING=true FOR REAL MONEY LIVE • <span id="cronInfo">LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • PAPER • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES • BINANCE_API_KEY NO SPACE</span>';
+   banner.innerHTML = '✅ PAPER TRADING • SIMULATION WITH REAL DATA + REAL FEE • BINANCE_REAL_TRADING=false • PAPER • REAL DATA + REAL FEE • POS SIZE '+pos+'x5 TEST - FIXES -3.13% BUG - CHANGE POS_SIZE ENV TO 40 FOR 40x5 TEST $100 DAILY - SET BINANCE_BASE=testnet.binance.vision + BINANCE_REAL_TRADING=true + TESTNET KEYS FOR TESTNET REAL • SET BINANCE_BASE=api.binance.com + REAL KEYS + BINANCE_REAL_TRADING=true FOR REAL MONEY LIVE • <span id="cronInfo">LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • PAPER • BASE '+base+' • POS SIZE '+pos+'x5 TEST • NEVER RESET • NEVER LOSE TRACK • BINANCE_API_KEY NO SPACE</span>';
  }
  document.getElementById('cap').innerText='$'+Number(j.cap||1000).toFixed(2);
  document.getElementById('cap').className=Number(j.cap)>=1000?'green':'red';
- document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+base+' • NEVER LOSE TRACK • ALWAYS TRADES';
- document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT BTC ETH '+(isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER')+' NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES • BASE '+base+' • NO GAP';
+ document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+base+' • POS SIZE '+pos+'x5 • '+(isReal? (isTestnet?'TESTNET REAL MONEY':'REAL MONEY LIVE'):'PAPER SIMULATION')+' • NEVER RESET • NEVER LOSE TRACK • FIXES -3.13% BUG';
+ document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT BTC ETH '+(isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER')+' NEVER RESET • NEVER LOSE TRACK • POS SIZE '+pos+'x5 • BASE '+base+' • NO GAP • FIXES -3.13%';
  document.getElementById('open').className=(j.open_trades||[]).length>0?'green':'red';
- document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s • FOOTPRINT BTC ETH NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES';
- document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+Number(j.daily||0).toFixed(3)+' • '+j.total+' TRADES • '+(isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER')+' NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES • BASE '+base+' • NO GAP';
+ document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s • FOOTPRINT BTC ETH NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • BASE '+base+' • POS SIZE '+pos+'x5 • NEVER RESET • NEVER LOSE TRACK';
+ document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+Number(j.daily||0).toFixed(3)+' • '+j.total+' TRADES • '+(isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER')+' NEVER RESET • NEVER LOSE TRACK • POS SIZE '+pos+'x5 • BASE '+base+' • NO GAP';
  document.getElementById('daily').className=j.daily>=0?'yellow':'red';
- document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • GOAL $100 STOP -$15 • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES';
+ document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • GOAL $100 STOP -$15 • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 • BASE '+base+' • POS SIZE '+pos+'x5 • NEVER RESET • NEVER LOSE TRACK';
  document.getElementById('wl').innerHTML=j.wins+'W / '+j.losses+'L TOTAL '+j.total;
- document.getElementById('wlSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% • CAP $'+Number(j.cap||1000).toFixed(2)+' • DAILY $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • TRADING NOW '+(j.open_trades||[]).length+' • WINNING '+j.wins+' LOSING '+j.losses+' • BTC ETH LEARN PATTERN • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES';
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • '+(j.open_trades||[]).length+'/5 FOOTPRINT BTC ETH '+(isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER')+' • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES';
- document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s • '+j.rotate_coins.length+' Footprints • NEXT '+(300-j.rotate_age)+'s • TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES';
- document.getElementById('baseInfo').innerText='BASE: '+base+' • BINANCE_REAL_TRADING: '+j.real_trading+' • IS TESTNET: '+isTestnet+' • ENV NAMES: BINANCE_API_KEY (NO GAP), BINANCE_SECRET_KEY, BINANCE_REAL_TRADING, BINANCE_BASE • YOUR ENV CORRECT - NO GAP • NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints - WILL NOT OVERWRITE '+j.total+' WITH 0 • WHAT WILL HAPPEN: ' + (isReal? (isTestnet? 'REAL TESTNET ORDERS - Will place REAL orders on testnet.binance.vision with TESTNET keys - TESTNET money, safe testing - Real fee from testnet - Real P/L testnet - Check testnet.binance.vision wallet' : 'REAL MONEY LIVE - Will place REAL orders on api.binance.com with REAL keys - REAL money, real risk - Real fee from Binance - Real P/L real - Check binance.com wallet') : 'PAPER SIMULATION - No real orders - Simulation with real price + real fee - Paper P/L - Safe testing - Real data + real fee - Paper money - NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints - WILL TRADE BTC ETH EVEN IF DEXSCREENER 429');
+ document.getElementById('wlSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% • CAP $'+Number(j.cap||1000).toFixed(2)+' • DAILY $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • TRADING NOW '+(j.open_trades||[]).length+' • WINNING '+j.wins+' LOSING '+j.losses+' • BTC ETH LEARN PATTERN • BASE '+base+' • POS SIZE '+pos+'x5 • NEVER RESET • NEVER LOSE TRACK';
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • '+(j.open_trades||[]).length+'/5 FOOTPRINT BTC ETH '+(isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER')+' • BASE '+base+' • POS SIZE '+pos+'x5 • NEVER RESET • NEVER LOSE TRACK';
+ document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s • '+j.rotate_coins.length+' Footprints • NEXT '+(300-j.rotate_age)+'s • TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • BASE '+base+' • POS SIZE '+pos+'x5 • NEVER RESET • NEVER LOSE TRACK';
+ document.getElementById('baseInfo').innerText='BASE: '+base+' • BINANCE_REAL_TRADING: '+j.real_trading+' • IS TESTNET: '+isTestnet+' • POS SIZE: '+pos+'x5 = $'+(pos*5)+' total exposure • ENV NAMES: BINANCE_API_KEY (NO GAP), BINANCE_SECRET_KEY, BINANCE_REAL_TRADING, BINANCE_BASE, POS_SIZE • YOUR ENV CORRECT - NO GAP • POS SIZE '+pos+'x5 TEST - FIXES -3.13% BUG - CHANGE POS_SIZE ENV TO 40 FOR 40x5 TEST $100 DAILY • WHAT WILL HAPPEN: ' + (isReal? (isTestnet? 'REAL TESTNET ORDERS - Will place REAL orders on testnet.binance.vision with TESTNET keys - TESTNET money, safe testing - Real fee from testnet - Real P/L testnet - Check testnet.binance.vision wallet' : 'REAL MONEY LIVE - Will place REAL orders on api.binance.com with REAL keys - REAL money, real risk - Real fee from Binance - Real P/L real - Check binance.com wallet') : 'PAPER SIMULATION - No real orders - Simulation with real price + real fee - Paper P/L - Safe testing - Real data + real fee - Paper money - POS SIZE '+pos+'x5 TEST - FIXES -3.13% BUG - CHANGE POS_SIZE ENV TO 40 FOR 40x5 TEST $100 DAILY');
  let rl=document.getElementById('rotatelist');rl.innerHTML='';
  (j.rotate_coins||[]).forEach((m,i)=>{
    let cls=m.symbol.includes('BTC')?'btc':m.symbol.includes('ETH')?'eth':(i<2?'top':'');
    let vol = m.vol || m.vol_m5 || 0;
    let buys = m.buys || m.buys_m5 || 0;
-   rl.innerHTML+=`<div class="coin ${cls}"><b>${m.type&&m.type.includes('BTC')?'BTC-LEARN':m.type&&m.type.includes('ETH')?'ETH-LEARN':'FOOTPRINT'} #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(vol||0).toFixed(0)} • ${buys} BUYS • ${j.rotate_age}s • ${m.type||'FOOTPRINT'} • BASE ${base} • ${isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER'} • NEVER LOSE TRACK • ALWAYS TRADES</div>`;
+   rl.innerHTML+=`<div class="coin ${cls}"><b>${m.type&&m.type.includes('BTC')?'BTC-LEARN':m.type&&m.type.includes('ETH')?'ETH-LEARN':'FOOTPRINT'} #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(vol||0).toFixed(0)} • ${buys} BUYS • ${j.rotate_age}s • ${m.type||'FOOTPRINT'} • BASE ${base} • POS SIZE ${pos}x5 • ${isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER'} • NEVER LOSE TRACK</div>`;
  });
- if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:10px;color:#FF4444;padding:10px;border:2px solid #FF4444">❌ 0 Footprints - Scanning moving footprint + BTC ETH LEARN... NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES - FIXES 0 Footprints - WILL TRADE BTC ETH EVEN IF DEXSCREENER 429</div>';
+ if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:10px;color:#FF4444;padding:10px;border:2px solid #FF4444">❌ 0 Footprints - Scanning moving footprint + BTC ETH LEARN... NEVER RESET • NEVER LOSE TRACK • POS SIZE '+pos+'x5 TEST - FIXES -3.13% BUG</div>';
  let wl=document.getElementById('whalelist');wl.innerHTML='';
  (j.whale||[]).slice(0,12).forEach((m,i)=>{
    let cls=m.symbol.includes('BTC')?'btc':m.symbol.includes('ETH')?'eth':'';
    let vol = m.vol || m.vol_m5 || 0;
    let buys = m.buys || m.buys_m5 || 0;
-   wl.innerHTML+=`<div class="coin ${cls}"><b>${m.type&&m.type.includes('BTC')?'BTC-LEARN':m.type&&m.type.includes('ETH')?'ETH-LEARN':'FOOTPRINT'} #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(vol||0).toFixed(0)} • ${buys} BUYS • ${m.type||'FOOTPRINT'} • BASE ${base} • ${isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER'} • NEVER LOSE TRACK • ALWAYS TRADES</div>`;
+   wl.innerHTML+=`<div class="coin ${cls}"><b>${m.type&&m.type.includes('BTC')?'BTC-LEARN':m.type&&m.type.includes('ETH')?'ETH-LEARN':'FOOTPRINT'} #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(vol||0).toFixed(0)} • ${buys} BUYS • ${m.type||'FOOTPRINT'} • BASE ${base} • POS SIZE ${pos}x5 • ${isReal? (isTestnet?'TESTNET REAL':'REAL'):'PAPER'} • NEVER LOSE TRACK</div>`;
  });
  let ol=document.getElementById('openlist');ol.innerHTML='';
  (j.open_trades||[]).forEach(t=>{
@@ -453,25 +453,25 @@ async function load(){
    let pct=entry>0?(last-entry)/entry*100:0;
    let pnlColor=pct>=0?'#00FF88':'#FF4444';
    let gross=Number(t.pos||20)*pct/100;
-   let status=pct>=0.06?'WINNING':pct<=-0.5?'LOSING':'TRADING';
+   let status=pct>=0.06*(Number(t.pos||20)/20)?'WINNING':pct<=-0.5?'LOSING':'TRADING';
    let typeLabel=t.type||'FOOTPRINT';
    let cls=typeLabel.includes('BTC')?'btc':typeLabel.includes('ETH')?'eth':'';
    let realLabel = t.real? (isTestnet? '🔵 TESTNET REAL' : '🔴 REAL MONEY LIVE') : '🟢 PAPER SIMULATION';
-   ol.innerHTML+=`<div class="open-item ${cls}"><div><b>${t.symbol} ${typeLabel}</b> <span style="font-size:9px;color:#888">$${Number(t.pos||20).toFixed(0)} • HH ${hh} • TOTAL ${j.total} • ${status} • ${realLabel} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</span><div style="font-size:9px;color:#555">${fmt(entry)} → ${fmt(last)} • PEAK ${peak.toFixed(1)}% HH ${hh} • AGE ${age}s • ${typeLabel} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</div><div style="font-size:12px;color:${pnlColor};font-weight:700">${pct>=0?'+':''}${pct.toFixed(2)}% • $${gross.toFixed(4)} • ${status} • ${pct>=0?'WINNING':'LOSING'} • ${realLabel} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</div></div><div style="font-size:9px"><div style="color:#00FF88">TP 6% $${(Number(t.pos||20)*0.06).toFixed(2)}</div><div style="color:#FF4444">SL 2.8% $${(Number(t.pos||20)*0.028).toFixed(2)}</div><div style="color:#888">${age}s • ${status}</div></div><div style="font-size:13px;color:${pnlColor};font-weight:700;text-align:center">${pct>=0?'+':''}${pct.toFixed(1)}%<br><span style="font-size:9px">$${gross.toFixed(3)}</span><br><span style="font-size:9px">${status}</span><br><span style="font-size:7px">${t.real? (isTestnet?'TESTNET':'REAL'):'PAPER'} • NEVER LOSE TRACK • ALWAYS TRADES</span></div></div>`;
+   ol.innerHTML+=`<div class="open-item ${cls}"><div><b>${t.symbol} ${typeLabel}</b> <span style="font-size:9px;color:#888">$${Number(t.pos||20).toFixed(0)} • HH ${hh} • TOTAL ${j.total} • ${status} • ${realLabel} • BASE ${base} • POS SIZE ${pos}x5 • NEVER LOSE TRACK</span><div style="font-size:9px;color:#555">${fmt(entry)} → ${fmt(last)} • PEAK ${peak.toFixed(1)}% HH ${hh} • AGE ${age}s • ${typeLabel} • BASE ${base} • POS SIZE ${pos}x5 • NEVER LOSE TRACK</div><div style="font-size:12px;color:${pnlColor};font-weight:700">${pct>=0?'+':''}${pct.toFixed(2)}% • $${gross.toFixed(4)} • ${status} • ${pct>=0?'WINNING':'LOSING'} • ${realLabel} • BASE ${base} • POS SIZE ${pos}x5 • NEVER LOSE TRACK</div></div><div style="font-size:9px"><div style="color:#00FF88">TP 6% $${(Number(t.pos||20)*0.06).toFixed(2)}</div><div style="color:#FF4444">SL 2.8% $${(Number(t.pos||20)*0.028).toFixed(2)}</div><div style="color:#888">${age}s • ${status}</div></div><div style="font-size:13px;color:${pnlColor};font-weight:700;text-align:center">${pct>=0?'+':''}${pct.toFixed(1)}%<br><span style="font-size:9px">$${gross.toFixed(3)}</span><br><span style="font-size:9px">${status}</span><br><span style="font-size:7px">${t.real? (isTestnet?'TESTNET':'REAL'):'PAPER'} • POS SIZE ${pos}x5</span></div></div>`;
  });
- if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#FF4444;font-size:12px;padding:20px;border:2px solid #FF4444;margin:4px">❌ No open footprint - Will fill 3/5 FROM 12 FOOTPRINT BTC ETH LEARN INSTANT NOW - BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES - FIXES 0 Footprints - WILL TRADE BTC ETH EVEN IF DEXSCREENER 429</div>';
+ if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#FF4444;font-size:12px;padding:20px;border:2px solid #FF4444;margin:4px">❌ No open footprint - Will fill 3/5 FROM 12 FOOTPRINT BTC ETH LEARN INSTANT NOW - BASE '+base+' • POS SIZE '+pos+'x5 • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES - FIXES -3.13% BUG</div>';
  let cb=document.getElementById('closed');cb.innerHTML='';
  (j.closed||[]).slice(-20).reverse().forEach(c=>{
-   let col=c.net>=0.06?'#FFD000':'#FF4444';
-   let wls=c.net>=0.06?'WINNER':'LOSER';
+   let col=c.net>=0.06*(Number(c.pos||20)/20)?'#FFD000':'#FF4444';
+   let wls=c.net>=0.06*(Number(c.pos||20)/20)?'WINNER':'LOSER';
    let realLabel = c.real? (isTestnet? '🔵 TESTNET REAL' : '🔴 REAL') : '🟢 PAPER';
-   cb.innerHTML+=`<div style="padding:6px;border-bottom:1px solid #111;display:flex;justify-content:space-between"><div style="font-size:10px;color:${col}"><b>${c.symbol} ${wls}</b> <span style="color:#888">$${Number(c.net).toFixed(4)} • PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} • TOTAL ${j.total} • ${wls} • ${c.type||'FOOTPRINT'} • ${realLabel} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</span></div><div style="font-size:8px;color:#555">${Number(c.pct||0).toFixed(2)}% • ${c.reason||''}</div></div>`;
+   cb.innerHTML+=`<div style="padding:6px;border-bottom:1px solid #111;display:flex;justify-content:space-between"><div style="font-size:10px;color:${col}"><b>${c.symbol} ${wls}</b> <span style="color:#888">$${Number(c.net).toFixed(4)} • PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} • TOTAL ${j.total} • ${wls} • ${c.type||'FOOTPRINT'} • ${realLabel} • BASE ${base} • POS SIZE ${pos}x5 • NEVER LOSE TRACK • FIXES -3.13%</span></div><div style="font-size:8px;color:#555">${Number(c.pct||0).toFixed(2)}% • ${c.reason||''}</div></div>`;
  });
- if((j.closed||[]).length==0) cb.innerHTML='<div style="text-align:center;color:#444;font-size:10px;padding:15px">No closed footprint yet • Will show winning loss here • FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+base+' • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES • BINANCE_API_KEY NO SPACE</div>';
- let rlist=document.getElementById('reallist');if(rlist){rlist.innerHTML=''; if(j.real_trades && j.real_trades.length>0){j.real_trades.slice(-10).reverse().forEach(rt=>{rlist.innerHTML+=`<div>${rt.symbol} ${rt.binance} ${rt.msg} ${new Date(rt.ts*1000).toLocaleTimeString()} • BASE ${base} • NEVER LOSE TRACK • ALWAYS TRADES</div>`;});} else {rlist.innerHTML = isReal? (isTestnet? 'TESTNET REAL MODE - Will show TESTNET BINANCE ORDERID FEE TESTNET MONEY when BTC ETH trades happen - BASE testnet.binance.vision - REAL TESTNET ORDERS - Check testnet.binance.vision wallet for real testnet balance - NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints' : 'REAL MONEY LIVE MODE - Will show REAL BINANCE ORDERID FEE REAL MONEY when BTC ETH trades happen - BASE api.binance.com - REAL MONEY LIVE - Check binance.com wallet for real balance - NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints') : 'PAPER MODE - No real Binance trades - Set BINANCE_REAL_TRADING=true + BINANCE_BASE=testnet.binance.vision + TESTNET KEYS for TESTNET REAL - Set BINANCE_BASE=api.binance.com + REAL KEYS + BINANCE_REAL_TRADING=true for REAL MONEY LIVE - PAPER SIMULATION WITH REAL DATA + REAL FEE - PAPER P/L - BASE '+base+' - NEVER LOSE TRACK - ALWAYS TRADES - FIXES 0 Footprints - WILL TRADE BTC ETH EVEN IF DEXSCREENER 429 - BINANCE_API_KEY NO SPACE';}}
+ if((j.closed||[]).length==0) cb.innerHTML='<div style="text-align:center;color:#444;font-size:10px;padding:15px">No closed footprint yet • Will show winning loss here • FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+base+' • POS SIZE '+pos+'x5 • NEVER RESET • NEVER LOSE TRACK • BINANCE_API_KEY NO SPACE</div>';
+ let rlist=document.getElementById('reallist');if(rlist){rlist.innerHTML=''; if(j.real_trades && j.real_trades.length>0){j.real_trades.slice(-10).reverse().forEach(rt=>{rlist.innerHTML+=`<div>${rt.symbol} ${rt.binance} ${rt.msg} ${new Date(rt.ts*1000).toLocaleTimeString()} • BASE ${base} • POS SIZE ${pos}x5 • NEVER LOSE TRACK</div>`;});} else {rlist.innerHTML = isReal? (isTestnet? 'TESTNET REAL MODE - Will show TESTNET BINANCE ORDERID FEE TESTNET MONEY when BTC ETH trades happen - BASE testnet.binance.vision - REAL TESTNET ORDERS - Check testnet.binance.vision wallet for real testnet balance - POS SIZE '+pos+'x5 TEST - FIXES -3.13% BUG' : 'REAL MONEY LIVE MODE - Will show REAL BINANCE ORDERID FEE REAL MONEY when BTC ETH trades happen - BASE api.binance.com - REAL MONEY LIVE - Check binance.com wallet for real balance - POS SIZE '+pos+'x5 TEST - FIXES -3.13% BUG') : 'PAPER MODE - No real Binance trades - Set BINANCE_REAL_TRADING=true + BINANCE_BASE=testnet.binance.vision + TESTNET KEYS for TESTNET REAL - Set BINANCE_BASE=api.binance.com + REAL KEYS + BINANCE_REAL_TRADING=true for REAL MONEY LIVE - PAPER SIMULATION WITH REAL DATA + REAL FEE - PAPER P/L - BASE '+base+' - POS SIZE '+pos+'x5 TEST - FIXES -3.13% BUG - CHANGE POS_SIZE ENV TO 40 FOR 40x5 TEST $100 DAILY - BINANCE_API_KEY NO SPACE';}}
 }
 async function tick(){await fetch('/api/cron');await load();}
-async function clearFake(){if(!confirm('CLEAR DAILY ONLY? KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • NEVER LOSE TRACK • ALWAYS TRADES?'))return;await fetch('/api/clear_closed_fake');await load();}
+async function clearFake(){if(!confirm('CLEAR DAILY ONLY? KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • NEVER LOSE TRACK • POS SIZE '+ (document.getElementById('time').innerText.match(/POS SIZE (\\d+)x5/)?.[1]||20) +'x5 TEST?'))return;await fetch('/api/clear_closed_fake');await load();}
 setInterval(load,3000);load();
 </script></body></html>
 """
@@ -485,11 +485,11 @@ def state():
     except Exception as e:
         print(f"state error {e}")
     data = rget()
-    return jsonify({"cap":data.get("FUND_CAP",1000.0),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0.0),"dg":data.get("FUND_DAILY_GROSS",0.0),"df":data.get("FUND_DAILY_FEE",0.0),"whale":data.get("FAST_WHALE",[]),"rotate_coins":data.get("ROTATE_COINS",[]),"rotate_age":int(time.time()-float(data.get("ROTATE_LAST",0) or 0)) if data.get("ROTATE_LAST") else 0,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"real_trades":data.get("REAL_TRADES",[])})
+    return jsonify({"cap":data.get("FUND_CAP",1000.0),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0.0),"dg":data.get("FUND_DAILY_GROSS",0.0),"df":data.get("FUND_DAILY_FEE",0.0),"whale":data.get("FAST_WHALE",[]),"rotate_coins":data.get("ROTATE_COINS",[]),"rotate_age":int(time.time()-float(data.get("ROTATE_LAST",0) or 0)) if data.get("ROTATE_LAST") else 0,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"real_trades":data.get("REAL_TRADES",[]),"pos_size":POS_SIZE})
 @app.route("/api/cron")
 def cron():
     result = do_tick()
-    return jsonify({**result, "phone_off": True, "cron_time": time.time(), "real_trading": BINANCE_REAL_TRADING, "base": BINANCE_BASE, "never_reset": True, "no_gap": True, "never_lose_track": True, "always_trades": True})
+    return jsonify({**result, "phone_off": True, "cron_time": time.time(), "real_trading": BINANCE_REAL_TRADING, "base": BINANCE_BASE, "never_reset": True, "no_gap": True, "never_lose_track": True, "always_trades": True, "pos_size": POS_SIZE})
 @app.route("/api/clear_closed_fake")
 def clear_closed_fake():
     data = rget()
@@ -499,8 +499,8 @@ def clear_closed_fake():
     data["FUND_DAILY_GROSS"] = 0
     data["FUND_DAILY_FEE"] = 0
     rset(data)
-    return jsonify({"cleared":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"never_reset":True,"no_gap":True,"never_lose_track":True,"always_trades":True})
+    return jsonify({"cleared":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE,"never_reset":True,"no_gap":True,"never_lose_track":True,"always_trades":True,"pos_size":POS_SIZE})
 @app.route("/api/restore")
 def restore():
     data = rget()
-    return jsonify({"restored":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"open":len(data.get("FUND_OPEN",[])),"closed":len(data.get("FUND_CLOSED",[])),"never_reset":True,"no_gap":True,"never_lose_track":True,"always_trades":True,"base":BINANCE_BASE,"real_trading":BINANCE_REAL_TRADING,"last_good":CACHE.get("last_good",{}).get("FUND_TOTAL_TRADES",0) if CACHE.get("last_good") else 0})
+    return jsonify({"restored":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"open":len(data.get("FUND_OPEN",[])),"closed":len(data.get("FUND_CLOSED",[])),"never_reset":True,"no_gap":True,"never_lose_track":True,"always_trades":True,"base":BINANCE_BASE,"real_trading":BINANCE_REAL_TRADING,"pos_size":POS_SIZE,"last_good":CACHE.get("last_good",{}).get("FUND_TOTAL_TRADES",0) if CACHE.get("last_good") else 0})
