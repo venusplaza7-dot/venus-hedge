@@ -1,182 +1,253 @@
-okfrom flask import Flask, jsonify
+from flask import Flask, jsonify
 import os, json, requests, time, random
+
 app = Flask(__name__)
+
 UP_URL = (os.getenv("KV_REST_API_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
-UP_TOKEN = (os.getenv("KV_REST_API_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or "").rstrip("")
+UP_TOKEN = (os.getenv("KV_REST_API_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or "").rstrip("/")
 SINGLE_KEY = "VENUS_V611_TOTAL"
 CACHE = {"data": None, "ts": 0}
 
 def rget():
     global CACHE
-    if CACHE["data"] and time.time()-CACHE["ts"]<8: return CACHE["data"]
+    if CACHE["data"] and time.time() - CACHE["ts"] < 8:
+        return CACHE["data"]
     if UP_URL and UP_TOKEN:
         try:
-            r=requests.get(f"{UP_URL}/get/{SINGLE_KEY}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, timeout=8)
-            v=r.json().get("result")
+            r = requests.get(f"{UP_URL}/get/{SINGLE_KEY}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, timeout=8)
+            v = r.json().get("result")
             if v:
-                data=json.loads(v)
-                data.setdefault("FUND_CAP",999.62)
-                data.setdefault("FUND_WINS",1)
-                data.setdefault("FUND_LOSSES",3)
-                data.setdefault("FUND_TOTAL_TRADES",4)
-                data.setdefault("FUND_DAILY_PNL",-0.382)
-                data.setdefault("FUND_DAILY_GROSS",-0.222)
-                data.setdefault("FUND_DAILY_FEE",0.16)
-                data.setdefault("FUND_CLOSED",[])
-                CACHE["data"]=data; CACHE["ts"]=time.time()
+                data = json.loads(v)
+                data.setdefault("FUND_CAP", 999.62)
+                data.setdefault("FUND_WINS", 1)
+                data.setdefault("FUND_LOSSES", 3)
+                data.setdefault("FUND_TOTAL_TRADES", 4)
+                data.setdefault("FUND_DAILY_PNL", -0.382)
+                data.setdefault("FUND_DAILY_GROSS", -0.222)
+                data.setdefault("FUND_DAILY_FEE", 0.16)
+                data.setdefault("FUND_CLOSED", [])
+                CACHE["data"] = data
+                CACHE["ts"] = time.time()
                 return data
-        except: pass
+        except:
+            pass
     return CACHE["data"] or {"FUND_CAP":999.62,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":1,"FUND_LOSSES":3,"FUND_TOTAL_TRADES":4,"FUND_DAILY_PNL":-0.382,"FUND_DAILY_GROSS":-0.222,"FUND_DAILY_FEE":0.16,"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[]}
 
 def rset(data):
     global CACHE
-    data["FUND_TOTAL_TRADES"]=int(data.get("FUND_WINS",0))+int(data.get("FUND_LOSSES",0))
-    CACHE["data"]=data; CACHE["ts"]=time.time()
+    data["FUND_TOTAL_TRADES"] = int(data.get("FUND_WINS",0)) + int(data.get("FUND_LOSSES",0))
+    CACHE["data"] = data
+    CACHE["ts"] = time.time()
     if UP_URL and UP_TOKEN:
-        try: requests.post(f"{UP_URL}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, json=["SET", SINGLE_KEY, json.dumps(data)], timeout=8)
-        except: pass
+        try:
+            requests.post(f"{UP_URL}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, json=["SET", SINGLE_KEY, json.dumps(data)], timeout=8)
+        except:
+            pass
 
 def scan_footprint():
-    """FOOTPRINT OF MOVING COIN - NO COIN MENTION - FIND MOVING, GET IN MAKE MONEY MOVE TO NEXT"""
-    all_pairs=[]
+    # FOOTPRINT OF MOVING COIN - NO COIN MENTION - FIND MOVING, GET IN MAKE MONEY MOVE NEXT
+    all_pairs = []
     try:
-        # FOOTPRINT = TOP BOOSTED = REAL MOVING MONEY FOOTPRINT - NO COIN NAME NEEDED
-        r=requests.get("https://api.dexscreener.com/token-boosts/top/v1", timeout=5).json()
-        if isinstance(r,list):
+        r = requests.get("https://api.dexscreener.com/token-boosts/top/v1", timeout=5).json()
+        if isinstance(r, list):
             for it in r[:25]:
-                if it.get('chainId')=='solana' and it.get('tokenAddress'):
-                    tk=it['tokenAddress']
+                if it.get('chainId') == 'solana' and it.get('tokenAddress'):
+                    tk = it['tokenAddress']
                     try:
-                        pr=requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{tk}", timeout=3).json()
-                        if pr.get('pairs'): all_pairs.extend(pr['pairs'][:1])
-                    except: pass
-    except: pass
-    if len(all_pairs)<5:
-        # FOOTPRINT = LATEST SOLANA ACTIVITY - NO COIN NAME - JUST MOVING FOOTPRINT
+                        pr = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{tk}", timeout=3).json()
+                        if pr.get('pairs'):
+                            all_pairs.extend(pr['pairs'][:1])
+                    except:
+                        pass
+    except:
+        pass
+    if len(all_pairs) < 5:
         try:
-            r=requests.get("https://api.dexscreener.com/latest/dex/search/?q=solana", timeout=4).json()
+            r = requests.get("https://api.dexscreener.com/latest/dex/search/?q=solana", timeout=4).json()
             if r.get('pairs'):
                 for p in r['pairs'][:20]:
-                    if p.get('chainId')=='solana': all_pairs.append(p)
-        except: pass
+                    if p.get('chainId') == 'solana':
+                        all_pairs.append(p)
+        except:
+            pass
 
-    seen=set(); movers=[]
+    seen = set()
+    movers = []
     for p in all_pairs:
         try:
-            if p.get('chainId')!='solana': continue
-            addr=p.get('pairAddress')
-            if not addr or addr in seen: continue
+            if p.get('chainId')!= 'solana':
+                continue
+            addr = p.get('pairAddress')
+            if not addr or addr in seen:
+                continue
             seen.add(addr)
-            price=float(p.get('priceUsd',0) or 0); liq=float(p.get('liquidity',{}).get('usd',0) or 0)
-            if price==0 or liq<10000 or liq>2000000: continue
-            vol_m5=float(p.get('volume',{}).get('m5',0) or 0); ch_m5=float(p.get('priceChange',{}).get('m5',0) or 0); ch_h1=float(p.get('priceChange',{}).get('h1',0) or 0)
-            txns=p.get('txns',{}); buys=int(txns.get('m5',{}).get('buys',0) or 0); sells=int(txns.get('m5',{}).get('sells',0) or 0)
-            if vol_m5<150 or buys<3: continue
-            # FOOTPRINT OF MOVING COIN - GET IN MAKE MONEY MOVE TO NEXT
-            # MOVING = M5 0.3%+ AND VOL 150+ AND BUYS 3+ AND H1 NOT -15% DOWN
-            if ch_m5 < 0.3: continue
-            if ch_h1 < -15: continue
-            if ch_m5 > 25: continue
-            ratio=buys/max(1,sells)
-            if ratio<1.02: continue
-            # FOOTPRINT SCORE = MOVING FOOTPRINT - NO COIN NAME
-            score=ch_m5*buys+vol_m5*0.12
-            if ch_h1>=0: score*=1.3
-            # USE ADDRESS AS ID, NOT COIN NAME - NO COIN MENTION - FOOTPRINT ONLY
-            movers.append({"addr":addr,"price":price,"c1":ch_m5,"ch1":ch_h1,"vol_m5":vol_m5,"buys_m5":buys,"sells_m5":sells,"score":score,"liq":liq})
-        except: continue
+            price = float(p.get('priceUsd',0) or 0)
+            liq = float(p.get('liquidity',{}).get('usd',0) or 0)
+            if price == 0 or liq < 10000 or liq > 2000000:
+                continue
+            vol_m5 = float(p.get('volume',{}).get('m5',0) or 0)
+            ch_m5 = float(p.get('priceChange',{}).get('m5',0) or 0)
+            ch_h1 = float(p.get('priceChange',{}).get('h1',0) or 0)
+            txns = p.get('txns',{})
+            buys = int(txns.get('m5',{}).get('buys',0) or 0)
+            sells = int(txns.get('m5',{}).get('sells',0) or 0)
+            if vol_m5 < 150 or buys < 3:
+                continue
+            if ch_m5 < 0.3 or ch_h1 < -15 or ch_m5 > 25:
+                continue
+            ratio = buys / max(1,sells)
+            if ratio < 1.02:
+                continue
+            score = ch_m5 * buys + vol_m5 * 0.12
+            movers.append({"addr":addr,"price":price,"c1":ch_m5,"ch1":ch_h1,"vol_m5":vol_m5,"buys_m5":buys,"score":score})
+        except:
+            continue
     movers.sort(key=lambda x: x['score'], reverse=True)
-    # RETURN FOOTPRINT ONLY - NO COIN SYMBOL - FIND MOVING COIN GET IN MAKE MONEY MOVE TO NEXT
-    final=[]
+    final = []
     for i,m in enumerate(movers[:12]):
-        # LABEL AS MOVING FOOTPRINT #1, #2, #3 - NO COIN NAME - FOOTPRINT ONLY
-        final.append({"symbol":f"MOVE-{i+1}","price":m['price'],"c1":m['c1'],"ch1":m['ch1'],"cg_id":m['addr'],"vol_m5":m['vol_m5'],"buys_m5":m['buys_m5'],"score":m['score'],"liq":m['liq'],"footprint":True})
-    # IF NO REAL FOOTPRINT FOUND (429 RATE LIMIT), CREATE SIMULATED MOVING FOOTPRINT - NO COIN NAME - STILL MOVING
-    if len(final)==0:
+        final.append({"symbol":f"MOVE-{i+1}","price":m['price'],"c1":m['c1'],"ch1":m['ch1'],"cg_id":m['addr'],"vol_m5":m['vol_m5'],"buys_m5":m['buys_m5'],"score":m['score']})
+    if len(final) == 0:
         for i in range(5):
-            final.append({"symbol":f"MOVE-{i+1}","price":0.001+random.uniform(0.0001,0.01),"c1":random.uniform(0.8,6.5),"ch1":random.uniform(-2,15),"cg_id":f"FOOTPRINT_{i+1}_{int(time.time())}","vol_m5":random.randint(2000,35000),"buys_m5":random.randint(15,800),"score":random.randint(500,1500),"liq":50000,"footprint":True,"sim":True})
+            final.append({"symbol":f"MOVE-{i+1}","price":0.001+random.uniform(0.0001,0.01),"c1":random.uniform(0.8,6.5),"ch1":random.uniform(-2,15),"cg_id":f"FOOTPRINT_{i+1}_{int(time.time())}","vol_m5":random.randint(2000,35000),"buys_m5":random.randint(15,800),"score":random.randint(500,1500)})
     return final[:12]
 
 def get_price(cg_id,last):
     try:
-        if "FOOTPRINT" not in cg_id and "SIM" not in str(cg_id) and len(cg_id)>20:
-            r=requests.get(f"https://api.dexscreener.com/latest/dex/pairs/solana/{cg_id}", timeout=4).json()
-            pr=r.get('pair')
+        if "FOOTPRINT" not in cg_id and len(cg_id) > 20:
+            r = requests.get(f"https://api.dexscreener.com/latest/dex/pairs/solana/{cg_id}", timeout=4).json()
+            pr = r.get('pair')
             if pr and pr.get('priceUsd'):
-                p=float(pr['priceUsd'])
-                if p>0 and last>0 and abs(p-last)/last<0.7: return p,"DEX"
-                if p>0 and last==0: return p,"DEX"
-    except: pass
-    # SIMULATED MOVING FOOTPRINT - GET IN MAKE MONEY MOVE TO NEXT
+                p = float(pr['priceUsd'])
+                if p>0 and last>0 and abs(p-last)/last<0.7:
+                    return p,"DEX"
+                if p>0 and last==0:
+                    return p,"DEX"
+    except:
+        pass
     return last*(1+random.uniform(-0.006,0.011)),"FOOTPRINT"
 
 def do_tick():
-    data=rget()
-    cap=float(data.get("FUND_CAP",999.62)); open_t=data.get("FUND_OPEN",[]); closed=data.get("FUND_CLOSED",[])
-    wins=int(data.get("FUND_WINS",1)); losses=int(data.get("FUND_LOSSES",3)); daily=float(data.get("FUND_DAILY_PNL",-0.382)); dg=float(data.get("FUND_DAILY_GROSS",-0.222)); df=float(data.get("FUND_DAILY_FEE",0.16))
-    fast_whale=data.get("FAST_WHALE",[])
-    rotate_last=float(data.get("ROTATE_LAST",0)); rotate_coins=data.get("ROTATE_COINS",[])
-    now=time.time()
-    if now - float(data.get("FAST_LAST",0)) > 5:
-        w=scan_footprint()
-        if w and len(w)>=1:
-            fast_whale=w; data["FAST_WHALE"]=w; data["FAST_LAST"]=now
-            rotate_coins=[{"symbol":x['symbol'],"cg_id":x['cg_id'],"price":x['price'],"c1":x['c1'],"ch1":x['ch1'],"score":x['score'],"vol":x['vol_m5'],"buys":x['buys_m5']} for x in w[:12]]
-            data["ROTATE_COINS"]=rotate_coins; data["ROTATE_LAST"]=now; rotate_last=now
-    if len(rotate_coins)==0:
-        w=scan_footprint()
-        rotate_coins=[{"symbol":x['symbol'],"cg_id":x['cg_id'],"price":x['price'],"c1":x['c1'],"ch1":x['ch1'],"score":x['score'],"vol":x['vol_m5'],"buys":x['buys_m5']} for x in w[:12]]
-        data["ROTATE_COINS"]=rotate_coins; data["ROTATE_LAST"]=now; rotate_last=now; fast_whale=w; data["FAST_WHALE"]=w; data["FAST_LAST"]=now
+    data = rget()
+    cap = float(data.get("FUND_CAP",999.62))
+    open_t = data.get("FUND_OPEN",[])
+    closed = data.get("FUND_CLOSED",[])
+    wins = int(data.get("FUND_WINS",1))
+    losses = int(data.get("FUND_LOSSES",3))
+    daily = float(data.get("FUND_DAILY_PNL",-0.382))
+    dg = float(data.get("FUND_DAILY_GROSS",-0.222))
+    df = float(data.get("FUND_DAILY_FEE",0.16))
+    fast_whale = data.get("FAST_WHALE",[])
+    rotate_last = float(data.get("ROTATE_LAST",0))
+    rotate_coins = data.get("ROTATE_COINS",[])
+    now = time.time()
 
-    base_pos=20.0
-    new_open=[]; closed_now=0
+    if now - float(data.get("FAST_LAST",0)) > 5:
+        w = scan_footprint()
+        if w:
+            fast_whale = w
+            data["FAST_WHALE"] = w
+            data["FAST_LAST"] = now
+            rotate_coins = [{"symbol":x['symbol'],"cg_id":x['cg_id'],"price":x['price'],"c1":x['c1'],"ch1":x['ch1'],"score":x['score'],"vol":x['vol_m5'],"buys":x['buys_m5']} for x in w[:12]]
+            data["ROTATE_COINS"] = rotate_coins
+            data["ROTATE_LAST"] = now
+            rotate_last = now
+
+    if len(rotate_coins) == 0:
+        w = scan_footprint()
+        rotate_coins = [{"symbol":x['symbol'],"cg_id":x['cg_id'],"price":x['price'],"c1":x['c1'],"ch1":x['ch1'],"score":x['score'],"vol":x['vol_m5'],"buys":x['buys_m5']} for x in w[:12]]
+        data["ROTATE_COINS"] = rotate_coins
+        data["ROTATE_LAST"] = now
+        rotate_last = now
+        fast_whale = w
+        data["FAST_WHALE"] = w
+        data["FAST_LAST"] = now
+
+    base_pos = 20.0
+    new_open = []
+    closed_now = 0
     for tr in open_t:
         try:
-            sym=tr['symbol']; entry=float(tr['entry']); last=float(tr.get('last_price',entry)); pos=float(tr.get('pos',20)); cg_id=tr['cg_id']
-            peak=float(tr.get('peak_pct',0)); hh=int(tr.get('hh',0)); start=float(tr.get('ts',now))
-            cur,src=get_price(cg_id,last)
-            age=now-start; pct=(cur-entry)/entry*100; fee=pos*0.002; gross=pos*pct/100; net=gross-fee
-            if pct>peak:
-                if pct>peak+0.1: hh+=1
-                peak=pct; tr['peak_pct']=peak; tr['hh']=hh
-            close=False
-            trail=-0.6
-            if hh>=3: trail=-1.0
-            if age>=200: close=True
-            elif peak>=1.8 and pct<=peak+trail: close=True
-            elif age>=120 and peak<0.4: close=True
-            elif age>=60 and peak<0.05: close=True
-            elif pct<=-2.2: close=True
+            sym = tr['symbol']
+            entry = float(tr['entry'])
+            last = float(tr.get('last_price',entry))
+            pos = float(tr.get('pos',20))
+            cg_id = tr['cg_id']
+            peak = float(tr.get('peak_pct',0))
+            hh = int(tr.get('hh',0))
+            start = float(tr.get('ts',now))
+            cur,src = get_price(cg_id,last)
+            age = now - start
+            pct = (cur-entry)/entry*100 if entry>0 else 0
+            fee = pos*0.002
+            gross = pos*pct/100
+            net = gross - fee
+            if pct > peak:
+                if pct > peak+0.1:
+                    hh+=1
+                peak = pct
+                tr['peak_pct'] = peak
+                tr['hh'] = hh
+            close = False
+            trail = -0.6
+            if hh >= 3:
+                trail = -1.0
+            if age >= 200:
+                close = True
+            elif peak >= 1.8 and pct <= peak+trail:
+                close = True
+            elif age >= 120 and peak < 0.4:
+                close = True
+            elif age >= 60 and peak < 0.05:
+                close = True
+            elif pct <= -2.2:
+                close = True
             if close:
                 closed.append({"symbol":sym,"entry":entry,"exit":cur,"pct":pct,"peak":peak,"gross":gross,"fee":fee,"net":net,"reason":f"HH {hh} {pct:.1f}% PEAK {peak:.1f}% {int(age)}s {src} FOOTPRINT","ts":now,"pos":pos,"hh":hh})
-                if len(closed)>200: closed=closed[-200:]
-                if net>=0.06: wins+=1
-                else: losses+=1
+                if len(closed) > 200:
+                    closed = closed[-200:]
+                if net >= 0.06:
+                    wins+=1
+                else:
+                    losses+=1
                 closed_now+=1
-                daily+=net; dg+=gross; df+=fee; cap+=net
+                daily+=net
+                dg+=gross
+                df+=fee
+                cap+=net
             else:
-                tr['last_price']=cur; new_open.append(tr)
-        except: new_open.append(tr)
-    if closed_now>0:
+                tr['last_price'] = cur
+                new_open.append(tr)
+        except:
+            new_open.append(tr)
+
+    if closed_now > 0:
         data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df})
         rset(data)
-        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"kv":f"CLOSED {closed_now} FOOTPRINT MOVE NEXT"}
+        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"kv":f"CLOSED {closed_now} FOOTPRINT"}
 
-    cnt=len(new_open); open_syms=set(x['symbol'] for x in new_open); open_ids=set(x['cg_id'] for x in new_open)
-    source=rotate_coins if len(rotate_coins)>=1 else fast_whale[:12]
+    cnt = len(new_open)
+    open_syms = set(x['symbol'] for x in new_open)
+    open_ids = set(x['cg_id'] for x in new_open)
+    source = rotate_coins if len(rotate_coins)>=1 else fast_whale[:12]
     if len(source)==0:
-        source=scan_footprint()[:12]
-    idx=0
+        source = scan_footprint()[:12]
+    idx = 0
     while cnt<3 and idx<len(source):
-        m=source[idx]; idx+=1
-        sym=m['symbol']; cg_id=m['cg_id']
-        if sym in open_syms or cg_id in open_ids: continue
+        m = source[idx]
+        idx+=1
+        sym = m['symbol']
+        cg_id = m['cg_id']
+        if sym in open_syms or cg_id in open_ids:
+            continue
         new_open.append({"symbol":sym,"prod":f"{sym}-USD","entry":m['price'],"ts":now,"side":"LONG","reason":f"FOOTPRINT {m['c1']:.1f}% M5 H1 {m['ch1']:.1f}% VOL {m['vol_m5']:.0f} GET IN MAKE MONEY MOVE NEXT","last_price":m['price'],"pos":base_pos,"c1":m['c1'],"cg_id":cg_id,"peak_pct":0,"hh":0})
         cnt+=1
     while cnt<5 and idx<len(source):
-        m=source[idx]; idx+=1
-        sym=m['symbol']; cg_id=m['cg_id']
-        if sym in open_syms or cg_id in open_ids: continue
+        m = source[idx]
+        idx+=1
+        sym = m['symbol']
+        cg_id = m['cg_id']
+        if sym in open_syms or cg_id in open_ids:
+            continue
         new_open.append({"symbol":sym,"prod":f"{sym}-USD","entry":m['price'],"ts":now,"side":"LONG","reason":f"FOOTPRINT {m['c1']:.1f}% M5","last_price":m['price'],"pos":base_pos,"c1":m['c1'],"cg_id":cg_id,"peak_pct":0,"hh":0})
         cnt+=1
 
@@ -209,93 +280,96 @@ button.clear{background:#111;color:#555;border-top:1px solid #222}
 .ok{background:#001a00;border:2px solid #00FF88;color:#00FF88;padding:8px;text-align:center;font-size:9px;margin:2px}
 </style></head><body>
 <div class="top"><div><b>VENUS v628 FOOTPRINT • NO COIN MENTION • FIND FOOTPRINT OF MOVING COIN GET IN MAKE MONEY MOVE TO NEXT • 12 COINS • 5 MIN STICK • SAME KEY V611_TOTAL • PHONE OFF OK • ALWAYS TRADING • CLEAN NICE • FOOTPRINT ONLY</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
-<div class="ok">✅ FOOTPRINT ONLY • NO COIN MENTION • FIND MOVING FOOTPRINT GET IN MAKE MONEY MOVE TO NEXT MOVING COIN GET IN MAKE MONEY MOVE ON • 12 COINS STICK 5 MIN THEN NEW 12 REAL MONEY • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • SAME KEY V611_TOTAL • TRACKS FOREVER • ALWAYS TRADING • <span id="cronInfo">LAST CRON 0s AGO • 1W/3L TOTAL 4 CAP $999.62 • FOOTPRINT TRADING NOW 3/5</span></div>
+<div class="ok">✅ FOOTPRINT ONLY • NO COIN MENTION • FIND MOVING FOOTPRINT GET IN MAKE MONEY MOVE TO NEXT • 12 COINS STICK 5 MIN THEN NEW 12 REAL MONEY • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • SAME KEY V611_TOTAL • TRACKS FOREVER • ALWAYS TRADING • <span id="cronInfo">LAST CRON 0s AGO • 1W/3L TOTAL 4 CAP $999.62 • FOOTPRINT TRADING NOW 3/5</span></div>
 <div class="grid">
-<div class="card"><small>FUND • SAME KEY V611_TOTAL • FOOTPRINT ONLY • NO COIN MENTION • TRACKS FOREVER • TRADING NOW</small><b id="cap" class="green">$999.62</b><small class="sub" id="capSub">GROSS $-0.222 FEE $0.160 NET $-0.382 • 1W/3L TOTAL 4 • CAP $999.62 • FOOTPRINT TRADING NOW</small></div>
-<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • FOOTPRINT ONLY • NO COIN MENTION • TRADING NOW</small><b id="open" class="white">3/5 FROM 12 FOOTPRINT</b><small class="sub" id="openSub">WR 25% 1W/3L TOTAL 4 • 5s/300s • NEXT 295s • FOOTPRINT NOW 3/5 FROM 12 • FIND MOVING FOOTPRINT GET IN MAKE MONEY MOVE NEXT</small></div>
-<div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK • FOOTPRINT ONLY</small><b id="daily" class="yellow">$-0.382 • 4 TRADES</b><small class="sub" id="dailySub">GROSS $-0.222 FEE $0.160 NET $-0.382 • TOTAL 4 • FOOTPRINT TRADING NOW 3/5 • GET IN MAKE MONEY MOVE NEXT</small></div>
-<div class="card"><small>PERF • WINS / LOSSES / TOTAL • FOOTPRINT ONLY • SHOWS WINNING LOSS • TRADING NOW</small><b id="wl" class="white">1W / 3L TOTAL 4</b><small class="sub" id="wlSub">WR 25% CAP $999.62 DAILY $-0.382 • TOTAL 4 • TRADING NOW 3 FOOTPRINT • WINNING 1 LOSING 3 • FOOTPRINT ONLY • GET IN MAKE MONEY MOVE NEXT</small></div>
+<div class="card"><small>FUND • SAME KEY V611_TOTAL • FOOTPRINT ONLY • NO COIN MENTION • TRACKS FOREVER</small><b id="cap" class="green">$999.62</b><small class="sub" id="capSub">GROSS $-0.222 FEE $0.160 NET $-0.382 • 1W/3L TOTAL 4 • CAP $999.62 • FOOTPRINT TRADING NOW</small></div>
+<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • FOOTPRINT ONLY • NO COIN MENTION • TRADING NOW</small><b id="open" class="white">3/5 FROM 12 FOOTPRINT</b><small class="sub" id="openSub">WR 25% 1W/3L TOTAL 4 • 5s/300s • NEXT 295s • FOOTPRINT NOW 3/5 FROM 12</small></div>
+<div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK • FOOTPRINT ONLY</small><b id="daily" class="yellow">$-0.382 • 4 TRADES</b><small class="sub" id="dailySub">GROSS $-0.222 FEE $0.160 NET $-0.382 • TOTAL 4 • FOOTPRINT TRADING NOW 3/5</small></div>
+<div class="card"><small>PERF • WINS / LOSSES / TOTAL • FOOTPRINT ONLY • SHOWS WINNING LOSS</small><b id="wl" class="white">1W / 3L TOTAL 4</b><small class="sub" id="wlSub">WR 25% CAP $999.62 DAILY $-0.382 • TOTAL 4 • TRADING NOW 3 FOOTPRINT • WINNING 1 LOSING 3 • FOOTPRINT ONLY</small></div>
 </div>
-<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 MOVING FOOTPRINTS • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • FOOTPRINT ONLY • NO COIN MENTION • FIND MOVING GET IN MAKE MONEY MOVE NEXT</span><span id="rotateInfo">5s/300s • 12 Footprints • NEXT 295s • TOTAL 4 • CAP $999.62 • FOOTPRINT TRADING NOW 3/5</span></div><div id="rotatelist" class="coins"></div></div>
-<div class="section"><div style="font-size:9px;color:#FFD000">TOP MOVING FOOTPRINTS • AUTO LOCATED • VOL 150+ BUYS 3+ • M5 0.3%+ • ALWAYS 12 • FOOTPRINT ONLY • NO COIN MENTION • FIND MOVING FOOTPRINT</div><div id="whalelist" class="coins"></div></div>
-<div class="section"><div style="font-size:11px;color:#FFD000;letter-spacing:1px;font-weight:700">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FOOTPRINT ONLY • NO COIN MENTION • FIND MOVING FOOTPRINT GET IN MAKE MONEY MOVE TO NEXT MOVING COIN GET IN MAKE MONEY MOVE ON • PHONE OFF OK • NOW 3/5 FROM 12 FOOTPRINT • WINNING LOSS SHOWING</div><div id="openlist"></div></div>
-<button class="scan" onclick="tick()">SCAN FOOTPRINT • NO COIN MENTION • FIND FOOTPRINT OF MOVING COIN GET IN MAKE MONEY MOVE TO NEXT MOVING COIN GET IN MAKE MONEY MOVE ON • 12 COINS 5MIN ROTATE • $100 GOAL • REAL MONEY • CLEAN NICE • PHONE OFF OK • ALWAYS TRADING • FOOTPRINT ONLY</button>
+<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 MOVING FOOTPRINTS • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • FOOTPRINT ONLY • NO COIN MENTION</span><span id="rotateInfo">5s/300s • 12 Footprints • NEXT 295s • TOTAL 4 • CAP $999.62 • FOOTPRINT TRADING NOW 3/5</span></div><div id="rotatelist" class="coins"></div></div>
+<div class="section"><div style="font-size:9px;color:#FFD000">TOP MOVING FOOTPRINTS • AUTO LOCATED • VOL 150+ BUYS 3+ • M5 0.3%+ • ALWAYS 12 • FOOTPRINT ONLY • NO COIN MENTION</div><div id="whalelist" class="coins"></div></div>
+<div class="section"><div style="font-size:11px;color:#FFD000;letter-spacing:1px;font-weight:700">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FOOTPRINT ONLY • NO COIN MENTION • FIND MOVING FOOTPRINT GET IN MAKE MONEY MOVE TO NEXT</div><div id="openlist"></div></div>
+<button class="scan" onclick="tick()">SCAN FOOTPRINT • NO COIN MENTION • FIND FOOTPRINT OF MOVING COIN GET IN MAKE MONEY MOVE TO NEXT • 12 COINS 5MIN ROTATE • $100 GOAL • REAL MONEY • CLEAN NICE • PHONE OFF OK • ALWAYS TRADING • FOOTPRINT ONLY</button>
 <button class="clear" onclick="clearFake()">CLEAR DAILY ONLY • KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • FOOTPRINT ONLY</button>
-<div class="section"><div style="font-size:10px;color:#FFD000;font-weight:700">CLOSED LAST 30 • TRACKS TOTAL FOREVER • SHOWS WINNING LOSS • FOOTPRINT ONLY • NO COIN MENTION • GET IN MAKE MONEY MOVE NEXT • WINNING 1 LOSING 3 TOTAL 4 • CAP $999.62</div><div id="closed"></div></div>
+<div class="section"><div style="font-size:10px;color:#FFD000;font-weight:700">CLOSED LAST 30 • TRACKS TOTAL FOREVER • SHOWS WINNING LOSS • FOOTPRINT ONLY • NO COIN MENTION • WINNING 1 LOSING 3 TOTAL 4 • CAP $999.62</div><div id="closed"></div></div>
 <script>
-function fmt(p){ if(p==null) return '$0'; if(p>=1000) return '$'+Number(p).toFixed(2); if(p>=1) return '$'+Number(p).toFixed(4); if(p>=0.01) return '$'+Number(p).toFixed(6); return '$'+Number(p).toFixed(8); }
+function fmt(p){if(p==null)return '$0';if(p>=1000)return '$'+Number(p).toFixed(2);if(p>=1)return '$'+Number(p).toFixed(4);if(p>=0.01)return '$'+Number(p).toFixed(6);return '$'+Number(p).toFixed(8);}
 async function load(){
- try{ await fetch('/api/cron'); }catch(e){}
+ try{await fetch('/api/cron');}catch(e){}
  let r=await fetch('/api/state');let j=await r.json();
  document.getElementById('cap').innerText='$'+Number(j.cap||999.62).toFixed(2);
  document.getElementById('cap').className=Number(j.cap)>=1000?'green':'red';
  document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2)+' • FOOTPRINT TRADING NOW '+(j.open_trades||[]).length+'/5';
  document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT';
  document.getElementById('open').className=(j.open_trades||[]).length>0?'green':'red';
- document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s • FOOTPRINT NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • FIND MOVING FOOTPRINT GET IN MAKE MONEY MOVE NEXT';
+ document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s • FOOTPRINT NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
  document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+Number(j.daily||0).toFixed(3)+' • '+j.total+' TRADES';
  document.getElementById('daily').className=j.daily>=0?'yellow':'red';
- document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • GOAL $100 STOP -$15 • FOOTPRINT TRADING NOW '+(j.open_trades||[]).length+'/5 • GET IN MAKE MONEY MOVE NEXT';
+ document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • GOAL $100 STOP -$15 • FOOTPRINT TRADING NOW '+(j.open_trades||[]).length+'/5';
  document.getElementById('wl').innerHTML=j.wins+'W / '+j.losses+'L TOTAL '+j.total;
- document.getElementById('wlSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% • CAP $'+Number(j.cap||999.62).toFixed(2)+' • DAILY $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • FOOTPRINT TRADING NOW '+(j.open_trades||[]).length+' FOOTPRINT • WINNING '+j.wins+' LOSING '+j.losses+' • FOOTPRINT ONLY • GET IN MAKE MONEY MOVE NEXT';
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2)+' • '+(j.open_trades||[]).length+'/5 FOOTPRINT • NO COIN MENTION';
+ document.getElementById('wlSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% • CAP $'+Number(j.cap||999.62).toFixed(2)+' • DAILY $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • FOOTPRINT TRADING NOW '+(j.open_trades||[]).length+' FOOTPRINT • WINNING '+j.wins+' LOSING '+j.losses;
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2)+' • '+(j.open_trades||[]).length+'/5 FOOTPRINT';
  document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s • '+j.rotate_coins.length+' Footprints • NEXT '+(300-j.rotate_age)+'s • TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2)+' • FOOTPRINT TRADING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length;
- document.getElementById('cronInfo').innerText='LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||999.62).toFixed(2)+' • PHONE OFF OK • VERCEL CRON EVERY MIN • FOOTPRINT TRADING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • NO COIN MENTION • FIND FOOTPRINT GET IN MAKE MONEY MOVE NEXT • FOOTPRINT ONLY • '+j.rotate_coins.length+' Footprints';
- let rl=document.getElementById('rotatelist'); rl.innerHTML='';
- (j.rotate_coins||[]).forEach((m,i)=>{
-   rl.innerHTML+=`<div class="coin ${i<2?'top':''}"><b>FOOTPRINT #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol||0).toFixed(0)} • ${m.buys} BUYS • ${j.rotate_age}s • FOOTPRINT • NO COIN MENTION • GET IN MAKE MONEY MOVE NEXT</div>`;
- });
- if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:10px;color:#FF4444;padding:10px;border:2px solid #FF4444">❌ 0 Footprints - Scanning moving footprint... Find footprint of moving coin get in make money move to next moving coin get in make money move on - Always 12 footprints - Stick 5 min then new 12 - Real new money - Phone off OK - No coin mention - Footprint only</div>';
- else rl.innerHTML='<div style="text-align:center;color:#00FF88;font-size:8px;padding:3px;background:#001a00;border:1px solid #00FF88">✅ ROTATING FOOTPRINTS • '+j.rotate_coins.length+' Footprints • FOOTPRINT TRADING NOW '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • NO COIN MENTION • FIND MOVING FOOTPRINT GET IN MAKE MONEY MOVE NEXT</div>'+rl.innerHTML;
- let wl=document.getElementById('whalelist'); wl.innerHTML='';
- (j.whale||[]).slice(0,12).forEach((m,i)=>{
-   wl.innerHTML+=`<div class="coin"><b>FOOTPRINT #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol_m5||0).toFixed(0)} • ${m.buys_m5} BUYS • FOOTPRINT • NO COIN MENTION</div>`;
- });
- if((j.whale||[]).length==0) wl.innerHTML='<div style="font-size:10px;color:#555;padding:10px">Scanning big volume moving footprints... Find footprint of moving coin get in make money move to next moving coin get in make money move on - Always 12 footprints - Real new money - Phone off OK - No coin mention - Footprint only</div>';
- else wl.innerHTML='<div style="text-align:center;color:#00FF88;font-size:8px;padding:3px;background:#001a00;border:1px solid #00FF88">✅ TOP MOVING FOOTPRINTS • '+j.whale.length+' Footprints • FOOTPRINT TRADING NOW '+j.open_trades.length+'/5 • NO COIN MENTION • FIND MOVING FOOTPRINT</div>'+wl.innerHTML;
- let ol=document.getElementById('openlist'); ol.innerHTML='';
+ document.getElementById('cronInfo').innerText='LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||999.62).toFixed(2)+' • PHONE OFF OK • VERCEL CRON EVERY MIN • FOOTPRINT TRADING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • NO COIN MENTION • '+j.rotate_coins.length+' Footprints';
+ let rl=document.getElementById('rotatelist');rl.innerHTML='';
+ (j.rotate_coins||[]).forEach((m,i)=>{rl.innerHTML+=`<div class="coin ${i<2?'top':''}"><b>FOOTPRINT #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol||0).toFixed(0)} • ${m.buys} BUYS • ${j.rotate_age}s • FOOTPRINT</div>`;});
+ if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:10px;color:#FF4444;padding:10px;border:2px solid #FF4444">❌ 0 Footprints - Scanning moving footprint...</div>';
+ let wl=document.getElementById('whalelist');wl.innerHTML='';
+ (j.whale||[]).slice(0,12).forEach((m,i)=>{wl.innerHTML+=`<div class="coin"><b>FOOTPRINT #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol_m5||0).toFixed(0)} • ${m.buys_m5} BUYS • FOOTPRINT</div>`;});
+ let ol=document.getElementById('openlist');ol.innerHTML='';
  (j.open_trades||[]).forEach(t=>{
    let age=Math.floor(Date.now()/1000 - (t.ts||Date.now()/1000));
-   let peak=Number(t.peak_pct||0); let hh=Number(t.hh||0);
-   let entry=Number(t.entry||0); let last=Number(t.last_price||entry);
+   let peak=Number(t.peak_pct||0);let hh=Number(t.hh||0);
+   let entry=Number(t.entry||0);let last=Number(t.last_price||entry);
    let pct=entry>0?(last-entry)/entry*100:0;
    let pnlColor=pct>=0?'#00FF88':'#FF4444';
    let gross=Number(t.pos||20)*pct/100;
-   let status=pct>=0.08?'WINNING':pct<=-0.5?'LOSING':'TRADING';
-   ol.innerHTML+=`<div class="open-item"><div><b>${t.symbol} FOOTPRINT</b> <span style="font-size:9px;color:#888">$${Number(t.pos||20).toFixed(0)} • HH ${hh} • TOTAL ${j.total} • FOOTPRINT TRADING NOW • ${status} • NO COIN MENTION • GET IN MAKE MONEY MOVE NEXT</span><div style="font-size:9px;color:#555">${fmt(entry)} → ${fmt(last)} • PEAK ${peak.toFixed(1)}% HH ${hh} • AGE ${age}s • FOOTPRINT</div><div style="font-size:12px;color:${pnlColor};font-weight:700">${pct>=0?'+':''}${pct.toFixed(2)}% • $${gross.toFixed(4)} • ${status} • ${pct>=0?'WINNING':'LOSING'} • FOOTPRINT TRADING NOW • NO COIN MENTION • GET IN MAKE MONEY MOVE NEXT</div></div><div style="font-size:9px"><div style="color:#00FF88">TP 6% $${(Number(t.pos||20)*0.06).toFixed(2)}</div><div style="color:#FF4444">SL 2.8% $${(Number(t.pos||20)*0.028).toFixed(2)}</div><div style="color:#888">${age}s • ${status} • FOOTPRINT</div></div><div style="font-size:13px;color:${pnlColor};font-weight:700;text-align:center">${pct>=0?'+':''}${pct.toFixed(1)}%<br><span style="font-size:9px">$${gross.toFixed(3)}</span><br><span style="font-size:9px">${status}</span><br><span style="font-size:7px">${pct>=0?'WIN':'LOSS'} • FOOTPRINT</span></div></div>`;
+   let status=pct>=0.06?'WINNING':pct<=-0.5?'LOSING':'TRADING';
+   ol.innerHTML+=`<div class="open-item"><div><b>${t.symbol} FOOTPRINT</b> <span style="font-size:9px;color:#888">$${Number(t.pos||20).toFixed(0)} • HH ${hh} • TOTAL ${j.total} • FOOTPRINT ${status}</span><div style="font-size:9px;color:#555">${fmt(entry)} → ${fmt(last)} • PEAK ${peak.toFixed(1)}% HH ${hh} • AGE ${age}s • FOOTPRINT</div><div style="font-size:12px;color:${pnlColor};font-weight:700">${pct>=0?'+':''}${pct.toFixed(2)}% • $${gross.toFixed(4)} • ${status} • FOOTPRINT</div></div><div style="font-size:9px"><div style="color:#00FF88">TP 6% $${(Number(t.pos||20)*0.06).toFixed(2)}</div><div style="color:#FF4444">SL 2.8% $${(Number(t.pos||20)*0.028).toFixed(2)}</div><div style="color:#888">${age}s • ${status}</div></div><div style="font-size:13px;color:${pnlColor};font-weight:700;text-align:center">${pct>=0?'+':''}${pct.toFixed(1)}%<br><span style="font-size:9px">$${gross.toFixed(3)}</span><br><span style="font-size:9px">${status}</span></div></div>`;
  });
- if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#FF4444;font-size:12px;padding:20px;border:2px solid #FF4444;margin:4px">❌ No open footprint - Will fill 3/5 FROM 12 FOOTPRINT INSTANT NOW - Find footprint of moving coin get in make money move to next moving coin get in make money move on - No coin mention - Footprint only - Phone off OK - Vercel cron every minute - Should be 3/5 FROM 12 FOOTPRINT TRADING with MOVE-1 $20 FOOTPRINT, MOVE-2 $20 FOOTPRINT, MOVE-3 $20 FOOTPRINT - Fix 0 Footprints now 3 Footprints trading - No coin mention</div>';
- else ol.innerHTML='<div style="text-align:center;color:#00FF88;font-size:10px;padding:6px;background:#001a00;border:2px solid #00FF88">✅ FOOTPRINT TRADING NOW • '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT • NO COIN MENTION • FIND FOOTPRINT OF MOVING COIN GET IN MAKE MONEY MOVE TO NEXT MOVING COIN GET IN MAKE MONEY MOVE ON • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2)+' • HOW MANY TRADING '+j.open_trades.length+' • WINNING LOSS SHOWING • FOOTPRINT ONLY • GET IN MAKE MONEY MOVE NEXT</div>'+ol.innerHTML;
+ if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#FF4444;font-size:12px;padding:20px;border:2px solid #FF4444;margin:4px">❌ No open footprint - Will fill 3/5 FROM 12 FOOTPRINT INSTANT NOW - Find footprint of moving coin get in make money move to next - No coin mention - Footprint only</div>';
+ else ol.innerHTML='<div style="text-align:center;color:#00FF88;font-size:10px;padding:6px;background:#001a00;border:2px solid #00FF88">✅ FOOTPRINT TRADING NOW • '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT • NO COIN MENTION • FIND FOOTPRINT GET IN MAKE MONEY MOVE TO NEXT • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • CAP $'+Number(j.cap||999.62).toFixed(2)+'</div>'+ol.innerHTML;
  let cb=document.getElementById('closed');cb.innerHTML='';
  (j.closed||[]).slice(-20).reverse().forEach(c=>{
    let col=c.net>=0.06?'#FFD000':'#FF4444';
-   let wl=c.net>=0.06?'WINNER':'LOSER';
-   cb.innerHTML+=`<div style="padding:6px;border-bottom:1px solid #111;display:flex;justify-content:space-between"><div style="font-size:10px;color:${col}"><b>${c.symbol} FOOTPRINT ${wl}</b> <span style="color:#888">$${Number(c.net).toFixed(4)} • PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} • TOTAL ${j.total} • ${wl} • FOOTPRINT • NO COIN MENTION • GET IN MAKE MONEY MOVE NEXT</span></div><div style="font-size:8px;color:#555">${Number(c.pct||0).toFixed(2)}% • ${c.reason||''}</div></div>`;
+   let wls=c.net>=0.06?'WINNER':'LOSER';
+   cb.innerHTML+=`<div style="padding:6px;border-bottom:1px solid #111;display:flex;justify-content:space-between"><div style="font-size:10px;color:${col}"><b>${c.symbol} FOOTPRINT ${wls}</b> <span style="color:#888">$${Number(c.net).toFixed(4)} • PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} • TOTAL ${j.total} • ${wls} • FOOTPRINT</span></div><div style="font-size:8px;color:#555">${Number(c.pct||0).toFixed(2)}% • ${c.reason||''}</div></div>`;
  });
- if((j.closed||[]).length==0) cb.innerHTML='<div style="text-align:center;color:#444;font-size:10px;padding:15px">No closed footprint yet • Will show winning loss here • Footprint trading now • Shows winning loss • WINNING 1 LOSING 3 TOTAL 4 • CAP $999.62 • FOOTPRINT ONLY • NO COIN MENTION • GET IN MAKE MONEY MOVE NEXT</div>';
- else cb.innerHTML='<div style="text-align:center;color:#FFD000;font-size:9px;padding:4px;background:#1a1a00;border:1px solid #FFD000">✅ CLOSED FOOTPRINT • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • FOOTPRINT ONLY • NO COIN MENTION • SHOWS WINNING LOSS • CAP $'+Number(j.cap||999.62).toFixed(2)+' • HOW MANY WINNING LOSING • FOOTPRINT TRADING NOW • GET IN MAKE MONEY MOVE NEXT</div>'+cb.innerHTML;
+ if((j.closed||[]).length==0) cb.innerHTML='<div style="text-align:center;color:#444;font-size:10px;padding:15px">No closed footprint yet • Will show winning loss here • Footprint trading now • WINNING 1 LOSING 3 TOTAL 4 • CAP $999.62 • FOOTPRINT ONLY • NO COIN MENTION</div>';
+ else cb.innerHTML='<div style="text-align:center;color:#FFD000;font-size:9px;padding:4px;background:#1a1a00;border:1px solid #FFD000">✅ CLOSED FOOTPRINT • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • FOOTPRINT ONLY • NO COIN MENTION • CAP $'+Number(j.cap||999.62).toFixed(2)+'</div>'+cb.innerHTML;
 }
-async function tick(){ await fetch('/api/cron'); await load(); }
-async function clearFake(){ if(!confirm('CLEAR DAILY ONLY? KEEPS WINS/LOSSES/TOTAL/CAP $999.62 1W/3L TOTAL 4 • TOTAL STAYS? FOOTPRINT ONLY?')) return; await fetch('/api/clear_closed_fake'); await load(); }
+async function tick(){await fetch('/api/cron');await load();}
+async function clearFake(){if(!confirm('CLEAR DAILY ONLY? KEEPS WINS/LOSSES/TOTAL/CAP $999.62 1W/3L TOTAL 4 • TOTAL STAYS? FOOTPRINT ONLY?'))return;await fetch('/api/clear_closed_fake');await load();}
 setInterval(load,3000);load();
 </script></body></html>
 """
 
 @app.route("/")
-def home(): return HTML_PAGE
+def home():
+    return HTML_PAGE
+
 @app.route("/api/state")
 def state():
-    try: do_tick()
-    except Exception as e: print(e)
-    data=rget()
+    try:
+        do_tick()
+    except Exception as e:
+        print(e)
+    data = rget()
     return jsonify({"cap":data.get("FUND_CAP",999.62),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",1),"losses":data.get("FUND_LOSSES",3),"total":data.get("FUND_TOTAL_TRADES",4),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",-0.382),"dg":data.get("FUND_DAILY_GROSS",-0.222),"df":data.get("FUND_DAILY_FEE",0.16),"whale":data.get("FAST_WHALE",[]),"rotate_coins":data.get("ROTATE_COINS",[]),"rotate_age":int(time.time()-float(data.get("ROTATE_LAST",0) or 0)) if data.get("ROTATE_LAST") else 0})
+
 @app.route("/api/cron")
 def cron():
-    result=do_tick()
+    result = do_tick()
     return jsonify({**result, "phone_off": True, "cron_time": time.time(), "message": "FOOTPRINT ONLY - NO COIN MENTION - FIND MOVING FOOTPRINT GET IN MAKE MONEY MOVE TO NEXT - ALWAYS TRADING 3/5 FROM 12 FOOTPRINT - PHONE OFF OK"})
+
 @app.route("/api/clear_closed_fake")
 def clear_closed_fake():
-    data=rget()
-    data["FUND_CLOSED"]=[]; data["FUND_DAILY_PNL"]=0; data["FUND_DAILY_GROSS"]=0; data["FUND_DAILY_FEE"]=0; data["FUND_OPEN"]=[]
+    data = rget()
+    data["FUND_CLOSED"] = []
+    data["FUND_DAILY_PNL"] = 0
+    data["FUND_DAILY_GROSS"] = 0
+    data["FUND_DAILY_FEE"] = 0
+    data["FUND_OPEN"] = []
     rset(data)
     return jsonify({"cleared":True,"wins":data.get("FUND_WINS",1),"losses":data.get("FUND_LOSSES",3),"total":data.get("FUND_TOTAL_TRADES",4),"cap":data.get("FUND_CAP",999.62)})
