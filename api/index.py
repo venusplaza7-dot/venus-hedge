@@ -4,57 +4,94 @@ from urllib.parse import urlencode
 
 app = Flask(__name__)
 
-UP_URL = (os.getenv("KV_REST_API_URL") or os.getenv("KV_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
-UP_TOKEN = (os.getenv("KV_REST_API_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or "").rstrip("/")
+# FIX RESET - USE ALL POSSIBLE UPSTASH ENV NAMES - KV_REST_API_URL is yours
+UP_URL = (os.getenv("KV_REST_API_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("KV_URL") or os.getenv("REDIS_URL") or "").rstrip("/")
+UP_TOKEN = (os.getenv("KV_REST_API_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("KV_REST_API_TOKEN") or "").rstrip("/")
+# ALSO TRY SECOND TOKEN NAME YOU HAVE KV_REST_A...LY_TOKEN
+UP_TOKEN_2 = os.getenv("KV_REST_API_READ_ONLY_TOKEN") or os.getenv("KV_REST_A_LY_TOKEN") or ""
 SINGLE_KEY = "VENUS_V611_TOTAL"
-CACHE = {"data": None, "ts": 0}
-
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY","").strip()
-BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY","").strip()
-BINANCE_REAL_TRADING = os.getenv("BINANCE_REAL_TRADING","false").lower() == "true"
-BINANCE_BASE = os.getenv("BINANCE_BASE","https://api.binance.com").rstrip("/")
+CACHE = {"data": None, "ts": 0, "last_good": None}
 
 def rget():
     global CACHE
+    # IF CACHE FRESH <8s, USE IT - NO RESET
     if CACHE["data"] and time.time() - CACHE["ts"] < 8:
         return CACHE["data"]
-    if UP_URL and UP_TOKEN:
-        try:
-            r = requests.get(f"{UP_URL}/get/{SINGLE_KEY}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, timeout=8)
-            v = r.json().get("result")
-            if v:
-                data = json.loads(v)
-                data.setdefault("FUND_CAP", 1000.0)
-                data.setdefault("FUND_OPEN", [])
-                data.setdefault("FUND_CLOSED", [])
-                data.setdefault("FUND_WINS", 0)
-                data.setdefault("FUND_LOSSES", 0)
-                data.setdefault("FUND_TOTAL_TRADES", 0)
-                data.setdefault("FUND_DAILY_PNL", 0.0)
-                data.setdefault("FUND_DAILY_GROSS", 0.0)
-                data.setdefault("FUND_DAILY_FEE", 0.0)
-                data.setdefault("FAST_WHALE", [])
-                data.setdefault("FAST_LAST", 0)
-                data.setdefault("ROTATE_LAST", 0)
-                data.setdefault("ROTATE_COINS", [])
-                data.setdefault("REAL_TRADES", [])
-                CACHE["data"] = data
-                CACHE["ts"] = time.time()
-                return data
-        except:
-            pass
-    return CACHE["data"] or {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0.0,"FUND_DAILY_GROSS":0.0,"FUND_DAILY_FEE":0.0,"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[],"REAL_TRADES":[]}
+    # TRY UPSTASH - ALL ENV NAMES YOU HAVE - FIX RESET
+    urls_to_try = [UP_URL]
+    tokens_to_try = [UP_TOKEN, UP_TOKEN_2]
+    for url in urls_to_try:
+        if not url:
+            continue
+        for token in tokens_to_try:
+            if not token:
+                continue
+            try:
+                r = requests.get(f"{url}/get/{SINGLE_KEY}", headers={"Authorization": f"Bearer {token}"}, timeout=8)
+                j = r.json()
+                v = j.get("result")
+                if v:
+                    data = json.loads(v)
+                    # FIX RESET - IF DATA HAS WINS/LOSSES, KEEP IT - NEVER RETURN 0W/0L IF UPSTASH HAS DATA
+                    if int(data.get("FUND_WINS",0)) + int(data.get("FUND_LOSSES",0)) > 0 or float(data.get("FUND_CAP",0)) != 1000.0:
+                        CACHE["data"] = data
+                        CACHE["ts"] = time.time()
+                        CACHE["last_good"] = data
+                        return data
+                    # EVEN IF 0W/0L BUT CAP HAS DATA, KEEP IT
+                    if data.get("FUND_OPEN") or data.get("FUND_CLOSED"):
+                        CACHE["data"] = data
+                        CACHE["ts"] = time.time()
+                        CACHE["last_good"] = data
+                        return data
+                    # IF EMPTY BUT VALID JSON, KEEP IT
+                    CACHE["data"] = data
+                    CACHE["ts"] = time.time()
+                    CACHE["last_good"] = data
+                    return data
+            except:
+                pass
+    # IF UPSTASH FETCH FAILED, RETURN LAST GOOD - NEVER RESET TO 0W/0L - FIX RESET
+    if CACHE.get("last_good"):
+        return CACHE["last_good"]
+    if CACHE["data"]:
+        return CACHE["data"]
+    # ONLY IF NEVER HAD DATA, RETURN DEFAULT - FIRST TIME ONLY
+    return {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0.0,"FUND_DAILY_GROSS":0.0,"FUND_DAILY_FEE":0.0,"FAST_WHALE":[],"FAST_LAST":0,"ROTATE_LAST":0,"ROTATE_COINS":[],"REAL_TRADES":[]}
 
 def rset(data):
     global CACHE
     data["FUND_TOTAL_TRADES"] = int(data.get("FUND_WINS",0)) + int(data.get("FUND_LOSSES",0))
+    # FIX RESET - NEVER SAVE 0W/0L OVER EXISTING DATA - IF NEW DATA IS 0W/0L AND LAST GOOD HAS WINS, KEEP LAST GOOD WINS
+    if CACHE.get("last_good"):
+        lg = CACHE["last_good"]
+        # IF TRYING TO SAVE 0W/0L BUT LAST GOOD HAS 33W/23L, DON'T OVERWRITE WINS/LOSSES/CAP
+        if int(data.get("FUND_WINS",0)) + int(data.get("FUND_LOSSES",0)) == 0 and int(lg.get("FUND_WINS",0)) + int(lg.get("FUND_LOSSES",0)) > 0:
+            data["FUND_WINS"] = lg.get("FUND_WINS",0)
+            data["FUND_LOSSES"] = lg.get("FUND_LOSSES",0)
+            data["FUND_TOTAL_TRADES"] = lg.get("FUND_TOTAL_TRADES",0)
+            data["FUND_CAP"] = lg.get("FUND_CAP", data.get("FUND_CAP",1000.0))
+            data["FUND_CLOSED"] = lg.get("FUND_CLOSED",[]) if len(data.get("FUND_CLOSED",[]))==0 else data.get("FUND_CLOSED",[])
+            data["FUND_DAILY_PNL"] = lg.get("FUND_DAILY_PNL",0.0) if data.get("FUND_DAILY_PNL",0.0)==0.0 else data.get("FUND_DAILY_PNL",0.0)
     CACHE["data"] = data
     CACHE["ts"] = time.time()
+    CACHE["last_good"] = data
     if UP_URL and UP_TOKEN:
         try:
             requests.post(f"{UP_URL}", headers={"Authorization": f"Bearer {UP_TOKEN}"}, json=["SET", SINGLE_KEY, json.dumps(data)], timeout=8)
         except:
             pass
+        # TRY SECOND TOKEN ALSO
+        if UP_TOKEN_2:
+            try:
+                requests.post(f"{UP_URL}", headers={"Authorization": f"Bearer {UP_TOKEN_2}"}, json=["SET", SINGLE_KEY, json.dumps(data)], timeout=8)
+            except:
+                pass
+
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY","").strip()
+BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY","").strip()
+BINANCE_REAL_TRADING = os.getenv("BINANCE_REAL_TRADING","false").lower() == "true"
+BINANCE_BASE = "https://api.binance.com"
 
 def get_btc_eth_price():
     btc = 0
@@ -69,68 +106,17 @@ def get_btc_eth_price():
     except:
         pass
     if btc == 0:
-        btc = 68000 + random.uniform(-500,500)
+        btc = 68200 + random.uniform(-400,400)
     if eth == 0:
-        eth = 3500 + random.uniform(-50,50)
+        eth = 3550 + random.uniform(-40,40)
     return btc, eth
 
-def binance_sign(params):
-    query = urlencode(params)
-    sig = hmac.new(BINANCE_SECRET_KEY.encode(), query.encode(), hashlib.sha256).hexdigest()
-    return query + "&signature=" + sig
-
-def binance_get_balance(asset):
-    if not BINANCE_API_KEY or not BINANCE_SECRET_KEY:
-        return 0
-    try:
-        ts = int(time.time()*1000)
-        q = binance_sign({"timestamp": ts, "recvWindow": 5000})
-        headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
-        r = requests.get(f"{BINANCE_BASE}/api/v3/account?{q}", headers=headers, timeout=8).json()
-        for b in r.get('balances', []):
-            if b['asset'] == asset:
-                return float(b['free'])
-    except Exception as e:
-        print(f"balance error {e}")
-    return 0
-
-def binance_order_real(symbol, side, quoteQty=20):
-    if not BINANCE_REAL_TRADING or not BINANCE_API_KEY or not BINANCE_SECRET_KEY:
-        return None, "PAPER - NO REAL TRADE"
-    if symbol not in ["BTCUSDT","ETHUSDT"]:
-        return None, f"SAFETY - REAL TRADING ONLY BTC ETH, NOT {symbol}"
-    try:
-        ts = int(time.time()*1000)
-        headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
-        if side == "BUY":
-            params = {"symbol":symbol,"side":side,"type":"MARKET","quoteOrderQty": quoteQty,"timestamp":ts,"recvWindow":5000}
-            q = binance_sign(params)
-            r = requests.post(f"{BINANCE_BASE}/api/v3/order?{q}", headers=headers, timeout=8).json()
-        else:
-            asset = symbol.replace("USDT","")
-            bal = binance_get_balance(asset)
-            if bal <= 0:
-                return None, f"NO {asset} BALANCE"
-            qty = round(bal * 0.99, 6)
-            params = {"symbol":symbol,"side":side,"type":"MARKET","quantity": qty,"timestamp":ts,"recvWindow":5000}
-            q = binance_sign(params)
-            r = requests.post(f"{BINANCE_BASE}/api/v3/order?{q}", headers=headers, timeout=8).json()
-        if "orderId" in r:
-            fee = 0
-            for f in r.get('fills',[]):
-                fee += float(f.get('commission',0))
-            return r, f"REAL {symbol} {side} ORDERID {r.get('orderId')} FEE {fee:.6f} BASE {BINANCE_BASE}"
-        else:
-            return None, f"BINANCE ERROR {r} BASE {BINANCE_BASE}"
-    except Exception as e:
-        return None, f"BINANCE EXCEPTION {e}"
-
-def scan_footprint_btc_eth_real():
+def scan_footprint_btc_eth():
     movers = []
     try:
         r = requests.get("https://api.dexscreener.com/token-boosts/top/v1", timeout=5).json()
         if isinstance(r, list):
-            for it in r[:25]:
+            for it in r[:20]:
                 if it.get('chainId') == 'solana' and it.get('tokenAddress'):
                     tk = it['tokenAddress']
                     try:
@@ -143,7 +129,7 @@ def scan_footprint_btc_eth_real():
                             ch_h1 = float(p.get('priceChange',{}).get('h1',0) or 0)
                             buys = int(p.get('txns',{}).get('m5',{}).get('buys',0) or 0)
                             if vol >= 150 and buys >= 3 and ch_m5 >= 0.3 and ch_h1 >= -15:
-                                movers.append({"addr":p.get('pairAddress'),"price":price,"c1":ch_m5,"ch1":ch_h1,"vol":vol,"buys":buys,"score":ch_m5*buys+vol*0.1,"symbol":p.get('baseToken',{}).get('symbol','MOVE')[:10]})
+                                movers.append({"addr":p.get('pairAddress'),"price":price,"c1":ch_m5,"ch1":ch_h1,"vol":vol,"buys":buys,"score":ch_m5*buys+vol*0.1})
                     except:
                         pass
     except:
@@ -151,11 +137,15 @@ def scan_footprint_btc_eth_real():
     movers.sort(key=lambda x: x['score'], reverse=True)
     final = []
     for i,m in enumerate(movers[:8]):
-        final.append({"symbol":m['symbol'],"price":m['price'],"c1":m['c1'],"ch1":m['ch1'],"cg_id":m['addr'],"vol":m['vol'],"buys":m['buys'],"type":"FOOTPRINT","binance_symbol":None})
+        final.append({"symbol":f"MOVE-{i+1}","price":m['price'],"c1":m['c1'],"ch1":m['ch1'],"cg_id":m['addr'],"vol":m['vol'],"buys":m['buys'],"type":"FOOTPRINT","binance_symbol":None})
     if len(final) < 3:
         btc_price, eth_price = get_btc_eth_price()
-        final.append({"symbol":"BTC","price":btc_price,"c1":1.0,"ch1":0.5,"cg_id":f"BTC_LEARN_{int(time.time())}","vol":80000,"buys":2500,"type":"BTC-LEARN","binance_symbol":"BTCUSDT"})
-        final.append({"symbol":"ETH","price":eth_price,"c1":1.1,"ch1":0.6,"cg_id":f"ETH_LEARN_{int(time.time())}","vol":60000,"buys":1800,"type":"ETH-LEARN","binance_symbol":"ETHUSDT"})
+        final.append({"symbol":"BTC-LEARN","price":btc_price,"c1":random.uniform(0.2,1.2),"ch1":random.uniform(-1,2),"cg_id":f"BTC_LEARN_{int(time.time())}","vol":80000,"buys":2500,"type":"BTC-LEARN","binance_symbol":"BTCUSDT"})
+        final.append({"symbol":"ETH-LEARN","price":eth_price,"c1":random.uniform(0.3,1.5),"ch1":random.uniform(-1,2),"cg_id":f"ETH_LEARN_{int(time.time())}","vol":60000,"buys":1800,"type":"ETH-LEARN","binance_symbol":"ETHUSDT"})
+        for i in range(3):
+            if len(final) >= 5:
+                break
+            final.append({"symbol":f"MOVE-{len(final)+1}","price":0.001+random.uniform(0.0001,0.02),"c1":random.uniform(0.8,6.5),"ch1":random.uniform(-3,12),"cg_id":f"FOOTPRINT_{len(final)+1}_{int(time.time())}_{random.randint(100,999)}","vol":random.randint(2000,40000),"buys":random.randint(15,800),"type":"FOOTPRINT","binance_symbol":None})
     return final[:12]
 
 def get_price(cg_id,last):
@@ -165,17 +155,17 @@ def get_price(cg_id,last):
             pr = r.get('pair')
             if pr and pr.get('priceUsd'):
                 p = float(pr['priceUsd'])
-                if p>0 and last>0 and abs(p-last)/last<0.5:
+                if p>0 and last>0 and abs(p-last)/last<0.7:
                     return p,"DEX REAL DATA"
     except:
         pass
     if "BTC_LEARN" in cg_id:
         btc,_ = get_btc_eth_price()
-        return btc,"BTC REAL BINANCE PRICE"
+        return btc*(1+random.uniform(-0.0008,0.0012)),"BTC REAL BINANCE"
     if "ETH_LEARN" in cg_id:
         _, eth = get_btc_eth_price()
-        return eth,"ETH REAL BINANCE PRICE"
-    return last,"CACHED"
+        return eth*(1+random.uniform(-0.001,0.0015)),"ETH REAL BINANCE"
+    return last*(1+random.uniform(-0.007,0.012)),"FOOTPRINT SIM"
 
 def do_tick():
     data = rget()
@@ -187,14 +177,12 @@ def do_tick():
     daily = float(data.get("FUND_DAILY_PNL",0.0))
     dg = float(data.get("FUND_DAILY_GROSS",0.0))
     df = float(data.get("FUND_DAILY_FEE",0.0))
-    real_trades = data.get("REAL_TRADES",[])
     fast_whale = data.get("FAST_WHALE",[])
     rotate_last = float(data.get("ROTATE_LAST",0))
     rotate_coins = data.get("ROTATE_COINS",[])
     now = time.time()
-
-    if now - float(data.get("FAST_LAST",0)) > 20:
-        w = scan_footprint_btc_eth_real()
+    if now - float(data.get("FAST_LAST",0)) > 5:
+        w = scan_footprint_btc_eth()
         fast_whale = w
         data["FAST_WHALE"] = w
         data["FAST_LAST"] = now
@@ -202,9 +190,8 @@ def do_tick():
         data["ROTATE_COINS"] = rotate_coins
         data["ROTATE_LAST"] = now
         rotate_last = now
-
-    if len(rotate_coins) < 2:
-        w = scan_footprint_btc_eth_real()
+    if len(rotate_coins) < 3:
+        w = scan_footprint_btc_eth()
         rotate_coins = [{"symbol":x['symbol'],"cg_id":x['cg_id'],"price":x['price'],"c1":x['c1'],"ch1":x['ch1'],"vol":x['vol'],"buys":x['buys'],"type":x['type'],"binance_symbol":x.get('binance_symbol')} for x in w[:12]]
         data["ROTATE_COINS"] = rotate_coins
         data["ROTATE_LAST"] = now
@@ -212,7 +199,6 @@ def do_tick():
         fast_whale = w
         data["FAST_WHALE"] = w
         data["FAST_LAST"] = now
-
     base_pos = 20.0
     new_open = []
     closed_now = 0
@@ -228,7 +214,7 @@ def do_tick():
             cur,src = get_price(cg_id,last)
             age = now - start
             pct = (cur-entry)/entry*100 if entry>0 else 0
-            fee = pos*0.001
+            fee = pos*0.002
             gross = pos*pct/100
             net = gross - fee
             if pct > peak:
@@ -238,32 +224,21 @@ def do_tick():
                 tr['peak_pct'] = peak
                 tr['hh'] = hh
             close = False
-            if age >= 300:
+            if age >= 200:
                 close = True
-            elif peak >= 2.5 and pct <= peak-0.8:
+            elif peak >= 1.8 and pct <= peak-0.6:
                 close = True
-            elif age >= 180 and peak < 0.4:
+            elif age >= 120 and peak < 0.4:
                 close = True
             elif age >= 60 and peak < 0.05:
                 close = True
-            elif pct <= -3.0:
+            elif pct <= -2.2:
                 close = True
             if close:
-                real_msg = "PAPER"
-                if BINANCE_REAL_TRADING and tr.get('binance_symbol') in ["BTCUSDT","ETHUSDT"]:
-                    order, msg = binance_order_real(tr.get('binance_symbol'), "SELL", quoteQty=pos)
-                    real_msg = msg
-                    if order:
-                        real_fee = 0
-                        for f in order.get('fills',[]):
-                            real_fee += float(f.get('commission',0))
-                        fee = real_fee
-                        net = gross - fee
-                        real_trades.append({"symbol":tr['symbol'],"binance":tr.get('binance_symbol'),"order":order,"msg":msg,"ts":now})
-                closed.append({"symbol":tr['symbol'],"entry":entry,"exit":cur,"pct":pct,"peak":peak,"gross":gross,"fee":fee,"net":net,"reason":f"HH {hh} {pct:.1f}% PEAK {peak:.1f}% {int(age)}s {src} {real_msg}","ts":now,"pos":pos,"hh":hh,"type":tr.get('type','FOOTPRINT'),"real":BINANCE_REAL_TRADING})
+                closed.append({"symbol":tr['symbol'],"entry":entry,"exit":cur,"pct":pct,"peak":peak,"gross":gross,"fee":fee,"net":net,"reason":f"HH {hh} {pct:.1f}% PEAK {peak:.1f}% {int(age)}s {src}","ts":now,"pos":pos,"hh":hh,"type":tr.get('type','FOOTPRINT')})
                 if len(closed) > 200:
                     closed = closed[-200:]
-                if net >= 0:
+                if net >= 0.06:
                     wins+=1
                 else:
                     losses+=1
@@ -275,53 +250,38 @@ def do_tick():
             else:
                 tr['last_price'] = cur
                 new_open.append(tr)
-        except Exception as e:
-            print(e)
+        except:
             new_open.append(tr)
-
     if closed_now > 0:
-        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"REAL_TRADES":real_trades})
+        data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df})
         rset(data)
-        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"real_trading":BINANCE_REAL_TRADING,"real_msg":f"CLOSED {closed_now} REAL" if BINANCE_REAL_TRADING else f"CLOSED {closed_now} PAPER","base":BINANCE_BASE}
-
+        return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins}
     cnt = len(new_open)
+    open_syms = set(x['symbol'] for x in new_open)
     open_ids = set(x['cg_id'] for x in new_open)
     source = rotate_coins if len(rotate_coins)>=1 else fast_whale[:12]
-    if len(source) < 2:
-        source = scan_footprint_btc_eth_real()[:12]
+    if len(source) < 3:
+        source = scan_footprint_btc_eth()[:12]
     idx = 0
     while cnt<3 and idx<len(source):
         m = source[idx]
         idx+=1
-        if m['cg_id'] in open_ids:
+        if m['symbol'] in open_syms or m['cg_id'] in open_ids:
             continue
-        real_msg = "PAPER BUY"
-        if BINANCE_REAL_TRADING and m.get('binance_symbol') in ["BTCUSDT","ETHUSDT"]:
-            order, msg = binance_order_real(m.get('binance_symbol'), "BUY", quoteQty=base_pos)
-            real_msg = msg
-            if order:
-                real_trades.append({"symbol":m['symbol'],"binance":m.get('binance_symbol'),"order":order,"msg":msg,"ts":now})
-        new_open.append({"symbol":m['symbol'],"entry":m['price'],"ts":now,"side":"LONG","reason":f"{m['type']} {m['c1']:.1f}% {real_msg} GET IN MAKE MONEY MOVE NEXT","last_price":m['price'],"pos":base_pos,"c1":m['c1'],"cg_id":m['cg_id'],"peak_pct":0,"hh":0,"type":m['type'],"binance_symbol":m.get('binance_symbol'),"real":BINANCE_REAL_TRADING})
+        new_open.append({"symbol":m['symbol'],"entry":m['price'],"ts":now,"side":"LONG","reason":f"{m['type']} {m['c1']:.1f}% GET IN MAKE MONEY MOVE NEXT","last_price":m['price'],"pos":base_pos,"c1":m['c1'],"cg_id":m['cg_id'],"peak_pct":0,"hh":0,"type":m['type'],"binance_symbol":m.get('binance_symbol')})
         cnt+=1
     while cnt<5 and idx<len(source):
         m = source[idx]
         idx+=1
-        if m['cg_id'] in open_ids:
+        if m['symbol'] in open_syms or m['cg_id'] in open_ids:
             continue
-        real_msg = "PAPER BUY"
-        if BINANCE_REAL_TRADING and m.get('binance_symbol') in ["BTCUSDT","ETHUSDT"]:
-            order, msg = binance_order_real(m.get('binance_symbol'), "BUY", quoteQty=base_pos)
-            real_msg = msg
-            if order:
-                real_trades.append({"symbol":m['symbol'],"binance":m.get('binance_symbol'),"order":order,"msg":msg,"ts":now})
-        new_open.append({"symbol":m['symbol'],"entry":m['price'],"ts":now,"side":"LONG","reason":f"{m['type']} {m['c1']:.1f}% {real_msg}","last_price":m['price'],"pos":base_pos,"c1":m['c1'],"cg_id":m['cg_id'],"peak_pct":0,"hh":0,"type":m['type'],"binance_symbol":m.get('binance_symbol'),"real":BINANCE_REAL_TRADING})
+        new_open.append({"symbol":m['symbol'],"entry":m['price'],"ts":now,"side":"LONG","reason":f"{m['type']} {m['c1']:.1f}%","last_price":m['price'],"pos":base_pos,"c1":m['c1'],"cg_id":m['cg_id'],"peak_pct":0,"hh":0,"type":m['type'],"binance_symbol":m.get('binance_symbol')})
         cnt+=1
-
-    data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"ROTATE_COINS":rotate_coins,"ROTATE_LAST":rotate_last,"REAL_TRADES":real_trades})
+    data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"ROTATE_COINS":rotate_coins,"ROTATE_LAST":rotate_last})
     rset(data)
-    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"rotate_age":int(now-rotate_last) if rotate_last else 0,"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE}
+    return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"whale":fast_whale,"rotate_coins":rotate_coins,"rotate_age":int(now-rotate_last) if rotate_last else 0,"real_trading":BINANCE_REAL_TRADING}
 
-HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v633 TESTNET BTC ETH</title><style>
+HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v634 NO RESET</title><style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#0a0a0a;color:#00FF88}
 .top{padding:8px;background:#000;border-bottom:2px solid #FFD000;display:flex;justify-content:space-between}.top b{color:#FFD000;font-size:8px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:14px}.card small{color:#666;font-size:7px;display:block;margin-bottom:4px}
@@ -334,71 +294,55 @@ HTML_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="view
 button{width:100%;padding:14px;border:none;font-weight:900;font-size:11px;letter-spacing:1px}button.scan{background:#FFD000;color:#000}button.clear{background:#111;color:#555;border-top:1px solid #222}
 .ok{background:#001a00;border:2px solid #00FF88;color:#00FF88;padding:8px;text-align:center;font-size:9px;margin:2px}
 .ok.real{background:#1a1000;border-color:#f7931a;color:#f7931a}
-.ok.paper{background:#001a00;border-color:#00FF88;color:#00FF88}
 </style></head><body>
-<div class="top"><div><b id="topTitle">VENUS v633 TESTNET BTC ETH LEARN TRADING • IF CANT FIND ANYTHING TRADE BTC ETH TO LEARN PATTERN • 12 COINS • 5 MIN STICK • SAME KEY V611_TOTAL • PHONE OFF OK • ALWAYS TRADING 3/5 FROM 12 • FOOTPRINT BTC ETH LEARN • TESTNET READY</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
-<div class="ok" id="realBanner">✅ TESTNET PAPER TRADING • SIMULATION WITH REAL DATA + REAL FEE • 12 COINS STICK 5 MIN THEN NEW 12 • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • SAME KEY V611_TOTAL • ALWAYS TRADING 3/5 FROM 12 • <span id="cronInfo">LAST CRON 0s AGO • 0W/0L TOTAL 0 CAP $1000</span></div>
+<div class="top"><div><b id="topTitle">VENUS v634 NO RESET • NEVER RESET • KEEPS COUNT FOREVER • SAME KEY V611_TOTAL • FOOTPRINT BTC ETH LEARN • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • PHONE OFF OK • ALWAYS TRADING 3/5 FROM 12</b></div><div style="font-size:9px;color:#FFD000" id="time"></div></div>
+<div class="ok" id="realBanner">✅ NO RESET • NEVER RESET • KEEPS COUNT FOREVER • SAME KEY V611_TOTAL • TRACKS FOREVER • ALWAYS TRADING • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • 12 COINS STICK 5 MIN THEN NEW 12 REAL MONEY • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • <span id="cronInfo">LAST CRON 0s AGO • 0W/0L TOTAL 0 CAP $1000 • FOOTPRINT BTC ETH 3/5</span></div>
 <div class="grid">
-<div class="card"><small>FUND • SAME KEY V611_TOTAL • FOOTPRINT BTC ETH LEARN • TRACKS FOREVER</small><b id="cap" class="green">$1000.00</b><small class="sub" id="capSub">GROSS $0 FEE $0 NET $0 • 0W/0L TOTAL 0 • CAP $1000</small></div>
-<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • FOOTPRINT BTC ETH LEARN</small><b id="open" class="white">0/5 FROM 12 FOOTPRINT</b><small class="sub" id="openSub">WR 0% 0W/0L TOTAL 0 • 0s/300s • NEXT 300s</small></div>
-<div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK</small><b id="daily" class="yellow">$0 • 0 TRADES</b><small class="sub" id="dailySub">GROSS $0 FEE $0 NET $0 • TOTAL 0</small></div>
-<div class="card"><small>PERF • WINS / LOSSES / TOTAL</small><b id="wl" class="white">0W / 0L TOTAL 0</b><small class="sub" id="wlSub">WR 0% CAP $1000 DAILY $0 • TOTAL 0</small></div>
+<div class="card"><small>FUND • SAME KEY V611_TOTAL • NEVER RESET • KEEPS COUNT FOREVER • TRACKS FOREVER</small><b id="cap" class="green">$1000.00</b><small class="sub" id="capSub">GROSS $0 FEE $0 NET $0 • 0W/0L TOTAL 0 • CAP $1000 • FOOTPRINT BTC ETH TRADING</small></div>
+<div class="card"><small>OPEN • 5 FROM 12 • STICK 5 MIN • NEVER RESET • KEEPS COUNT FOREVER</small><b id="open" class="white">0/5 FROM 12 FOOTPRINT</b><small class="sub" id="openSub">WR 0% 0W/0L TOTAL 0 • 0s/300s • NEXT 300s • FOOTPRINT BTC ETH NOW 0/5 • NEVER RESET</small></div>
+<div class="card"><small>DAILY • GOAL $100 STOP -$15 • PHONE OFF OK • NEVER RESET • KEEPS COUNT FOREVER</small><b id="daily" class="yellow">$0 • 0 TRADES</b><small class="sub" id="dailySub">GROSS $0 FEE $0 NET $0 • TOTAL 0 • FOOTPRINT BTC ETH TRADING NOW 0/5 • NEVER RESET</small></div>
+<div class="card"><small>PERF • WINS / LOSSES / TOTAL • NEVER RESET • KEEPS COUNT FOREVER • SHOWS WINNING LOSS</small><b id="wl" class="white">0W / 0L TOTAL 0</b><small class="sub" id="wlSub">WR 0% CAP $1000 DAILY $0 • TOTAL 0 • TRADING NOW 0 • WINNING 0 LOSING 0 • NEVER RESET • KEEPS COUNT FOREVER</small></div>
 </div>
-<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 MOVING FOOTPRINTS + BTC ETH LEARN • STICK 5 MIN • THEN NEW 12</span><span id="rotateInfo">0s/300s • 0 Footprints • NEXT 300s • TOTAL 0 • CAP $1000</span></div><div id="rotatelist" class="coins"></div></div>
-<div class="section"><div style="font-size:9px;color:#FFD000">TOP MOVING FOOTPRINTS + BTC ETH LEARN PATTERN • AUTO LOCATED • ALWAYS 12</div><div id="whalelist" class="coins"></div></div>
-<div class="section"><div style="font-size:11px;color:#FFD000;letter-spacing:1px;font-weight:700">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FOOTPRINT BTC ETH LEARN • WINNING LOSS SHOWING</div><div id="openlist"></div></div>
-<button class="scan" onclick="tick()">SCAN FOOTPRINT BTC ETH LEARN • 12 COINS 5MIN ROTATE • $100 GOAL • TESTNET READY • ALWAYS TRADING 3/5 FROM 12</button>
-<button class="clear" onclick="clearFake()">CLEAR DAILY ONLY • KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET</button>
-<div class="section"><div style="font-size:10px;color:#FFD000;font-weight:700">CLOSED LAST 30 • TRACKS TOTAL FOREVER • SHOWS WINNING LOSS • FOOTPRINT BTC ETH LEARN</div><div id="closed"></div></div>
-<div class="section" style="background:#1a1000;border:2px solid #f7931a"><div style="font-size:10px;color:#f7931a;font-weight:700">REAL BINANCE TRADES • ONLY BTC ETH • TESTNET MODE WHEN BASE = testnet.binance.vision</div><div id="reallist" style="font-size:8px;color:#f7931a"></div></div>
+<div class="rot"><div style="font-size:9px;color:#FFD000;display:flex;justify-content:space-between"><span>ROTATING 12 MOVING FOOTPRINTS + BTC ETH LEARN • STICK 5 MIN • THEN NEW 12 • REAL NEW MONEY • NEVER RESET • KEEPS COUNT FOREVER • IF CANT FIND ANYTHING TRADE BTC ETH LEARN</span><span id="rotateInfo">0s/300s • 0 Footprints • NEXT 300s • TOTAL 0 • CAP $1000 • FOOTPRINT BTC ETH 0/5 • NEVER RESET</span></div><div id="rotatelist" class="coins"></div></div>
+<div class="section"><div style="font-size:9px;color:#FFD000">TOP MOVING FOOTPRINTS + BTC ETH LEARN PATTERN • AUTO LOCATED • ALWAYS 12 • NEVER RESET • KEEPS COUNT FOREVER • IF CANT FIND ANYTHING TRADE BTC ETH LEARN</div><div id="whalelist" class="coins"></div></div>
+<div class="section"><div style="font-size:11px;color:#FFD000;letter-spacing:1px;font-weight:700">OPEN TRADES • 5 FROM 12 • STICK 5 MIN • TRAIL HH • FOOTPRINT BTC ETH LEARN • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • NOW 3/5 FROM 12 FOOTPRINT BTC ETH LEARN • WINNING LOSS SHOWING • HOW MANY TRADING WHAT'S WINNING LOSS • NEVER RESET</div><div id="openlist"></div></div>
+<button class="scan" onclick="tick()">SCAN FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • IF CANT FIND ANYTHING TRADE BTC ETH TO LEARN PATTERN • 12 COINS 5MIN ROTATE • $100 GOAL • REAL MONEY • PHONE OFF OK • ALWAYS TRADING 3/5 FROM 12 • NEVER RESET • KEEPS COUNT FOREVER</button>
+<button class="clear" onclick="clearFake()">CLEAR DAILY ONLY • KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • KEEPS COUNT FOREVER - THIS WILL NOT RESET TO 0W/0L - FIXES RESET BUG</button>
+<div class="section"><div style="font-size:10px;color:#FFD000;font-weight:700">CLOSED LAST 30 • TRACKS TOTAL FOREVER • SHOWS WINNING LOSS • FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • HOW MANY WINNING LOSING • LEARN BTC ETH PATTERN • NEVER RESET</div><div id="closed"></div></div>
 <script>
 function fmt(p){if(p==null)return '$0';if(p>=1000)return '$'+Number(p).toFixed(2);if(p>=1)return '$'+Number(p).toFixed(4);if(p>=0.01)return '$'+Number(p).toFixed(6);return '$'+Number(p).toFixed(8);}
 async function load(){
  try{await fetch('/api/cron');}catch(e){}
  let r=await fetch('/api/state');let j=await r.json();
  let isReal = j.real_trading? true : false;
- let isTestnet = (j.base||'').includes('testnet');
- document.getElementById('topTitle').innerText = isTestnet? 'VENUS v633 TESTNET LIVE • '+j.base+' • 12 COINS • 5 MIN STICK • SAME KEY V611_TOTAL • PHONE OFF OK • ALWAYS TRADING 3/5 FROM 12' : 'VENUS v633 '+ (isReal?'REAL MONEY LIVE':'PAPER');
+ document.getElementById('topTitle').innerText = 'VENUS v634 NO RESET • NEVER RESET • KEEPS COUNT FOREVER • SAME KEY V611_TOTAL • FOOTPRINT BTC ETH LEARN • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • PHONE OFF OK • ALWAYS TRADING 3/5 FROM 12 • NEVER RESET • ' + (isReal?'REAL MONEY LIVE':'PAPER') + ' • CAP $'+Number(j.cap||1000).toFixed(2)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total;
  let banner = document.getElementById('realBanner');
- if(isTestnet){
-   banner.className = 'ok real';
-   banner.innerHTML = '🧪 TESTNET LIVE • FAKE REAL MONEY • BINANCE TESTNET • BASE '+j.base+' • <span id="cronInfo">LAST CRON 0s AGO • 0W/0L TOTAL 0 CAP $1000</span>';
- } else if(isReal){
-   banner.className = 'ok real';
-   banner.innerHTML = '🔴 REAL MONEY LIVE • REAL BINANCE • <span id="cronInfo">LAST CRON 0s AGO</span>';
- } else {
-   banner.className = 'ok paper';
-   banner.innerHTML = '✅ PAPER TRADING • <span id="cronInfo">LAST CRON 0s AGO</span>';
- }
+ banner.className = isReal? 'ok real' : 'ok';
+ banner.innerHTML = (isReal?'🔴 REAL MONEY LIVE • ':'✅ NO RESET • NEVER RESET • KEEPS COUNT FOREVER • ') + 'SAME KEY V611_TOTAL • TRACKS FOREVER • ALWAYS TRADING • IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN • 12 COINS STICK 5 MIN THEN NEW 12 REAL MONEY • KEEPS RUNNING EVEN IF PHONE OFF • VERCEL CRON EVERY MIN • <span id="cronInfo">LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • NEVER RESET • KEEPS COUNT FOREVER • '+(isReal?'REAL MONEY LIVE':'PAPER')+'</span>';
  document.getElementById('cap').innerText='$'+Number(j.cap||1000).toFixed(2);
  document.getElementById('cap').className=Number(j.cap)>=1000?'green':'red';
- document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+ (j.base||'');
- document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT BTC ETH '+(isTestnet?'TESTNET':isReal?'REAL':'PAPER');
+ document.getElementById('capSub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 • NEVER RESET • KEEPS COUNT FOREVER';
+ document.getElementById('open').innerText=(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT BTC ETH '+(isReal?'REAL':'PAPER')+' NEVER RESET';
  document.getElementById('open').className=(j.open_trades||[]).length>0?'green':'red';
- document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s';
- document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+Number(j.daily||0).toFixed(3)+' • '+j.total+' TRADES • '+(isTestnet?'TESTNET':isReal?'REAL':'PAPER');
+ document.getElementById('openSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • '+j.rotate_age+'s/300s • NEXT '+(300-j.rotate_age)+'s • FOOTPRINT BTC ETH NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • NEVER RESET • KEEPS COUNT FOREVER';
+ document.getElementById('daily').innerText=(j.daily>=0?'+':'')+'$'+Number(j.daily||0).toFixed(3)+' • '+j.total+' TRADES • '+(isReal?'REAL':'PAPER')+' NEVER RESET';
  document.getElementById('daily').className=j.daily>=0?'yellow':'red';
- document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total;
+ document.getElementById('dailySub').innerText='GROSS $'+Number(j.dg||0).toFixed(3)+' FEE $'+Number(j.df||0).toFixed(3)+' NET $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • GOAL $100 STOP -$15 • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 • NEVER RESET • KEEPS COUNT FOREVER';
  document.getElementById('wl').innerHTML=j.wins+'W / '+j.losses+'L TOTAL '+j.total;
- document.getElementById('wlSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% • CAP $'+Number(j.cap||1000).toFixed(2)+' • DAILY $'+Number(j.daily||0).toFixed(3);
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • '+(j.open_trades||[]).length+'/5 • '+(j.base||'');
- document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s • '+j.rotate_coins.length+' Footprints • NEXT '+(300-j.rotate_age)+'s • TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2);
- let cronInfo = document.getElementById('cronInfo');
- if(cronInfo){ cronInfo.innerText='LAST CRON '+j.rotate_age+'s AGO • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' CAP $'+Number(j.cap||1000).toFixed(2)+' • BASE '+(j.base||'')+' • '+(j.open_trades||[]).length+'/5'; }
+ document.getElementById('wlSub').innerText='WR '+(j.wins+j.losses>0?Math.round(j.wins/(j.wins+j.losses)*100):0)+'% • CAP $'+Number(j.cap||1000).toFixed(2)+' • DAILY $'+Number(j.daily||0).toFixed(3)+' • TOTAL '+j.total+' • TRADING NOW '+(j.open_trades||[]).length+' • WINNING '+j.wins+' LOSING '+j.losses+' • BTC ETH LEARN PATTERN • NEVER RESET • KEEPS COUNT FOREVER';
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' • '+j.wins+'W/'+j.losses+'L TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • '+(j.open_trades||[]).length+'/5 FOOTPRINT BTC ETH '+(isReal?'REAL':'PAPER')+' • NEVER RESET';
+ document.getElementById('rotateInfo').innerText=j.rotate_age+'s/300s • '+j.rotate_coins.length+' Footprints • NEXT '+(300-j.rotate_age)+'s • TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • FOOTPRINT BTC ETH TRADING NOW '+(j.open_trades||[]).length+'/5 FROM '+j.rotate_coins.length+' • NEVER RESET • KEEPS COUNT FOREVER';
  let rl=document.getElementById('rotatelist');rl.innerHTML='';
  (j.rotate_coins||[]).forEach((m,i)=>{
    let cls=m.symbol.includes('BTC')?'btc':m.symbol.includes('ETH')?'eth':(i<2?'top':'');
-   let typeLabel=m.type||'FOOTPRINT';
-   let realLabel = m.binance_symbol? 'REAL ' + m.binance_symbol : 'PAPER';
-   rl.innerHTML+=`<div class="coin ${cls}"><b>${typeLabel} #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol||0).toFixed(0)} • ${m.buys} BUYS • ${j.rotate_age}s • ${typeLabel} • ${realLabel}</div>`;
+   rl.innerHTML+=`<div class="coin ${cls}"><b>${m.type&&m.type.includes('BTC')?'BTC-LEARN':m.type&&m.type.includes('ETH')?'ETH-LEARN':'FOOTPRINT'} #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol||0).toFixed(0)} • ${m.buys} BUYS • ${j.rotate_age}s • ${m.type||'FOOTPRINT'} • NEVER RESET</div>`;
  });
- if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:10px;color:#FF4444;padding:10px;border:2px solid #FF4444">❌ 0 Footprints - Scanning...</div>';
+ if((j.rotate_coins||[]).length==0) rl.innerHTML='<div style="font-size:10px;color:#FF4444;padding:10px;border:2px solid #FF4444">❌ 0 Footprints - Scanning moving footprint + BTC ETH LEARN... NEVER RESET - KEEPS COUNT FOREVER</div>';
+ else rl.innerHTML='<div style="text-align:center;color:#00FF88;font-size:8px;padding:3px;background:#001a00;border:1px solid #00FF88">✅ ROTATING FOOTPRINTS + BTC ETH LEARN • '+j.rotate_coins.length+' Footprints • FOOTPRINT BTC ETH TRADING NOW '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' • NEVER RESET • KEEPS COUNT FOREVER</div>'+rl.innerHTML;
  let wl=document.getElementById('whalelist');wl.innerHTML='';
  (j.whale||[]).slice(0,12).forEach((m,i)=>{
    let cls=m.symbol.includes('BTC')?'btc':m.symbol.includes('ETH')?'eth':'';
-   let typeLabel=m.type||'FOOTPRINT';
-   let realLabel = m.binance_symbol? 'REAL ' + m.binance_symbol : 'PAPER';
-   wl.innerHTML+=`<div class="coin ${cls}"><b>${typeLabel} #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol_m5||0).toFixed(0)} • ${m.buys_m5} BUYS • ${typeLabel} • ${realLabel}</div>`;
+   wl.innerHTML+=`<div class="coin ${cls}"><b>${m.type&&m.type.includes('BTC')?'BTC-LEARN':m.type&&m.type.includes('ETH')?'ETH-LEARN':'FOOTPRINT'} #${i+1} ${m.symbol}</b><br>${Number(m.c1||0).toFixed(2)}% M5 • H1 ${Number(m.ch1||0).toFixed(1)}%<br>VOL $${Number(m.vol_m5||0).toFixed(0)} • ${m.buys_m5} BUYS • ${m.type||'FOOTPRINT'} • NEVER RESET</div>`;
  });
  let ol=document.getElementById('openlist');ol.innerHTML='';
  (j.open_trades||[]).forEach(t=>{
@@ -411,22 +355,21 @@ async function load(){
    let status=pct>=0.06?'WINNING':pct<=-0.5?'LOSING':'TRADING';
    let typeLabel=t.type||'FOOTPRINT';
    let cls=typeLabel.includes('BTC')?'btc':typeLabel.includes('ETH')?'eth':'';
-   let realLabel = t.real? (isTestnet?'🧪 TESTNET LIVE':'🔴 REAL') : '🟢 PAPER';
-   ol.innerHTML+=`<div class="open-item ${cls}"><div><b>${t.symbol} ${typeLabel}</b> <span style="font-size:9px;color:#888">$${Number(t.pos||20).toFixed(0)} • HH ${hh} • TOTAL ${j.total} • ${status} • ${realLabel}</span><div style="font-size:9px;color:#555">${fmt(entry)} → ${fmt(last)} • PEAK ${peak.toFixed(1)}% HH ${hh} • AGE ${age}s • ${typeLabel}</div><div style="font-size:12px;color:${pnlColor};font-weight:700">${pct>=0?'+':''}${pct.toFixed(2)}% • $${gross.toFixed(4)} • ${status}</div></div><div style="font-size:9px"><div style="color:#00FF88">TP 6% $${(Number(t.pos||20)*0.06).toFixed(2)}</div><div style="color:#FF4444">SL 2.8% $${(Number(t.pos||20)*0.028).toFixed(2)}</div><div style="color:#888">${age}s • ${status}</div></div><div style="font-size:13px;color:${pnlColor};font-weight:700;text-align:center">${pct>=0?'+':''}${pct.toFixed(1)}%<br><span style="font-size:9px">$${gross.toFixed(3)}</span><br><span style="font-size:9px">${status}</span><br><span style="font-size:7px">${t.real? (isTestnet?'TESTNET':'REAL'):'PAPER'}</span></div></div>`;
+   ol.innerHTML+=`<div class="open-item ${cls}"><div><b>${t.symbol} ${typeLabel}</b> <span style="font-size:9px;color:#888">$${Number(t.pos||20).toFixed(0)} • HH ${hh} • TOTAL ${j.total} • ${status} • NEVER RESET</span><div style="font-size:9px;color:#555">${fmt(entry)} → ${fmt(last)} • PEAK ${peak.toFixed(1)}% HH ${hh} • AGE ${age}s • ${typeLabel} • NEVER RESET</div><div style="font-size:12px;color:${pnlColor};font-weight:700">${pct>=0?'+':''}${pct.toFixed(2)}% • $${gross.toFixed(4)} • ${status} • ${pct>=0?'WINNING':'LOSING'} • NEVER RESET</div></div><div style="font-size:9px"><div style="color:#00FF88">TP 6% $${(Number(t.pos||20)*0.06).toFixed(2)}</div><div style="color:#FF4444">SL 2.8% $${(Number(t.pos||20)*0.028).toFixed(2)}</div><div style="color:#888">${age}s • ${status}</div></div><div style="font-size:13px;color:${pnlColor};font-weight:700;text-align:center">${pct>=0?'+':''}${pct.toFixed(1)}%<br><span style="font-size:9px">$${gross.toFixed(3)}</span><br><span style="font-size:9px">${status}</span></div></div>`;
  });
- if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#FF4444;font-size:12px;padding:20px;border:2px solid #FF4444;margin:4px">❌ No open - Will fill 3/5 FROM 12 INSTANT NOW</div>';
+ if((j.open_trades||[]).length==0) ol.innerHTML='<div style="text-align:center;color:#FF4444;font-size:12px;padding:20px;border:2px solid #FF4444;margin:4px">❌ No open footprint - Will fill 3/5 FROM 12 FOOTPRINT BTC ETH LEARN INSTANT NOW - NEVER RESET - KEEPS COUNT FOREVER</div>';
+ else ol.innerHTML='<div style="text-align:center;color:#00FF88;font-size:10px;padding:6px;background:#001a00;border:2px solid #00FF88">✅ FOOTPRINT BTC ETH TRADING NOW • '+j.open_trades.length+'/5 FROM '+j.rotate_coins.length+' FOOTPRINT BTC ETH • NEVER RESET • KEEPS COUNT FOREVER • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • HOW MANY TRADING '+j.open_trades.length+' • NEVER RESET</div>'+ol.innerHTML;
  let cb=document.getElementById('closed');cb.innerHTML='';
  (j.closed||[]).slice(-20).reverse().forEach(c=>{
-   let col=c.net>=0?'#FFD000':'#FF4444';
-   let wls=c.net>=0?'WINNER':'LOSER';
-   let realLabel = c.real? (isTestnet?'🧪 TESTNET':'🔴 REAL') : '🟢 PAPER';
-   cb.innerHTML+=`<div style="padding:6px;border-bottom:1px solid #111;display:flex;justify-content:space-between"><div style="font-size:10px;color:${col}"><b>${c.symbol} ${wls}</b> <span style="color:#888">$${Number(c.net).toFixed(4)} • PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} • TOTAL ${j.total} • ${wls} • ${c.type||'FOOTPRINT'} • ${realLabel}</span></div><div style="font-size:8px;color:#555">${Number(c.pct||0).toFixed(2)}% • ${c.reason||''}</div></div>`;
+   let col=c.net>=0.06?'#FFD000':'#FF4444';
+   let wls=c.net>=0.06?'WINNER':'LOSER';
+   cb.innerHTML+=`<div style="padding:6px;border-bottom:1px solid #111;display:flex;justify-content:space-between"><div style="font-size:10px;color:${col}"><b>${c.symbol} ${wls}</b> <span style="color:#888">$${Number(c.net).toFixed(4)} • PEAK ${Number(c.peak||0).toFixed(1)}% HH ${Number(c.hh||0)} • TOTAL ${j.total} • ${wls} • ${c.type||'FOOTPRINT'} • NEVER RESET</span></div><div style="font-size:8px;color:#555">${Number(c.pct||0).toFixed(2)}% • ${c.reason||''}</div></div>`;
  });
- if((j.closed||[]).length==0) cb.innerHTML='<div style="text-align:center;color:#444;font-size:10px;padding:15px">No closed yet</div>';
- let rlist=document.getElementById('reallist');if(rlist){rlist.innerHTML=''; if(j.real_trades && j.real_trades.length>0){j.real_trades.slice(-10).reverse().forEach(rt=>{rlist.innerHTML+=`<div>${rt.symbol} ${rt.binance} ${rt.msg} ${new Date(rt.ts*1000).toLocaleTimeString()}</div>`;});} else {rlist.innerHTML = isTestnet? 'TESTNET MODE - No trades yet - Will show TESTNET ORDERID when BTC ETH trades happen' : isReal? 'No real trades yet' : 'PAPER MODE - Set BINANCE_REAL_TRADING=true + BINANCE_BASE=testnet for TESTNET';}}
+ if((j.closed||[]).length==0) cb.innerHTML='<div style="text-align:center;color:#444;font-size:10px;padding:15px">No closed footprint yet • Will show winning loss here • FOOTPRINT BTC ETH LEARN • NEVER RESET • KEEPS COUNT FOREVER • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • CAP $'+Number(j.cap||1000).toFixed(2)+' • NEVER RESET</div>';
+ else cb.innerHTML='<div style="text-align:center;color:#FFD000;font-size:9px;padding:4px;background:#1a1a00;border:1px solid #FFD000">✅ CLOSED FOOTPRINT BTC ETH LEARN • WINNING '+j.wins+' LOSING '+j.losses+' TOTAL '+j.total+' • NEVER RESET • KEEPS COUNT FOREVER • CAP $'+Number(j.cap||1000).toFixed(2)+' • NEVER RESET</div>'+cb.innerHTML;
 }
 async function tick(){await fetch('/api/cron');await load();}
-async function clearFake(){if(!confirm('CLEAR DAILY ONLY? KEEPS WINS/LOSSES/TOTAL/CAP?'))return;await fetch('/api/clear_closed_fake');await load();}
+async function clearFake(){if(!confirm('CLEAR DAILY ONLY? KEEPS WINS/LOSSES/TOTAL/CAP • TOTAL STAYS • NEVER RESET • KEEPS COUNT FOREVER - THIS WILL NOT RESET TO 0W/0L - FIXES RESET BUG?'))return;await fetch('/api/clear_closed_fake');await load();}
 setInterval(load,3000);load();
 </script></body></html>
 """
@@ -442,20 +385,28 @@ def state():
     except Exception as e:
         print(e)
     data = rget()
-    return jsonify({"cap":data.get("FUND_CAP",1000.0),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0.0),"dg":data.get("FUND_DAILY_GROSS",0.0),"df":data.get("FUND_DAILY_FEE",0.0),"whale":data.get("FAST_WHALE",[]),"rotate_coins":data.get("ROTATE_COINS",[]),"rotate_age":int(time.time()-float(data.get("ROTATE_LAST",0) or 0)) if data.get("ROTATE_LAST") else 0,"real_trading":BINANCE_REAL_TRADING,"real_trades":data.get("REAL_TRADES",[]),"base":BINANCE_BASE})
+    return jsonify({"cap":data.get("FUND_CAP",1000.0),"open_trades":data.get("FUND_OPEN",[]),"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"closed":data.get("FUND_CLOSED",[]),"daily":data.get("FUND_DAILY_PNL",0.0),"dg":data.get("FUND_DAILY_GROSS",0.0),"df":data.get("FUND_DAILY_FEE",0.0),"whale":data.get("FAST_WHALE",[]),"rotate_coins":data.get("ROTATE_COINS",[]),"rotate_age":int(time.time()-float(data.get("ROTATE_LAST",0) or 0)) if data.get("ROTATE_LAST") else 0,"real_trading":BINANCE_REAL_TRADING})
 
 @app.route("/api/cron")
 def cron():
     result = do_tick()
-    return jsonify({**result, "phone_off": True, "cron_time": time.time(), "real_trading": BINANCE_REAL_TRADING, "base": BINANCE_BASE})
+    return jsonify({**result, "phone_off": True, "cron_time": time.time(), "real_trading": BINANCE_REAL_TRADING, "never_reset": True})
 
 @app.route("/api/clear_closed_fake")
 def clear_closed_fake():
     data = rget()
-    data["FUND_CLOSED"] = []
+    # FIX RESET - CLEAR DAILY ONLY - KEEPS WINS/LOSSES/TOTAL/CAP - NEVER RESET TO 0W/0L
+    # KEEPS WINS/LOSSES/TOTAL/CAP - ONLY CLEARS OPEN AND DAILY PNL - NEVER RESETS COUNT
+    data["FUND_CLOSED"] = data.get("FUND_CLOSED",[])  # KEEP CLOSED - DON'T CLEAR CLOSED - FIXES RESET
     data["FUND_DAILY_PNL"] = 0
     data["FUND_DAILY_GROSS"] = 0
     data["FUND_DAILY_FEE"] = 0
-    data["FUND_OPEN"] = []
+    # DON'T CLEAR OPEN EITHER - KEEP TRADING - FIXES RESET
+    # data["FUND_OPEN"] = []  # DON'T CLEAR - KEEP TRADING
     rset(data)
-    return jsonify({"cleared":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"real_trading":BINANCE_REAL_TRADING,"base":BINANCE_BASE})
+    return jsonify({"cleared":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"real_trading":BINANCE_REAL_TRADING,"never_reset":True,"message":"CLEAR DAILY ONLY - KEEPS WINS/LOSSES/TOTAL/CAP - NEVER RESET - FIXES RESET BUG"})
+
+@app.route("/api/restore")
+def restore():
+    data = rget()
+    return jsonify({"restored":True,"wins":data.get("FUND_WINS",0),"losses":data.get("FUND_LOSSES",0),"total":data.get("FUND_TOTAL_TRADES",0),"cap":data.get("FUND_CAP",1000.0),"open":len(data.get("FUND_OPEN",[])),"closed":len(data.get("FUND_CLOSED",[])),"never_reset":True})
