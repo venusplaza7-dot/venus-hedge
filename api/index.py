@@ -1,9 +1,7 @@
 from flask import Flask, jsonify
 import os, json, requests, time, random
 app = Flask(__name__)
-UP_URL = (os.getenv("KV_REST_API_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
-UP_TOKEN = (os.getenv("KV_REST_API_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN") or "").rstrip("")
-SINGLE_KEY = "VENUS_V611_TOTAL"
+UP_URL = (os.getenv("KV_REST_API_URL") or os.getenv("UPSTASH_REDIS_REST_URL") or "").
 CACHE = {"data": None, "ts": 0}
 
 def rget():
