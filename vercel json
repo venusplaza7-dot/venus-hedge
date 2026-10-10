@@ -1,6 +1,12 @@
 {
-  "crons": [{
-    "path": "/api/cron?key=venus727&cron=1",
-    "schedule": "* * * * *"
-  }]
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 10
+    }
+  },
+  "regions": [
+    "bom1",
+    "sin1",
+    "hnd1"
+  ]
 }
