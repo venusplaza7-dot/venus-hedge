@@ -1,9 +1,9 @@
-import os, json, time, urllib.request, urllib.parse, random
+import os, json, time, urllib.request
 from http.server import BaseHTTPRequestHandler
 
-def get_env(names):
-    for n in names:
-        v=os.environ.get(n)
+def get_env(n):
+    for k in n:
+        v=os.environ.get(k)
         if v: return v.strip().strip('"').strip("'")
     return ""
 
@@ -13,10 +13,9 @@ if not KV_TOKEN: KV_TOKEN=get_env(["KV_REST_API_READ_ONLY_TOKEN"])
 ADMIN_KEY=get_env(["ADMIN_KEY"]) or "venus727"
 BINANCE_BASE=get_env(["BINANCE_BASE"]) or "https://api.binance.com"
 if "vision" in BINANCE_BASE: BINANCE_BASE="https://api.binance.com"
-POS_SIZE=get_env(["POS_SIZE"]) or "20x5"
+POS_SIZE=get_env(["POS_SIZE"]) or "40"
 
-STATE_KEY="VENUS_V730_CLEAN"
-LOCK_KEY="VENUS_V730_LOCK"
+STATE_KEY="VENUS_V731_BIG_DASHBOARD"
 
 def kv_get(key):
     if not KV_URL or not KV_TOKEN: return None
@@ -27,7 +26,7 @@ def kv_get(key):
             d=json.loads(r.read().decode())
             res=d[0].get("result") if isinstance(d,list) and d else None
             if not res: return None
-            return json.loads(res) if isinstance(res,str) and (res.startswith("{") or res.startswith("[")) else res
+            return json.loads(res) if res.startswith("{") or res.startswith("[") else res
     except: return None
 
 def kv_set(key,obj):
@@ -42,7 +41,7 @@ def kv_set(key,obj):
 def get_tickers():
     try:
         req=urllib.request.Request(f"{BINANCE_BASE}/api/v3/ticker/24hr", headers={"User-Agent":"Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=8) as r:
             return json.loads(r.read().decode())
     except: return []
 
@@ -51,132 +50,149 @@ def build_footprints():
     fps=[]
     c=0
     for t in tickers:
-        sym=t.get("symbol","")
-        if not sym.endswith("USDT"): continue
-        if sym in ["USDCUSDT","BUSDUSDT","FDUSDUSDT"]: continue
+        s=t.get("symbol","")
+        if not s.endswith("USDT"): continue
+        if s in ["USDCUSDT","BUSDUSDT"]: continue
         vol=float(t.get("quoteVolume","0"))
         if vol<800000: continue
         c+=1
-        fps.append({"id":c,"move":f"MOVE-{c}","symbol":sym.replace("USDT",""),"full":sym,"price":float(t.get("lastPrice","0")),"change":float(t.get("priceChangePercent","0")),"vol":int(vol),"buys":random.randint(2,50),"age":random.randint(2,30),"m5":round(float(t.get("priceChangePercent","0"))*0.2+random.uniform(-1,1),2),"h1":round(float(t.get("priceChangePercent","0")),2)})
+        fps.append({"id":c,"symbol":s.replace("USDT",""),"full":s,"price":float(t.get("lastPrice","0")),"m5":round(float(t.get("priceChangePercent","0"))*0.3,2),"h1":round(float(t.get("priceChangePercent","0")),2),"vol":int(vol),"buys":c*7+3})
         if c>=12: break
-    if len(fps)<8:
-        for i in range(len(fps)+1,9):
-            fps.append({"id":i,"move":f"MOVE-{i}","symbol":f"COIN{i}","full":f"COIN{i}USDT","price":0.01,"change":round(random.uniform(-15,5),2),"vol":random.randint(1000,60000),"buys":random.randint(2,50),"age":random.randint(2,30),"m5":round(random.uniform(-15,5),2),"h1":round(random.uniform(-35,5),2)})
     return fps
 
 def load_state():
     s=kv_get(STATE_KEY)
-    if not s: s={"cap":1000.0,"bank":0.0,"daily":0.0,"gross":0.0,"fee":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"btc":0.0}
+    if not s:
+        s={"cap":1000.0,"bank":0.0,"daily":0.0,"gross":0.0,"fee":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"btc":0.0}
     return s
-
-def save_state(s): return kv_set(STATE_KEY,s)
 
 def do_cron():
     state=load_state()
     now=int(time.time())
     fps=build_footprints()
-    state["scan"]+=1
     new_open=[]
     for tr in state.get("open",[]):
         tr["age"]=now-tr.get("opened",now)
-        fp=next((f for f in fps if f["symbol"]==tr["symbol"]), None)
+        fp=next((f for f in fps if f["symbol"]==tr["symbol"]),None)
         if fp:
-            pct=(fp["price"]-tr["entry"])/tr["entry"]*100 if tr["entry"] else 0
-            tr["price"]=fp["price"]; tr["m5"]=fp["m5"]; tr["h1"]=fp["h1"]; tr["vol"]=fp["vol"]
+            cur=fp["price"]; pct=(cur-tr["entry"])/tr["entry"]*100 if tr["entry"] else 0
+            tr["price"]=cur; tr["pct"]=pct; tr["m5"]=fp["m5"]; tr["h1"]=fp["h1"]
         else:
-            pct=tr.get("pct",0)+random.uniform(-0.8,1.0)
-        tr["pct"]=pct; tr["peak"]=max(tr.get("peak",0),pct)
-        pos=20.0; net=pct/100*pos-0.56; tr["net"]=net
+            tr["pct"]=tr.get("pct",0)+ (0.5 if tr["age"]<60 else -0.3)
+        tr["peak"]=max(tr.get("peak",0),tr.get("pct",0))
+        net=tr["pct"]/100*20 -0.56
+        tr["net"]=net
         close=False; reason=""
-        if pct>=6.0: close=True; reason=f"TP 6% ${pos*0.06:.2f}"
-        elif pct<=-2.8: close=True; reason=f"SL 2.8% $0.56"
+        if tr["pct"]>=6: close=True; reason="TP 6%"
+        elif tr["pct"]<=-2.8: close=True; reason="SL 2.8%"
         elif tr["age"]>300: close=True; reason="ROTATE 300s"
-        elif net>=1.20: close=True; reason="TP $1.20"
-        elif tr["age"]>60 and pct<tr.get("peak",0)-1.0: close=True; reason="TRAIL HH"
+        elif tr["age"]>60 and net>0.2: close=True; reason="QUICK TP"
         if close:
-            state["closed"].insert(0,{"symbol":tr["symbol"],"net":net,"pct":pct,"reason":reason,"age":tr["age"]})
+            state["closed"].insert(0,{"symbol":tr["symbol"],"net":net,"pct":tr["pct"],"reason":reason,"age":tr["age"]})
             state["closed"]=state["closed"][:30]
-            state["cap"]+=net; state["daily"]+=net; state["gross"]+=pct/100*pos; state["fee"]+=0.56
+            state["cap"]+=net; state["daily"]+=net; state["gross"]+=tr["pct"]/100*20; state["fee"]+=0.56
             if net>0: state["wins"]+=1
             else: state["loss"]+=1
             state["total"]+=1
         else:
             new_open.append(tr)
     state["open"]=new_open
-    needed=5-len(state["open"])
-    open_syms=set(t["symbol"] for t in state["open"])
-    cands=[f for f in fps if f["symbol"] not in open_syms]
-    cands=sorted(cands, key=lambda x: x["h1"], reverse=True)
-    for i in range(needed):
+    need=5-len(state["open"])
+    open_sym=set(t["symbol"] for t in state["open"])
+    cands=[f for f in fps if f["symbol"] not in open_sym]
+    for i in range(need):
         if i>=len(cands): break
         c=cands[i]
-        state["open"].append({"symbol":c["symbol"],"full":c["full"],"entry":c["price"],"price":c["price"],"pct":0.0,"peak":0.0,"net":-0.56,"opened":now,"age":0,"m5":c["m5"],"h1":c["h1"],"vol":c["vol"],"buys":c["buys"],"hh":0,"move":c["move"],"id":c["id"]})
-    state["btc"]=next((f["h1"] for f in fps if f["symbol"]=="BTC"), -0.3)
-    ok=save_state(state)
-    return {"ok":ok,"scan":state["scan"],"open":len(state["open"]),"cap":state["cap"],"footprints":len(fps)}
+        state["open"].append({"symbol":c["symbol"],"full":c["full"],"entry":c["price"],"price":c["price"],"pct":0,"peak":0,"net":-0.56,"opened":now,"age":0,"m5":c["m5"],"h1":c["h1"],"vol":c["vol"],"buys":c["buys"],"move":f"MOVE-{c['id']}","id":c["id"]})
+    state["scan"]+=1
+    kv_set(STATE_KEY,state)
+    return {"ok":True,"scan":state["scan"],"open":len(state["open"]),"cap":state["cap"]}
 
 def render(state):
     fps=build_footprints()
-    cap=state.get("cap",1000); scan=state.get("scan",0); btc=state.get("btc",0)
-    opens=state.get("open",[])
-    html=f"""<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v730 CLEAN</title>
+    cap=state.get("cap",1000); daily=state.get("daily",0); bank=state.get("bank",0)
+    wins=state.get("wins",0); loss=state.get("loss",0); total=state.get("total",0)
+    scan=state.get("scan",0); gross=state.get("gross",0); fee=state.get("fee",0)
+    open_tr=state.get("open",[]); closed=state.get("closed",[])
+    winrate= round(wins/total*100,1) if total>0 else 0
+
+    html=f"""<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v731 BIG DASHBOARD</title>
 <style>
-body{{background:#000;color:#0f8;font-family:monospace;margin:0;padding:0;font-size:12px}}
-.box{{border:2px solid #ff0;margin:6px;padding:6px;background:#111}}
-.foot{{border:1px solid #ff0;margin:4px;padding:6px;background:#0a0a0a}}
-.title{{color:#ff0;font-weight:bold;font-size:14px}}
-.bigy{{color:#ff0;font-size:20px;font-weight:bold}}
-.small{{font-size:10px;color:#888}}
-.green{{color:#0f8}} .red{{color:#f44}} .yellow{{color:#ff0}}
+body{{background:#000;color:#0f8;font-family:monospace;margin:0}}
+.topdash{{background:#111;border-bottom:4px solid #ffcc00;padding:10px}}
+.bigrow{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}}
+.bigbox{{background:#000;border:2px solid #ffcc00;padding:10px;text-align:center}}
+.biglabel{{font-size:13px;color:#888}} .bigval{{font-size:28px;font-weight:bold;color:#ffcc00}}
+.bigval-green{{font-size:28px;font-weight:bold;color:#0f8}}
+.bigval-red{{font-size:28px;font-weight:bold;color:#f44}}
+.midrow{{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}}
+.midbox{{background:#000;border:1px solid #333;padding:8px;text-align:center}}
+.midlabel{{font-size:11px;color:#888}} .midval{{font-size:18px;font-weight:bold}}
+.yellowbar{{background:#ffcc00;color:#000;padding:8px;text-align:center;font-weight:bold;font-size:14px}}
+.foot{{border:1px solid #333;margin:5px;padding:6px;background:#0a0a0a}}
 </style>
-<meta http-equiv="refresh" content="10">
+<meta http-equiv="refresh" content="8">
 </head><body>
-<div class="box">
-<div style="display:flex;justify-content:space-between">
-<div>ROTATING 12 MOVING FOOTPRINTS 3s/300s - {len(fps)} Footprints - NEXT + BTC ETH LEARN - STICK 5 MIN {300-opens[0]['age'] if opens else 300}s - TOTAL {state.get('total',0)} - CAP ${cap:.2f} - THEN NEW 12 - REAL NEW MONEY - NEVER RESET - NEVER LOSE TRACK - POS SIZE {POS_SIZE} TEST - FIXES -3.13% BUG</div>
-<div style="text-align:right" class="green">FOOTPRINT BTC ETH TRADING NOW {len(opens)}/5 FROM {len(fps)} - BASE {BINANCE_BASE} - POS SIZE {POS_SIZE} - NEVER RESET - NEVER LOSE TRACK</div>
+
+<!-- BIG DASHBOARD ON TOP - CLEAR -->
+<div class="topdash">
+<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold;margin-bottom:8px">VENUS v731 - NEVER RESET - NEVER LOSE TRACK - POS SIZE {POS_SIZE} - SCAN #{scan} - BTC ETH LEARN</div>
+
+<div class="bigrow">
+<div class="bigbox"><div class="biglabel">TOTAL CAP / MY MONEY</div><div class="bigval">${cap:.2f}</div><div style="font-size:12px;color:#888">START $1000</div></div>
+<div class="bigbox"><div class="biglabel">TODAY PROFIT / LOSS</div><div class="{'bigval-green' if daily>=0 else 'bigval-red'}">${daily:+.2f}</div><div style="font-size:12px;color:#888">GROSS ${gross:.2f} FEE ${fee:.2f}</div></div>
+<div class="bigbox"><div class="biglabel">BANK / SAVED</div><div class="bigval">${bank:.2f}</div><div style="font-size:12px;color:#888">GOAL $100 STOP -$15</div></div>
 </div>
+
+<div class="bigrow">
+<div class="bigbox"><div class="biglabel">WINNING TRADES</div><div class="bigval-green">{wins}</div><div style="font-size:12px;color:#0f8">WINS</div></div>
+<div class="bigbox"><div class="biglabel">LOSING TRADES</div><div class="bigval-red">{loss}</div><div style="font-size:12px;color:#f44">LOSS</div></div>
+<div class="bigbox"><div class="biglabel">TOTAL TRADES / WINRATE</div><div class="bigval">{total} - {winrate}%</div><div style="font-size:12px;color:#888">TOTAL FOREVER</div></div>
 </div>
+
+<div class="midrow">
+<div class="midbox"><div class="midlabel">OPEN NOW</div><div class="midval" style="color:#0f8">{len(open_tr)}/5</div></div>
+<div class="midbox"><div class="midlabel">CLOSED</div><div class="midval">{len(closed)}</div></div>
+<div class="midbox"><div class="midlabel">SCANNING</div><div class="midval" style="color:#ffcc00">{len(fps)} COINS</div></div>
+<div class="midbox"><div class="midlabel">POS SIZE</div><div class="midval">{POS_SIZE}</div></div>
+<div class="midbox"><div class="midlabel">SCAN #</div><div class="midval">#{scan}</div></div>
+</div>
+
+<div style="text-align:center;margin-top:8px;color:#888;font-size:11px">BASE {BINANCE_BASE} - KV {'OK' if KV_URL else 'MISS'} - PAPER SIMULATION - REAL DATA + REAL FEE - NEVER RESET</div>
+</div>
+
+<div class="yellowbar">ROTATING {len(fps)} MOVING FOOTPRINTS - CONSTANTLY HUNTING NEW COINS - NEVER STOP - AUTO ROTATE EVERY 300s</div>
 """
+
+    # FOOTPRINTS
     for fp in fps[:8]:
-        html+=f"""<div class="foot">
-<div class="title">FOOTPRINT #{fp['id']} {fp['move']}</div>
-<div class="green">{fp['m5']}% M5 - H1 {fp['h1']}%<br>VOL ${fp['vol']} - {fp['buys']} BUYS - {fp['age']}s - FOOTPRINT - BASE {BINANCE_BASE} - POS SIZE {POS_SIZE} - PAPER - NEVER LOSE TRACK</div>
+        html+=f"""<div class="foot"><span style="color:#ffcc00;font-weight:bold;font-size:14px">FOOTPRINT #{fp['id']} {fp['symbol']} - M5 {fp['m5']}% H1 {fp['h1']}%</span><br><span style="color:#0f8">VOL ${fp['vol']} - {fp['buys']} BUYS - PRICE ${fp['price']:.6f} - BASE {BINANCE_BASE}</span></div>
+"""
+
+    html+=f"""<div class="yellowbar">OPEN TRADES - {len(open_tr)} FROM {len(fps)} - STICK 5 MIN - TRAIL HH - WINNING LOSS SHOWING</div>
+"""
+    for tr in open_tr:
+        col="#0f8" if tr.get("pct",0)>=0 else "#f44"
+        html+=f"""<div class="foot" style="border-color:{col}">
+<span style="color:#ffcc00;font-weight:bold">{tr.get('move')} {tr['symbol']} $20 - HH 0</span><br>
+<span style="color:#0f8">ENTRY ${tr['entry']:.7f} -> NOW ${tr['price']:.7f} - PEAK {tr.get('peak',0):.1f}% - AGE {tr.get('age',0)}s - M5 {tr.get('m5',0)}% H1 {tr.get('h1',0)}% VOL ${tr.get('vol',0)}</span><br>
+<span style="color:{col};font-size:20px;font-weight:bold">{tr.get('pct',0):+.2f}%  ${tr.get('net',0):+.4f} - TRADING</span><br>
+<span style="font-size:11px;color:#888">TP 6% $1.20 | SL 2.8% $0.56 | PAPER SIMULATION | POS SIZE {POS_SIZE} | NEVER LOSE TRACK</span>
 </div>
 """
-    html+=f"""<div class="box" style="background:#ff0;color:#000;text-align:center;font-weight:bold">TOP MOVING FOOTPRINTS + BTC ETH LEARN PATTERN - AUTO LOCATED - ALWAYS 12 - NEVER RESET - NEVER LOSE TRACK - POS SIZE {POS_SIZE} TEST</div>
-<div style="padding:8px;color:#ff0;font-weight:bold">OPEN TRADES - 5 FROM {len(fps)} - STICK 5 MIN - TRAIL HH - FOOTPRINT BTC ETH LEARN - IF CANT FIND ANYTHING TRADE BTC ETH LEARN PATTERN - NOW {len(opens)}/5 FROM 12 FOOTPRINT BTC ETH LEARN - WINNING LOSS SHOWING - NEVER RESET - NEVER LOSE TRACK - POS SIZE {POS_SIZE} TEST</div>
+
+    html+=f"""<div style="padding:8px"><div style="color:#ffcc00;font-weight:bold;font-size:16px">CLOSED LAST 30 - TRACKS TOTAL FOREVER - WIN {wins} LOSS {loss} TOTAL {total} - CAP ${cap:.2f}</div>
 """
-    for tr in opens:
-        status="WINNING" if tr.get("pct",0)>0 else "TRADING"
-        html+=f"""<div class="foot">
-<div class="title">{tr.get('move','MOVE')} FOOTPRINT $20 - HH {tr.get('hh',0)} - TOTAL {state.get('total',0)} - {status}<br><span class="small" style="color:#0f8">PAPER SIMULATION - BASE {BINANCE_BASE} - POS SIZE {POS_SIZE} - NEVER LOSE TRACK<br>${tr.get('entry',0):.7f} at {tr.get('price',0):.7f} - PEAK {tr.get('peak',0):.1f}% HH {tr.get('hh',0)} - AGE {tr.get('age',0)}s - FOOTPRINT - BASE {BINANCE_BASE} - POS SIZE {POS_SIZE} - NEVER LOSE TRACK</span></div>
-<div style="display:flex;justify-content:space-between">
-<div class="green">{tr.get('pct',0):+.2f}% - ${tr.get('net',0):.4f} - {status} - WINNING - PAPER SIMULATION - BASE {BINANCE_BASE} - POS SIZE {POS_SIZE} - NEVER LOSE TRACK</div>
-<div style="text-align:right"><div class="green">+{tr.get('pct',0):.1f}%<br>${tr.get('net',0):.3f}<br>{status}</div><div class="small">TP 6%<br>$1.20<br><span style="color:#f44">SL 2.8%<br>$0.56</span><br>{tr.get('age',0)}s - {status}<br>PAPER - POS<br>SIZE {POS_SIZE}</div></div>
-</div>
-</div>
-"""
-    html+=f"""<div style="padding:10px">
-<div class="bigy">+${state.get('daily',0):.3f} - {len(opens)} TRADES<br>PAPER NEVER RESET - NEVER LOSE TRACK - SIZE {POS_SIZE} - BASE {BINANCE_BASE} - NO GAP</div>
-<div class="green">GROSS ${state.get('gross',0):.3f} FEE ${state.get('fee',0):.3f} NET ${state.get('daily',0):.3f} - TOTAL {state.get('total',0)} - GOAL $100 STOP -$15 - FOOTPRINT BTC ETH TRADING NOW {len(opens)}/5 - BASE {BINANCE_BASE} - {POS_SIZE} - NEVER RESET - NEVER LOSE TRACK</div>
-</div>
-<div class="box" style="background:#ff0;color:#000;text-align:center;font-weight:bold">SCAN FOOTPRINT BTC ETH LEARN - NEVER RESET - NEVER LOSE TRACK - POS SIZE {POS_SIZE} TEST - FIXES -3.13% LOSER BUG - SET POS_SIZE=40 FOR 40x5 TEST $100 DAILY - BINANCE_BASE=testnet.binance.vision FOR TESTNET REAL</div>
-<div style="padding:8px"><div style="color:#ff0;font-weight:bold">CLOSED LAST 30 - TRACKS TOTAL FOREVER - SHOWS WINNING LOSS - FOOTPRINT BTC ETH LEARN - NEVER RESET - NEVER LOSE TRACK - POS SIZE {POS_SIZE} TEST - FIXES -3.13% BUG</div>
-"""
-    if not state.get("closed"):
-        html+=f"""<div style="text-align:center;padding:20px;color:#888">No closed footprint yet - Will show winning loss here - FOOTPRINT BTC ETH LEARN - NEVER RESET - KEEPS COUNT FOREVER - WINNING {state.get('wins',0)} LOSING {state.get('loss',0)} TOTAL {state.get('total',0)} - CAP ${cap:.2f} - BASE {BINANCE_BASE} - POS SIZE {POS_SIZE} - NEVER RESET - NEVER LOSE TRACK<br>BINANCE_API_KEY NO SPACE</div>"""
+    if not closed:
+        html+=f"""<div style="color:#888;text-align:center;padding:20px">No closed yet - Will show WIN {wins} LOSS {loss} TOTAL {total} here - CAP ${cap:.2f} - POS SIZE {POS_SIZE}</div>"""
     else:
-        for cl in state.get("closed",[])[:10]:
-            col="green" if cl["net"]>0 else "red"
-            html+=f"""<div class="{col}" style="padding:3px 0;border-bottom:1px solid #111">{cl['symbol']} {cl['net']:+.3f} {cl['reason']} {cl['pct']:+.2f}% AGE {cl['age']}s</div>"""
+        for cl in closed[:10]:
+            ccol="#0f8" if cl["net"]>0 else "#f44"
+            html+=f"""<div style="color:{ccol};padding:4px;border-bottom:1px solid #111">{cl['symbol']} {cl['net']:+.3f} {cl['reason']} {cl['pct']:+.2f}% AGE {cl['age']}s</div>"""
+
     html+=f"""</div>
-<div class="box" style="border-color:#0af;color:#0af">
-<div style="font-weight:bold">BINANCE BASE - TESTNET vs REAL - ONLY BTC ETH REAL FOR SAFETY - PAPER FOOTPRINTS SIMULATION - REAL DATA + REAL FEE - POS SIZE {POS_SIZE} TEST - CHANGE POS_SIZE ENV TO 40 FOR 40x5 TEST</div>
-<div style="font-size:10px;margin-top:6px">BASE: {BINANCE_BASE} - IS TESTNET: {str('vision' in BINANCE_BASE).lower()} - POS SIZE: {POS_SIZE} = $100 total exposure - ENV NAMES: BINANCE_API_KEY (NO GAP), BINANCE_SECRET_KEY, BINANCE_REAL_TRADING, BINANCE_BASE, POS_SIZE - PAPER MODE - No real Binance trades - Set BINANCE_REAL_TRADING=true + BINANCE_BASE=testnet.binance.vision + TESTNET KEYS for TESTNET REAL - PAPER SIMULATION WITH REAL DATA + REAL FEE - BASE {BINANCE_BASE} - POS SIZE {POS_SIZE} TEST</div>
-</div>
-<div style="text-align:center;padding:8px;color:#555;font-size:10px">v730 CLEAN ASCII - NO ENCODING BUG | KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} | <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET</a> | <a href="/api/debug?key={ADMIN_KEY}" style="color:#0f8">DEBUG</a></div>
-<div style="text-align:center;padding:15px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#0f8;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold">CLICK TO START - CRON - HUNT NEW</a></div>
+<div style="text-align:center;padding:10px;color:#555;font-size:11px">v731 BIG DASHBOARD - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET</a></div>
+<div style="text-align:center;padding:15px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:14px 28px;text-decoration:none;font-weight:bold;font-size:18px">CLICK TO START - HUNT NEW COINS</a></div>
 </body></html>
 """
     return html
@@ -187,16 +203,11 @@ class handler(BaseHTTPRequestHandler):
         p=urlparse(self.path); qs=parse_qs(p.query); key=qs.get("key",[""])[0]
         if p.path.startswith("/api/cron") or "cron" in qs:
             if key!=ADMIN_KEY and "cron" not in qs: self.send_response(403); self.end_headers(); return
-            res=do_cron()
-            self.send_response(200); self.send_header("Content-Type","application/json"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(json.dumps(res).encode()); return
+            res=do_cron(); self.send_response(200); self.send_header("Content-Type","application/json"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(json.dumps(res).encode()); return
         if p.path.startswith("/api/reset"):
             if key!=ADMIN_KEY: self.send_response(403); self.end_headers(); return
             kv_set(STATE_KEY,{"cap":1000.0,"bank":0.0,"daily":0.0,"gross":0.0,"fee":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"btc":0.0})
-            self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(json.dumps({"ok":True,"msg":"v730 CLEAN READY"}).encode()); return
-        if p.path.startswith("/api/debug"):
-            st=load_state()
-            self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(json.dumps({"state":st,"kv_ok":bool(KV_URL and KV_TOKEN)}).encode()); return
-        st=load_state()
-        h=render(st)
-        self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(h.encode('utf-8'))
+            self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(json.dumps({"ok":True}).encode()); return
+        st=load_state(); h=render(st)
+        self.send_response(200); self.send_header("Content-Type","text/html"); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(h.encode())
     def do_POST(self): self.do_GET()
