@@ -1,5 +1,4 @@
 {
-  "regions": [
-    "sin1"
-  ]
+  "crons": [{"path": "/api/cron?key=venus727&cron=1", "schedule": "* * * * *"}],
+  "regions": ["sin1"]
 }
