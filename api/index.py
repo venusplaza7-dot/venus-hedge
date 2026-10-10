@@ -15,7 +15,7 @@ BINANCE_KEY=env(["BINANCE_API_KEY","BINANCE_API_KEY_TESTNET"])
 BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRET_TESTNET"])
 REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "false"
 POS_SIZE=env(["POS_SIZE"]) or "150"
-STATE_KEY="VENUS_V747_LOTSIZE_FIXED_100_REAL"
+STATE_KEY="VENUS_V748_LEARNING_AI_100_REAL"
 
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
@@ -130,9 +130,54 @@ def build_pump_hunter():
 
 def load_state():
     s=kv_get(STATE_KEY)
-    if not s: s={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"real_orders":[]}
+    if not s: s={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"real_orders":[],"learn":{"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0}}
     if s.get("cap",0)<100: s["cap"]=300.0
+    if "learn" not in s: s["learn"]={"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0}
+    # cleanup expired blacklist
+    now=int(time.time())
+    s["learn"]["blacklist"]={k:v for k,v in s["learn"].get("blacklist",{}).items() if v>now}
     return s
+
+def learn_from_trade(state, symbol, net, reason):
+    L=state["learn"]
+    coins=L.setdefault("coins",{})
+    c=coins.setdefault(symbol, {"w":0,"l":0,"pnl":0.0,"streak":0,"sl_hits":0})
+    if net>0:
+        c["w"]+=1
+        c["streak"]= max(0, c["streak"]+1)
+        if c["streak"]>0: c["sl_hits"]=0
+    else:
+        c["l"]+=1
+        c["streak"]= min(0, c["streak"]-1)
+        if "SL" in reason:
+            c["sl_hits"]+=1
+        if c["streak"]<=-2 or c["sl_hits"]>=2:
+            L["blacklist"][symbol]=int(time.time())+2700
+            c["sl_hits"]=0
+    c["pnl"]+=net
+    closed=state.get("closed",[])[:6]
+    if len(closed)>=5:
+        recent_w = sum(1 for x in closed[:5] if x["net"]>0)
+        if recent_w<=1:
+            L["avoid_pump"]=1
+            L["sl_adj"]=0.7
+            L["tp_adj"]=0.8
+        elif recent_w>=4:
+            L["avoid_pump"]=0
+            L["sl_adj"]=1.0
+            L["tp_adj"]=1.3
+        else:
+            L["sl_adj"]=1.0
+            L["tp_adj"]=1.0
+            L["avoid_pump"]=0
+
+def is_blacklisted(state, symbol):
+    return symbol in state["learn"].get("blacklist",{}) and state["learn"]["blacklist"][symbol]>int(time.time())
+
+def get_adaptive(state):
+    L=state["learn"]
+    return L.get("tp_adj",1.0), L.get("sl_adj",1.0), L.get("avoid_pump",0)
+
 
 def do_cron():
     state=load_state()
@@ -180,6 +225,9 @@ def do_cron():
             if net>0: state["wins"]+=1
             else: state["loss"]+=1
             state["total"]+=1
+            try:
+                learn_from_trade(state, tr["symbol"], net, reason)
+            except: pass
             if REAL_TRADING.lower()=="true" and BINANCE_KEY and "testnet" in BINANCE_BASE:
                 qty=tr.get("qty",0)
                 step=tr.get("step",1)
@@ -226,7 +274,7 @@ def render(state):
 <meta http-equiv="refresh" content="15">
 </head><body>
 <div class="topdash">
-<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold">VENUS v747 FLASK $300 REAL LOTSIZE FIXED 3x$100 - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - REAL_TRADING={REAL_TRADING}</div>
+<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold">VENUS v748 FLASK $300 REAL LEARNING AI 3x$100 - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - REAL_TRADING={REAL_TRADING}</div>
 <div style="text-align:center;color:{'#0f8' if daily>=0 else '#f44'};font-size:11px">DAILY {daily:+.2f} / $50 TARGET {daily_pct}% - CAP ${cap:.2f} + UNREAL ${unreal:+.2f} = ${cap+unreal:.2f} REAL</div>
 </div>
 <div class="bigrow">
@@ -244,6 +292,18 @@ def render(state):
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         html+=f"""<div class="foot" style="border-color:{col}"><span style="color:{'#ffcc00' if tr.get('tier')=='PUMP' else '#0ff'};font-weight:bold">{tr.get('move')} {tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s {tr.get('tier','')}</span><br><span style="color:#0f8">ENTRY ${tr['entry']:.6f} -> NOW ${tr['price']:.6f} PEAK {tr.get('peak',0):.1f}% H1 {tr.get('h1',0):+.1f}%</span><br><span style="color:{col};font-size:18px;font-weight:bold">{tr.get('pct',0):+.2f}% ${tr.get('net',0):+.2f} REAL</span><br><span style="font-size:9px;color:#aaa">TP 1% +$1.20 | SL -1% -$1.65 | TRAIL peak-0.5% | QTY {tr.get('qty',0)}</span></div>"""
+    html+=f"""    learn=state.get("learn",{})
+    bl = learn.get("blacklist",{})
+    tp_a, sl_a, av = get_adaptive(state)
+    learn_txt = f"LEARN AI: TP {tp_a:.1f}% SL {sl_a:.1f}% BL:{len(bl)} "
+    if bl:
+        learn_txt+= ",".join([f"{k}({int((v-time.time())/60)}m)" for k,v in list(bl.items())[:3]])
+    if av:
+        learn_txt+=" AVOID HIGH PUMP"
+    bad = sorted([(k,v) for k,v in learn.get("coins",{}).items() if v.get("pnl",0)<0], key=lambda x: x[1]["pnl"])[:2]
+    if bad:
+        learn_txt+= " | BAD: " + ", ".join([f"{k} {v['w']}W{v['l']}L ${v['pnl']:+.1f}" for k,v in bad])
+    html+=f"""<div style="padding:6px;background:#111;border:1px solid #0ff;margin:4px"><div style="color:#0ff;font-size:10px">{learn_txt}</div></div>"""
     html+=f"""<div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:12px">CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} CAP ${cap:.2f} DAILY ${daily:+.2f} / $50</div>"""
     for cl in closed[:12]:
         ccol="#0f8" if cl["net"]>0 else "#f44"
@@ -251,7 +311,7 @@ def render(state):
     html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING}</div>"""
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v747 FLASK $300 REAL LOTSIZE FIXED - 3x$100 - TP1% SL1% QUICK - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/test_real?key={ADMIN_KEY}" style="color:#0f8">TEST REAL</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div>
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v748 FLASK $300 REAL LEARNING AI - 3x$100 - TP1% SL1% QUICK - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/test_real?key={ADMIN_KEY}" style="color:#0f8">TEST REAL</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div>
 <div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a> <a href="/api/test_real?key={ADMIN_KEY}" style="background:#0f8;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;margin-left:8px;font-size:12px">TEST REAL $300</a></div>
 </body></html>"""
     return html
