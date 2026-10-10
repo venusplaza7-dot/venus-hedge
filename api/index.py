@@ -14,7 +14,7 @@ BINANCE_KEY=env(["BINANCE_API_KEY","BINANCE_API_KEY_TESTNET"])
 BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRET_TESTNET"])
 REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "false"
 POS_SIZE=env(["POS_SIZE"]) or "100"
-STATE_KEY="VENUS_V744_QUICK_1PCT_300_REAL"
+STATE_KEY="VENUS_V745_WHALE_PUMP_HUNTER"
 
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
@@ -70,29 +70,53 @@ def get_tickers():
         return [], base
 
 def build_pump_hunter():
-    # ONLY BIG PUMPS H1 > 3% for $50/day - STRK +41% style
+    # TIER 1: PUMP HUNTER H1>3% (STRK +45% style) + TIER 2: WHALE FOOTPRINT FALLBACK
     tickers, used_base = get_tickers()
     pumps=[]
+    whales=[]
     for t in tickers:
         try:
             s=t.get("symbol","")
             if not s.endswith("USDT"): continue
             if any(x in s for x in ["USDC","BUSD","FDUSD","TUSD","USDP"]): continue
             vol=float(t.get("quoteVolume","0"))
-            if vol<3000000: continue  # Need volume for $300 real
+            if vol<2000000: continue
             price=float(t.get("lastPrice","0"))
             if price<0.0001: continue
             h1=float(t.get("priceChangePercent","0"))
-            # PUMP HUNTER: ONLY H1 > 3% for $50/day target
-            if h1<3.0: continue  # Skip BTC +0.9% flat losers
-            # Exclude stable low volatility
-            if s in ["BTCUSDT","ETHUSDT"]: 
-                if h1<5.0: continue  # BTC/ETH need +5% to trade
-            pumps.append({"symbol":s.replace("USDT",""),"full":s,"price":price,"h1":h1,"vol":int(vol),"score":h1*10 + vol/1000000})
+            # TIER 1: BIG PUMP >3%
+            if h1>=3.0:
+                if s in ["BTCUSDT","ETHUSDT"] and h1<5.0: 
+                    continue
+                pumps.append({"symbol":s.replace("USDT",""),"full":s,"price":price,"h1":h1,"vol":int(vol),"score":h1*15 + vol/800000,"tier":"PUMP","type":"PUMP"})
+            # TIER 2: WHALE FOOTPRINT - High vol + moving >0.5%
+            elif h1>=0.5 and vol>=5000000:
+                # Whale footprint score: vol * h1 - large volume + movement
+                score = (vol/1000000)*2 + abs(h1)*3
+                whales.append({"symbol":s.replace("USDT",""),"full":s,"price":price,"h1":h1,"vol":int(vol),"score":score,"tier":"WHALE","type":"WHALE FOOTPRINT"})
+            elif h1<=-0.5 and vol>=8000000:
+                # Whale dump also opportunity for reversal
+                score = (vol/1000000)*2 + abs(h1)*2
+                whales.append({"symbol":s.replace("USDT",""),"full":s,"price":price,"h1":h1,"vol":int(vol),"score":score,"tier":"WHALE_DUMP","type":"WHALE DUMP REVERSAL"})
         except: continue
-    pumps=sorted(pumps, key=lambda x: x["score"], reverse=True)[:10]
-    for i,f in enumerate(pumps): f["id"]=i+1
-    return pumps, used_base
+    pumps=sorted(pumps, key=lambda x: x["score"], reverse=True)
+    whales=sorted(whales, key=lambda x: x["score"], reverse=True)[:8]
+    # If pumps <3, fill with whale footprints
+    combined = pumps[:]
+    if len(combined)<3:
+        need=3-len(combined)
+        combined+=whales[:need]
+    # If still <3, add top whales anyway to make 5 total for display
+    all_display = (pumps+whales)
+    all_display=sorted(all_display, key=lambda x: x["score"], reverse=True)[:10]
+    for i,f in enumerate(all_display): f["id"]=i+1
+    # Return combined for trading (pumps + whale fallback), and all_display for UI
+    # For trading we use combined (at least 3 if available), for UI we show all_display
+    # Store both in global for render
+    build_pump_hunter.last_all = all_display
+    build_pump_hunter.last_combined = combined
+    return all_display, used_base
+    return all_display, used_base
 
 def load_state():
     s=kv_get(STATE_KEY)
@@ -105,11 +129,14 @@ def do_cron():
     state=load_state()
     now=int(time.time())
     pumps, base = build_pump_hunter()
-    if not pumps:
+    if not pumps or len(pumps)==0:
         # No pumps today - no trade, protect $300
         state["scan"]+=1
         kv_set(STATE_KEY, state)
-        return {"ok":True,"scan":state["scan"],"msg":"NO PUMPS H1>3% - PROTECT $300 - NO TRADE","cap":state["cap"],"pumps":0,"base":base}
+        if len(getattr(build_pump_hunter, "last_combined", []))==0:
+        state["scan"]+=1
+        kv_set(STATE_KEY, state)
+        return {"ok":True,"scan":state["scan"],"msg":"NO PUMPS OR WHALES - PROTECT $300 - NO TRADE","cap":state["cap"],"pumps":0,"base":base}
 
     # Update existing with REAL price
     new_open=[]
@@ -203,7 +230,7 @@ def render(state):
 <meta http-equiv="refresh" content="15">
 </head><body>
 <div class="topdash">
-<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold">VENUS v744 $300 REAL QUICK 1% TP - $50/DAY - PUMP HUNTER - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - REAL_TRADING={REAL_TRADING}</div>
+<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold">VENUS v745 $300 REAL WHALE+PUMP HUNTER - PUMP>3% + WHALE FOOTPRINT FALLBACK - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - REAL_TRADING={REAL_TRADING}</div>
 <div style="text-align:center;color:{'#0f8' if daily>=0 else '#f44'};font-size:11px">DAILY {daily:+.2f} / $50 TARGET {daily_pct}% - CAP ${cap:.2f} + UNREAL ${unreal:+.2f} = ${cap+unreal:.2f} REAL</div>
 </div>
 <div class="bigrow">
@@ -211,11 +238,11 @@ def render(state):
 <div class="bigbox"><div style="font-size:10px;color:#aaa">TODAY / $50</div><div style="font-size:26px;font-weight:bold;color:{'#0f8' if daily>=0 else '#f44'}">${daily:+.2f}</div><div style="font-size:10px;color:#aaa">{daily_pct}% OF $50 TARGET</div></div>
 <div class="bigbox"><div style="font-size:10px;color:#aaa">WIN {winrate}%</div><div style="font-size:22px;font-weight:bold;color:#0f8">{wins}W {loss}L {tot}T</div><div style="font-size:10px;color:#aaa">3 MAX PUMP ONLY</div></div>
 </div>
-<div class="yellowbar">PUMP HUNTER {len(pumps)} PUMPS H1>3% ONLY - BASE {base} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'%' if pumps else 'NO PUMPS - PROTECT $300'} - TODAY $300 REAL HUNT</div>
+<div class="yellowbar">PUMP HUNTER {len(pumps)} (PUMPS+WHALE FOOTPRINTS) - BASE {base} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'%' if pumps else 'NO PUMPS - PROTECT $300'} - TODAY $300 REAL HUNT</div>
 """
     for fp in pumps[:6]:
         html+=f"""<div class="foot" style="border-color:#ffcc00"><span style="color:#ffcc00;font-weight:bold">PUMP #{fp['id']} {fp['symbol']} H1 +{fp['h1']:.1f}% REAL PUMP</span><br><span style="color:#0f8">VOL ${fp['vol']} PRICE ${fp['price']:.6f} SCORE {fp['score']:.1f}</span><br><span style="color:#ffcc00">POS ${POS_SIZE} TP 2.5% = +$2.40 net | SL -1.5% = -$1.60</span></div>"""
-    if not pumps:
+    if not pumps or len(pumps)==0:
         html+=f"""<div class="foot" style="border-color:#f44"><span style="color:#f44">NO PUMPS H1>3% TODAY - PROTECTING $300 - NO TRADE - Waiting for STRK +41% style pump</span></div>"""
 
     html+=f"""<div class="yellowbar">OPEN {len(open_tr)}/3 MAX $300 REAL - PUMP HUNTER ONLY - TP 1.0% QUICK +$1.35 | SL -1.0% | TRAIL 0.5% | POS ${POS_SIZE}</div>"""
@@ -232,7 +259,7 @@ def render(state):
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
 
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v744 $300 REAL QUICK 1% TP - $50/DAY - 3 MAX - TP1% SL1% QUICK - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/test_real?key={ADMIN_KEY}" style="color:#0f8">TEST REAL</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div>
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v745 $300 REAL WHALE+PUMP HUNTER - $50/DAY - 3 MAX - TP1% SL1% WHALE - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/test_real?key={ADMIN_KEY}" style="color:#0f8">TEST REAL</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div>
 <div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a> <a href="/api/test_real?key={ADMIN_KEY}" style="background:#0f8;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;margin-left:8px;font-size:12px">TEST REAL $300</a></div>
 </body></html>"""
     return html
