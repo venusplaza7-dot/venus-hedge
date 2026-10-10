@@ -1,5 +1,5 @@
 from flask import Flask, jsonify
-import os, json, requests, time
+import os, json, requests, time, urllib.parse
 app = Flask(__name__)
 
 URLS=[]; TOKENS=[]
@@ -43,10 +43,6 @@ def rset(d):
 POS_SIZE=10
 REAL_TARGET=10
 BINANCE_BASE="https://api.binance.com"
-BINANCE_FEE_PCT=0.001
-SOLANA_NETWORK_FEE_USD=0.01
-JUPITER_FEE_PCT=0.003
-SOLANA_SLIPPAGE_PCT=0.005
 
 def calc_fees(chain, pos_usd, gross_pct):
     if chain=="binance":
@@ -64,14 +60,27 @@ def get_real_prices():
     binance_coins=[]
     try:
         coins=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT"]
-        r=requests.get(f"{BINANCE_BASE}/api/v3/ticker/24hr?symbols={json.dumps(coins)}",timeout=6).json()
+        # FIX 1: URL encode symbols array for Binance
+        sym_param=urllib.parse.quote(json.dumps(coins))
+        url=f"{BINANCE_BASE}/api/v3/ticker/24hr?symbols={sym_param}"
+        r=requests.get(url,timeout=6).json()
+        # Fallback if Binance returns error with symbols param
+        if isinstance(r, dict) and r.get('code'):
+            r=[]
+            for s in coins:
+                try:
+                    t=requests.get(f"{BINANCE_BASE}/api/v3/ticker/24hr?symbol={s}",timeout=4).json()
+                    if t.get('symbol'): r.append(t)
+                except: pass
         for it in r:
             try:
                 price=float(it.get('lastPrice',0)); ch=float(it.get('priceChangePercent',0)); vol=float(it.get('quoteVolume',0))
                 if price<=0 or vol<1000000: continue
                 binance_coins.append({"symbol":it['symbol'].replace('USDT',''),"price":price,"c1":ch/6,"vol":vol,"cg_id":it['symbol'],"type":"BINANCE_REAL","chain":"binance","score":abs(ch),"liquidity":vol})
             except: pass
-    except: pass
+    except Exception as e:
+        print(f"Binance err {e}")
+
     sol_coins=[]
     try:
         r=requests.get("https://api.dexscreener.com/token-boosts/top/v1",timeout=6).json()
@@ -89,14 +98,17 @@ def get_real_prices():
                     sells=int(p.get('txns',{}).get('m5',{}).get('sells',0) or 0)
                     liq=float(p.get('liquidity',{}).get('usd',0) or 0)
                     if price<=0 or vol<5000 or buys+sells<20 or liq<10000 or abs(ch5)>50: continue
+                    # FIX 2: Jupiter v6 with fallback to Dex price
                     try:
                         jp=requests.get(f"https://price.jup.ag/v6/price?ids={token}",timeout=3).json()
-                        jprice=float(jp.get('data',{}).get(token,{}).get('price',0) or price)
-                        if jprice>0: price=jprice
+                        jprice=float(jp.get('data',{}).get(token,{}).get('price',0) or 0)
+                        if jprice>0 and abs(jprice-price)/price<0.3: price=jprice
                     except: pass
                     sol_coins.append({"symbol":p.get('baseToken',{}).get('symbol','SOL')[:8],"price":price,"c1":ch5,"vol":vol,"buys":buys,"sells":sells,"cg_id":p.get('pairAddress'),"token":token,"type":"SOLANA_REAL","chain":"solana","score":abs(ch5)*(buys+sells),"liquidity":liq})
                 except: pass
-    except: pass
+    except Exception as e:
+        print(f"Sol err {e}")
+
     sol_coins.sort(key=lambda x:x['score'],reverse=True)
     binance_coins.sort(key=lambda x:abs(x['c1']),reverse=True)
     mixed=binance_coins[:2]+sol_coins[:2]
@@ -109,13 +121,13 @@ def get_price_real(cg_id, chain, last, token=None):
         try:
             r=requests.get(f"{BINANCE_BASE}/api/v3/ticker/price?symbol={cg_id}",timeout=3).json()
             p=float(r.get('price',0))
-            if p>0 and abs(p-last)/last<0.15: return p
+            if p>0 and last>0 and abs(p-last)/last<0.15: return p
         except: pass
     elif chain=="solana" and token:
         try:
             r=requests.get(f"https://price.jup.ag/v6/price?ids={token}",timeout=3).json()
             p=float(r.get('data',{}).get(token,{}).get('price',0) or 0)
-            if p>0 and abs(p-last)/last<0.30: return p
+            if p>0 and last>0 and abs(p-last)/last<0.30: return p
         except: pass
     return last
 
@@ -183,7 +195,7 @@ def do_tick():
     rset(data)
     return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked,"free_zone":free_zone,"count100":count100,"regime":regime,"btc_ch":btc_ch}
 
-HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v712 FEES FIXED</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:8px;text-align:center}.card b{font-size:12px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.blue{color:#00AAFF}.card small{color:#888;font-size:4px}.box{padding:8px;margin:5px;font-size:8px;border:2px solid}.greenbox{border-color:#00FF88;background:#001100;color:#00FF88}.yellowbox{border-color:#FFD000;background:#332200;color:#FFD000}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:9px}.item{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #111;font-size:8px}</style></head><body>
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v712 FEES FIXED</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:8px;text-align:center}.card b{font-size:12px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.blue{color:#00AAFF}.card small{color:#888;font-size:9px}.box{padding:8px;margin:5px;font-size:9px;border:2px solid}.yellowbox{border-color:#FFD000;background:#332200;color:#FFD000}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:10px}.item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #111;font-size:9px}</style></head><body>
 <div class="top"><b>VENUS v712 FEES FIXED - GROSS FEE NET - TEST 0 FUNDS</b> <span id="time"></span></div>
 <div class="grid">
 <div class="card"><small>CAP TEST</small><b id="cap" class="green">$1000</b><small id="capSub"></small></div>
@@ -193,7 +205,7 @@ HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" c
 <div class="card"><small>W/L/TOTAL</small><b id="wl">0W/0L/0</b><small id="wlSub"></small></div>
 <div class="card"><small>BANK TEST</small><b id="bank" class="green">$0</b><small>BANK</small></div>
 </div>
-<div class="box yellowbox">FEES REAL: BINANCE 0.2% ($0.02/$10) | SOLANA 0.8%+ $0.02 ($0.10/$10) - Now calculated GROSS FEE NET - TP SOL 6% = NET 5.2% | TP BINANCE 4% = NET 3.8%</div>
+<div class="box yellowbox">FEES REAL: BINANCE 0.2% ($0.02/$10) | SOLANA 0.8%+ $0.02 ($0.10/$10) - GROSS FEE NET - TP SOL 6% = NET 5.2% | TP BINANCE 4% = NET 3.8% | 1 TAB ONLY | VOL>5000 LIQ>10k</div>
 <div class="section"><h3>REAL PRICE + REAL FEES</h3><div id="rotate"></div></div>
 <div class="section"><h3>OPEN - GROSS FEE NET</h3><div id="openlist"></div></div>
 <div class="section"><h3>CLOSED - NET AFTER FEES</h3><div id="closed"></div></div>
@@ -210,25 +222,28 @@ async function load(){
  document.getElementById('wl').innerText=j.wins+'W/'+j.losses+'L/'+j.total;
  document.getElementById('bank').innerText='$'+j.bank.toFixed(2);
  document.getElementById('capSub').innerText='GROSS $'+j.dg.toFixed(2)+' FEE $'+j.df.toFixed(2)+' NET $'+j.daily.toFixed(2);
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' FEES REAL BTC '+ (j.btc_ch||0).toFixed(2)+'%';
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' FEES REAL BTC '+ (j.btc_ch||0).toFixed(2)+'% REGIME '+j.regime;
  let rot=document.getElementById('rotate');rot.innerHTML='';
  (j.rotate||[]).forEach(m=>{
-  let fee = m.chain=='solana'?'FEE 0.8%':'FEE 0.2%';
-  rot.innerHTML+=`<div class="item"><div><b>${m.symbol} ${m.chain.toUpperCase()}</b> ${m.c1.toFixed(2)}% VOL ${(m.vol/1000).toFixed(0)}k ${fee}</div><div>${m.chain}</div></div>`;
+  let fee=m.chain=='solana'?'FEE 0.8%':'FEE 0.2%';
+  rot.innerHTML+=`<div class="item"><div><b>${m.symbol} ${m.chain.toUpperCase()}</b> ${m.c1.toFixed(2)}% VOL ${(m.vol/1000).toFixed(0)}k ${fee}</div><div>${m.chain} LIQ $${(m.liquidity/1000).toFixed(0)}k</div></div>`;
  });
+ if((j.rotate||[]).length==0) rot.innerHTML='<div class="item" style="color:#666">Scanning Binance + Solana... wait 5s</div>';
  let ol=document.getElementById('openlist');ol.innerHTML='';
  (j.open||[]).forEach(t=>{
   let pct=t.entry>0?(t.last_price-t.entry)/t.entry*100:0;
   let gross=t.pos*pct/100;
   let fee=t.chain=='solana'?t.pos*0.008+0.02:t.pos*0.002;
   let net=gross-fee;
-  ol.innerHTML+=`<div class="item"><div><b>${t.symbol}</b> ${pct.toFixed(2)}% GROSS $${gross.toFixed(2)} FEE $${fee.toFixed(2)} NET $${net.toFixed(2)}</div><div>NET $${net.toFixed(2)}</div></div>`;
+  ol.innerHTML+=`<div class="item"><div><b>${t.symbol}</b> ${pct.toFixed(2)}% GROSS $${gross.toFixed(3)} FEE $${fee.toFixed(3)} NET $${net.toFixed(3)} AGE ${Math.floor(Date.now()/1000-t.ts)}s</div><div>NET $${net.toFixed(3)}</div></div>`;
  });
+ if((j.open||[]).length==0) ol.innerHTML='<div class="item" style="color:#444">No open - will fill 3 from REAL feed</div>';
  let cb=document.getElementById('closed');cb.innerHTML='';
  (j.closed||[]).slice(-20).reverse().forEach(c=>{
   let col=c.net>=0?'#00FF88':'#FF4444';
-  cb.innerHTML+=`<div class="item"><div><b style="color:${col}">${c.symbol} NET $${c.net.toFixed(2)}</b> GROSS $${(c.gross||0).toFixed(2)} FEE $${(c.fee||0).toFixed(2)} ${c.reason||''}</div><div style="color:${col}">${c.pct.toFixed(2)}% NET $${c.net.toFixed(2)}</div></div>`;
+  cb.innerHTML+=`<div class="item"><div><b style="color:${col}">${c.symbol} NET $${c.net.toFixed(3)}</b> GROSS $${(c.gross||0).toFixed(3)} FEE $${(c.fee||0).toFixed(3)} ${c.reason||''}</div><div style="color:${col}">${c.pct.toFixed(2)}% NET $${c.net.toFixed(3)}</div></div>`;
  });
+ if((j.closed||[]).length==0) cb.innerHTML='<div class="item" style="color:#444">No closed yet - waiting real ticks</div>';
 }
 setInterval(load,3000);load();
 </script></body></html>
@@ -249,4 +264,4 @@ def cron():
 def reset():
     d={"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"REGIME":"NEUTRAL","BTC_CH":0}
     rset(d)
-    return jsonify({"ok":True,"msg":"v712 FEES FIXED - READY"})
+    return jsonify({"ok":True,"msg":"v712 FEES FIXED - READY - 1 TAB ONLY"})
