@@ -357,3 +357,6 @@ def catch_all(path):
 # For Vercel serverless - required top-level app
 # This is the Flask instance Vercel looks for
 handler = app
+
+# Vercel requires top-level app variable
+# app is already defined above as Flask instance
