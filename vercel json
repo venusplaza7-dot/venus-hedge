@@ -1,9 +1,4 @@
-
 {
-  "crons": [
-    {
-      "path": "/api/cron",
-      "schedule": "* * * * *"
-    }
-  ]
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "crons": [{ "path": "/api/index?cron=1&key=venus727", "schedule": "*/1 * * * *" }]
 }
