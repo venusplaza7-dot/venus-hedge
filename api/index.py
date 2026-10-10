@@ -13,49 +13,57 @@ for k in ["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN"]:
 KEY="VENUS_V712_FEES_FIXED"; KEY_BACKUP="VENUS_V712_FEES_BACKUP"
 CACHE={"data":None,"ts":0,"last_good":None,"last_tick":0}
 
+def raw_get(key):
+    for url in URLS:
+        for tok in TOKENS:
+            try:
+                r=requests.get(f"{url}/get/{key}",headers={"Authorization":f"Bearer {tok}"},timeout=5)
+                v=r.json().get("result")
+                if v: return json.loads(v)
+            except: pass
+    return None
+
 def rget():
     global CACHE
     if CACHE["data"] and time.time()-CACHE["ts"]<10: return CACHE["data"]
-    for url in URLS:
-        for tok in TOKENS:
-            try:
-                r=requests.get(f"{url}/get/{KEY}",headers={"Authorization":f"Bearer {tok}"},timeout=5)
-                v=r.json().get("result")
-                if v:
-                    d=json.loads(v); CACHE["data"]=d; CACHE["ts"]=time.time(); CACHE["last_good"]=d; return d
-            except: pass
-    for url in URLS:
-        for tok in TOKENS:
-            try:
-                r=requests.get(f"{url}/get/{KEY_BACKUP}",headers={"Authorization":f"Bearer {tok}"},timeout=5)
-                v=r.json().get("result")
-                if v:
-                    d=json.loads(v); CACHE["data"]=d; CACHE["ts"]=time.time(); CACHE["last_good"]=d; return d
-            except: pass
+    main=raw_get(KEY)
+    backup=raw_get(KEY_BACKUP)
+    # RESTORE LOGIC: If main is $1000 0W/0L/0 but backup is $1021 BANK $10, return backup
+    if main:
+        cap=float(main.get("FUND_CAP",1000)); total=int(main.get("FUND_TOTAL_TRADES",0)); bank=float(main.get("FUND_PROFIT_BANK",0))
+        closed_len=len(main.get("FUND_CLOSED",[]))
+        # If main looks like fresh reset but backup has profit, use backup
+        if cap<=1000.5 and total==0 and bank==0 and closed_len==0 and backup:
+            bcap=float(backup.get("FUND_CAP",0)); bbank=float(backup.get("FUND_PROFIT_BANK",0))
+            if bcap>1001 or bbank>0:
+                CACHE["data"]=backup; CACHE["ts"]=time.time(); CACHE["last_good"]=backup; return backup
+        CACHE["data"]=main; CACHE["ts"]=time.time(); CACHE["last_good"]=main; return main
+    if backup:
+        CACHE["data"]=backup; CACHE["ts"]=time.time(); CACHE["last_good"]=backup; return backup
     if CACHE.get("last_good"): return CACHE["last_good"]
     if CACHE["data"]: return CACHE["data"]
-    if URLS and TOKENS:
-        if CACHE.get("last_good"): return CACHE["last_good"]
-        return None
     return {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"REGIME":"NEUTRAL","BTC_CH":0,"FREE_ZONE_START":0}
 
 def rset(d):
     global CACHE
-    if d.get("FUND_CAP",1000)==1000.0 and d.get("FUND_TOTAL_TRADES",0)==0 and len(d.get("FUND_CLOSED",[]))==0:
-        last=CACHE.get("last_good")
-        if last and float(last.get("FUND_CAP",1000))>1001:
+    # TRUE BLOCK: Never allow $1000 overwrite $1021, even if new instance
+    # Check Upstash directly before write
+    existing_main=raw_get(KEY)
+    existing_backup=raw_get(KEY_BACKUP)
+    best_existing=None
+    if existing_main and existing_backup:
+        best_existing=existing_main if float(existing_main.get("FUND_CAP",0))>=float(existing_backup.get("FUND_CAP",0)) else existing_backup
+    elif existing_main: best_existing=existing_main
+    elif existing_backup: best_existing=existing_backup
+    elif CACHE.get("last_good"): best_existing=CACHE["last_good"]
+
+    if best_existing:
+        ecap=float(best_existing.get("FUND_CAP",0)); ebank=float(best_existing.get("FUND_PROFIT_BANK",0)); etotal=int(best_existing.get("FUND_TOTAL_TRADES",0))
+        ncap=float(d.get("FUND_CAP",0)); nbank=float(d.get("FUND_PROFIT_BANK",0)); ntotal=int(d.get("FUND_TOTAL_TRADES",0))
+        # If existing has profit and new is fresh $1000 0W/0L/0, BLOCK
+        if (ecap>1001 or ebank>0) and ncap<=1000.5 and ntotal==0 and nbank==0:
+            CACHE["data"]=best_existing; CACHE["last_good"]=best_existing
             return
-        for url in URLS:
-            for tok in TOKENS:
-                try:
-                    r=requests.get(f"{url}/get/{KEY}",headers={"Authorization":f"Bearer {tok}"},timeout=3)
-                    v=r.json().get("result")
-                    if v:
-                        existing=json.loads(v)
-                        if float(existing.get("FUND_CAP",0))>1001 or float(existing.get("FUND_PROFIT_BANK",0))>1:
-                            CACHE["data"]=existing; CACHE["last_good"]=existing
-                            return
-                except: pass
     CACHE["data"]=d; CACHE["ts"]=time.time(); CACHE["last_good"]=d; CACHE["last_tick"]=time.time()
     if len(d.get("FUND_CLOSED",[]))>50: d["FUND_CLOSED"]=d["FUND_CLOSED"][-50:]
     payload=json.dumps(d)
@@ -66,8 +74,7 @@ def rset(d):
                 requests.post(f"{url}",headers={"Authorization":f"Bearer {tok}"},json=["SET",KEY_BACKUP,payload],timeout=5)
             except: pass
 
-POS_SIZE=10
-REAL_TARGET=10
+POS_SIZE=10; REAL_TARGET=10
 BINANCE_BASE=os.getenv("BINANCE_BASE","https://data-api.binance.vision")
 
 def calc_fees(chain, pos_usd, gross_pct):
@@ -160,16 +167,10 @@ def do_tick():
         quick_ch=requests.get(f"{BINANCE_BASE}/api/v3/ticker/24hr?symbol=BTCUSDT",timeout=2).json()
         btc_ch_quick=float(quick_ch.get('priceChangePercent',0))
     except: btc_ch_quick=data.get("BTC_CH",0)
-    # TRUE FREEZE: Only unlock on real opportunity, else stay empty
     if free_zone:
         if btc_ch_quick>0.4 or (now - fz_start > 900 and fz_start>0):
-            # Unlock only if Solana also pumping 2%+
             sol_pump=any(x.get('c1',0)>2 for x in rotate)
-            if btc_ch_quick>0.4 and sol_pump:
-                free_zone=False; locked=False
-                data["FREE_ZONE"]=False; data["FUND_DAILY_LOCKED"]=False
-            elif now - fz_start > 1800:
-                # Force unlock after 30min even if no pump, to prevent permanent freeze
+            if (btc_ch_quick>0.4 and sol_pump) or (now - fz_start > 1800):
                 free_zone=False; locked=False
                 data["FREE_ZONE"]=False; data["FUND_DAILY_LOCKED"]=False
     if now-float(data.get("FAST_LAST",0))>180 or len(rotate)==0:
@@ -181,7 +182,6 @@ def do_tick():
         data.update({"FUND_CAP":cap,"FUND_OPEN":[],"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":now,"ROTATE_COINS":rotate,"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":True,"FREE_ZONE":True,"FREE_ZONE_100_COUNT":count100,"REGIME":regime,"BTC_CH":btc_ch,"FREE_ZONE_START":now})
         rset(data); return {"cap":cap,"open":[],"wins":wins,"losses":losses,"total":wins+losses,"daily":0,"dg":0,"df":0,"rotate":rotate,"bank":profit_bank,"locked":True,"free_zone":True,"count100":count100,"regime":regime,"btc_ch":btc_ch,"fz_start":now}
     if free_zone or locked:
-        # TRUE FREEZE: Close all existing and keep OPEN empty - no fee bleed
         new_open=[]
         for tr in open_t:
             cur=get_price_real(tr['cg_id'],tr.get('chain','binance'),float(tr.get('last_price',tr['entry'])),tr.get('token'))
@@ -191,7 +191,6 @@ def do_tick():
             if net>=0: wins+=1
             else: losses+=1
             daily+=net; dg+=gross; df+=fee; cap+=net
-        # No new trades in freeze - OPEN stays empty
         data.update({"FUND_CAP":cap,"FUND_OPEN":[],"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"FAST_LAST":now,"ROTATE_COINS":rotate,"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":locked,"FREE_ZONE":free_zone,"FREE_ZONE_100_COUNT":count100,"REGIME":regime,"BTC_CH":btc_ch,"FREE_ZONE_START":fz_start})
         rset(data); return {"cap":cap,"open":[],"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked,"free_zone":free_zone,"count100":count100,"regime":regime,"btc_ch":btc_ch,"fz_start":fz_start}
     new_open=[]
@@ -223,8 +222,8 @@ def do_tick():
     rset(data)
     return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked,"free_zone":free_zone,"count100":count100,"regime":regime,"btc_ch":btc_ch,"fz_start":fz_start}
 
-HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v718 TRUE FREEZE</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:8px;text-align:center}.card b{font-size:12px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.card small{color:#888;font-size:9px}.box{padding:8px;margin:5px;font-size:9px;border:2px solid}.greenbox{border-color:#00FF88;background:#002211;color:#00FF88}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:10px}.item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #111;font-size:9px}</style></head><body>
-<div class="top"><b>VENUS v718 TRUE FREEZE - No bleed after BANK</b> <span id="time"></span></div>
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v719 RESTORE</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:8px;text-align:center}.card b{font-size:12px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.card small{color:#888;font-size:9px}.box{padding:8px;margin:5px;font-size:9px;border:2px solid}.greenbox{border-color:#00FF88;background:#002211;color:#00FF88}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:10px}.item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #111;font-size:9px}</style></head><body>
+<div class="top"><b>VENUS v719 RESTORE $1021 + TRUE FREEZE</b> <span id="time"></span></div>
 <div class="grid">
 <div class="card"><small>CAP TEST</small><b id="cap" class="green">$1000</b></div>
 <div class="card"><small>DAILY NET</small><b id="daily" class="green">+$0</b></div>
@@ -233,7 +232,7 @@ HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" c
 <div class="card"><small>W/L/TOTAL</small><b id="wl">0W/0L/0</b></div>
 <div class="card"><small>BANK</small><b id="bank" class="green">$0</b></div>
 </div>
-<div class="box greenbox" id="fzbox">TRUE FREEZE: After BANK $10, OPEN=[] empty - No fee bleed - Waits for real pump</div>
+<div class="box greenbox" id="fzbox">v719: Auto-restore $1021 from backup if main is $1000 + KV block</div>
 <div class="section"><h3>REAL PRICE + REAL FEES</h3><div id="rotate"></div></div>
 <div class="section"><h3>OPEN</h3><div id="openlist"></div></div>
 <div class="section"><h3>CLOSED</h3><div id="closed"></div></div>
@@ -249,13 +248,13 @@ async function load(){
  document.getElementById('fee').innerText='$'+j.df.toFixed(2);
  document.getElementById('wl').innerText=j.wins+'W/'+j.losses+'L/'+j.total+(j.locked_tab?' LOCKED':'');
  document.getElementById('bank').innerText='$'+j.bank.toFixed(2);
- let fz=j.free_zone?` TRUE FREEZE ${Math.floor((Date.now()/1000-(j.fz_start||0))/60)}min - No trades`:'TRADING';
+ let fz=j.free_zone?` TRUE FREEZE ${Math.floor((Date.now()/1000-(j.fz_start||0))/60)}min`:'';
  document.getElementById('time').innerText=new Date().toLocaleTimeString()+' BTC '+ (j.btc_ch||0).toFixed(2)+'% '+j.regime+fz+(j.locked_tab?' LOCKED':'');
- document.getElementById('fzbox').innerText=j.free_zone?`TRUE FREEZE ${Math.floor((Date.now()/1000-(j.fz_start||0))/60)}min - OPEN empty, CAP protected $${j.cap.toFixed(2)}+BANK $${j.bank.toFixed(2)} - Waits for BTC>0.4% + SOL pump`:`TRADING ACTIVE - BTC ${(j.btc_ch||0).toFixed(2)}% ${j.regime}`;
+ document.getElementById('fzbox').innerText=j.free_zone?`TRUE FREEZE ${Math.floor((Date.now()/1000-(j.fz_start||0))/60)}min - CAP $${j.cap.toFixed(2)}+BANK $${j.bank.toFixed(2)} protected - No bleed`:`TRADING ACTIVE - BTC ${(j.btc_ch||0).toFixed(2)}% ${j.regime} - v719 restore check`;
  let rot=document.getElementById('rotate');rot.innerHTML='';
  (j.rotate||[]).forEach(m=>{ rot.innerHTML+=`<div class="item"><div><b>${m.symbol} ${m.chain.toUpperCase()}</b> ${m.c1.toFixed(2)}% VOL ${(m.vol/1000).toFixed(0)}k</div><div>LIQ $${(m.liquidity/1000).toFixed(0)}k</div></div>`; });
  let ol=document.getElementById('openlist');ol.innerHTML='';
- if((j.open||[]).length==0){ ol.innerHTML='<div class="item"><div><b>TRUE FREEZE - No open trades - No fee bleed - Waiting for opportunity</b></div></div>'; }
+ if((j.open||[]).length==0){ ol.innerHTML='<div class="item"><div><b>TRUE FREEZE - No open trades - No fee bleed - $1021 protected</b></div></div>'; }
  (j.open||[]).forEach(t=>{
   let pct=t.entry>0?(t.last_price-t.entry)/t.entry*100:0; let fee=t.chain=='solana'?t.pos*0.008+0.02:t.pos*0.002; let gross=t.pos*pct/100; let net=gross-fee;
   let age=Math.floor(Date.now()/1000-t.ts); if(age<0) age=0;
@@ -285,8 +284,16 @@ def state():
 def cron():
     try: return jsonify(do_tick())
     except Exception as e: return jsonify({"error":str(e)})
+@app.route("/api/restore")
+def restore():
+    backup=raw_get(KEY_BACKUP)
+    main=raw_get(KEY)
+    if backup and (float(backup.get("FUND_CAP",0))>1001 or float(backup.get("FUND_PROFIT_BANK",0))>0):
+        rset(backup)
+        return jsonify({"ok":True,"restored":backup})
+    return jsonify({"ok":False,"main":main,"backup":backup})
 @app.route("/api/reset")
 def reset():
     d={"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"REGIME":"NEUTRAL","BTC_CH":0,"FREE_ZONE_START":0}
     rset(d); CACHE["last_tick"]=0
-    return jsonify({"ok":True,"msg":"v718 TRUE FREEZE - READY"})
+    return jsonify({"ok":True,"msg":"v719 RESTORE - READY"})
