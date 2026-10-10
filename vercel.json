@@ -1,0 +1,12 @@
+{
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 10
+    }
+  },
+  "regions": [
+    "bom1",
+    "sin1",
+    
+  ]
+}
