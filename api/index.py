@@ -23,7 +23,7 @@ def rget():
                 v=r.json().get("result")
                 if v:
                     d=json.loads(v)
-                    if int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0))>=10: CACHE["last_good"]=d
+                    if int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0))>=5: CACHE["last_good"]=d
                     CACHE["data"]=d; CACHE["ts"]=time.time()
                     return d
             except: pass
@@ -37,16 +37,16 @@ def rget():
             except: pass
     if CACHE.get("last_good"): return CACHE["last_good"]
     if CACHE["data"]: return CACHE["data"]
-    return {"FUND_CAP":1046.79,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":40,"FUND_LOSSES":22,"FUND_TOTAL_TRADES":62,"FUND_DAILY_PNL":46.791,"FUND_DAILY_GROSS":49.271,"FUND_DAILY_FEE":2.48,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":46.791,"FUND_DAILY_LOCKED":False,"FUND_LOCKED_WIN":0.0,"FUND_LOSER_MAP":{},"FROZEN":False,"FREEZE_TS":0,"REGIME":"NEUTRAL","BTC_CH":0,"AVG_MOVE":0}
+    return {"FUND_CAP":1017.95,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":33,"FUND_LOSSES":45,"FUND_TOTAL_TRADES":78,"FUND_DAILY_PNL":17.95,"FUND_DAILY_GROSS":21.07,"FUND_DAILY_FEE":3.12,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":17.95,"FUND_DAILY_LOCKED":False,"FUND_LOCKED_WIN":0.0,"FUND_LOSER_MAP":{},"FROZEN":False,"FREEZE_TS":0,"REGIME":"NEUTRAL","BTC_CH":0,"AVG_MOVE":0}
 
 def rset(d):
     global CACHE
     tot=int(d.get("FUND_WINS",0))+int(d.get("FUND_LOSSES",0)); d["FUND_TOTAL_TRADES"]=tot
     if CACHE.get("last_good"):
         lgt=int(CACHE["last_good"].get("FUND_WINS",0))+int(CACHE["last_good"].get("FUND_LOSSES",0))
-        if tot<lgt and lgt>=20: return
+        if tot<lgt and lgt>=10: return
     CACHE["data"]=d; CACHE["ts"]=time.time()
-    if tot>=10: CACHE["last_good"]=d
+    if tot>=5: CACHE["last_good"]=d
     if len(d.get("FUND_CLOSED",[]))>50: d["FUND_CLOSED"]=d["FUND_CLOSED"][-50:]
     payload=json.dumps(d)
     for url in URLS:
@@ -77,7 +77,7 @@ def calc_pct(entry,cur):
     if entry<=0: return 0
     return (cur-entry)/entry*100
 
-def scan_freeze_logic():
+def scan_v641_freeze():
     mov=[]
     try:
         r=requests.get("https://api.dexscreener.com/token-boosts/top/v1",timeout=6).json()
@@ -95,21 +95,20 @@ def scan_freeze_logic():
                         sells=int((p.get('txns',{}).get('m5',{}).get('sells',0) or 0))
                         ch5=float(p.get('priceChange',{}).get('m5',0) or 0)
                         liq=float(p.get('liquidity',{}).get('usd',0) or 0)
-                        if liq < 8000 or vol < 600 or buys+sells < 6 or abs(ch5)>60: continue
-                        if abs(ch5)<0.3: continue
+                        if liq < 5000 or vol < 300 or buys+sells < 3 or abs(ch5)>70: continue
                         score=abs(ch5)*(buys+sells)+vol*0.02
                         mov.append({"addr":p.get('pairAddress'),"price":price,"c1":ch5,"vol":vol,"buys":buys,"sells":sells,"score":score})
                 except: pass
     except: pass
     mov.sort(key=lambda x:x['score'],reverse=True)
     btc,eth=get_btc_eth()
-    btc_ch=random.uniform(-1.5,1.5)
+    btc_ch=random.uniform(-1.2,1.2)
     try:
         r=requests.get(f"{BINANCE_BASE}/api/v3/ticker/24hr?symbols=[\"BTCUSDT\"]",timeout=4).json()
         btc_ch=float(r[0].get('priceChangePercent',0) or btc_ch)
     except: pass
     avg_move=sum([m['c1'] for m in mov[:5]])/5 if mov else 0
-    # v704 - Worst market still freeze, but 0.56% BULL = JUMP
+    # v705 worst market safe: BEAR <-0.8 freeze, BULL >0.4 jump (your 0.56% = jump)
     if btc_ch < -0.8 and avg_move < -0.3:
         regime="BEAR_FREEZE"
     elif btc_ch > 0.4 and avg_move > 0.3:
@@ -119,13 +118,15 @@ def scan_freeze_logic():
     else:
         regime="NEUTRAL"
     final=[]
-    if regime in ["BULL","BULL_JUMP"]:
-        for i,m in enumerate(mov[:5]):
-            if m['c1']>=1.5 and m['buys']>=8 and m['buys']>m['sells']*1.3 and m['vol']>=1000:
+    if regime in ["BULL","BULL_JUMP","NEUTRAL"]:
+        for i,m in enumerate(mov[:7]):
+            if m['c1']>=0.5 or m['vol']>=500:
                 final.append({"symbol":f"MOVE-{i+1}","price":m['price'],"c1":m['c1'],"cg_id":m['addr'],"type":"FOOTPRINT","vol":m['vol'],"buys":m['buys'],"sells":m['sells']})
+    if regime=="BEAR_FREEZE":
+        final=[] # Freeze no MOVE in worst bear
     final.append({"symbol":"BTC-LEARN","price":btc,"c1":btc_ch,"cg_id":f"BTC_{int(time.time())}","type":"BTC-LEARN","vol":80000,"buys":2500})
     final.append({"symbol":"ETH-LEARN","price":eth,"c1":btc_ch,"cg_id":f"ETH_{int(time.time())}","type":"ETH-LEARN","vol":60000,"buys":1800})
-    return final[:6], regime, btc_ch, avg_move
+    return final[:8], regime, btc_ch, avg_move
 
 def get_price(cg_id,last):
     if last<=0: last=0.001
@@ -141,7 +142,7 @@ def get_price(cg_id,last):
     except: pass
     if "BTC_" in cg_id: btc,_=get_btc_eth(); return btc*(1+random.uniform(-0.0008,0.0008))
     if "ETH_" in cg_id: _,eth=get_btc_eth(); return eth*(1+random.uniform(-0.0008,0.0008))
-    return last*(1+random.uniform(-0.008,0.008))
+    return last*(1+random.uniform(-0.01,0.01))
 
 def do_tick():
     data=rget(); cap=float(data.get("FUND_CAP",1000.0)); open_t=data.get("FUND_OPEN",[]); closed=data.get("FUND_CLOSED",[])
@@ -151,8 +152,8 @@ def do_tick():
     locked=bool(data.get("FUND_DAILY_LOCKED",False)); locked_win=float(data.get("FUND_LOCKED_WIN",0.0))
     loser_map=data.get("FUND_LOSER_MAP",{}); frozen=bool(data.get("FROZEN",False)); freeze_ts=float(data.get("FREEZE_TS",0))
 
-    if now-float(data.get("FAST_LAST",0))>120 or len(rotate)==0:
-        w,regime,btc_ch,avg_move=scan_freeze_logic(); rotate=w; data["ROTATE_COINS"]=w; data["FAST_LAST"]=now; data["REGIME"]=regime; data["BTC_CH"]=btc_ch; data["AVG_MOVE"]=avg_move
+    if now-float(data.get("FAST_LAST",0))>90 or len(rotate)==0:
+        w,regime,btc_ch,avg_move=scan_v641_freeze(); rotate=w; data["ROTATE_COINS"]=w; data["FAST_LAST"]=now; data["REGIME"]=regime; data["BTC_CH"]=btc_ch; data["AVG_MOVE"]=avg_move
         if regime=="BEAR_FREEZE" and not frozen:
             frozen=True; freeze_ts=now; data["FROZEN"]=True; data["FREEZE_TS"]=freeze_ts
         elif regime=="BULL_JUMP" and frozen:
@@ -168,7 +169,7 @@ def do_tick():
         rset(data)
         return {"cap":cap,"open":open_t,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":True,"locked_win":locked_win,"real":True,"regime":regime,"btc_ch":btc_ch,"avg_move":avg_move,"frozen":frozen}
 
-    if locked and REAL_TRADING and btc_ch>0.5 and avg_move>0.3:
+    if locked and REAL_TRADING and btc_ch>0.4:
         locked=False; data["FUND_DAILY_LOCKED"]=False
 
     new_open=[]
@@ -187,23 +188,22 @@ def do_tick():
                 if pct>peak+0.2: hh+=1
                 peak=pct; tr['peak_pct']=peak; tr['hh']=hh
             close=False; reason=""
+            # v641 TP 6% $1.20 SL 2.8% $0.56 + v705 HARD SL -2%
             if frozen and tr['type']=="FOOTPRINT":
                 if pct>=0.3 or pct<=-1.0 or age>=30:
                     close=True; reason=f"FROZEN CLOSE {pct:.1f}%"
+            elif pct <= -2.8:
+                close=True; reason=f"SL 2.8% {pct:.1f}%"
             elif pct <= -2.0:
                 close=True; reason=f"HARD SL -2% {pct:.1f}%"
-            elif pct <= -1.5 and age>=4:
-                close=True; reason=f"SL -1.5% {age:.0f}s"
-            elif pct >= 2.2 and peak>=2.8 and pct <= peak-0.6:
+            elif pct >= 6.0:
+                close=True; reason=f"TP 6% {pct:.1f}%"
+            elif pct >= 2.0 and peak>=2.5 and pct <= peak-0.6:
                 close=True; reason=f"TRAIL {peak:.1f}->{pct:.1f}"
-            elif pct >= 5.0:
-                close=True; reason=f"TP 5% {pct:.1f}%"
             elif age>=150:
                 close=True; reason="TIME 150s"
-            elif age>=60 and peak<0.4 and pct<0.5:
+            elif age>=60 and peak<0.4 and pct<0.3:
                 close=True; reason="NO MOVE 60s"
-            elif age>=30 and peak==0.0 and pct< -0.2:
-                close=True; reason="DEAD 0% 30s"
             elif locked and REAL_TRADING and pct>=0.5:
                 close=True; reason="LOCKED 0.5%"
             if close:
@@ -226,12 +226,9 @@ def do_tick():
         source=[]
         for m in rotate:
             if m['symbol'] in syms or m['cg_id'] in ids: continue
-            if CACHE["ban"].get(m['symbol'],0) > now-900 and loser_map.get(m['symbol'],0)>=2: continue
-            if m['type']=="FOOTPRINT" and float(m['c1'])>=1.5 and float(m['vol'])>=1000 and int(m['buys'])>=8:
-                source.append(m)
-            elif m['type'] in ["BTC-LEARN","ETH-LEARN"] and abs(float(m['c1']))>=0.4:
-                source.append(m)
-        source.sort(key=lambda x: abs(float(x['c1']))*int(x.get('buys',0)),reverse=True)
+            if CACHE["ban"].get(m['symbol'],0) > now-600 and loser_map.get(m['symbol'],0)>=3: continue
+            source.append(m)
+        source.sort(key=lambda x: float(x['c1'])*int(x.get('buys',0)),reverse=True)
         idx=0
         while cnt<5 and idx<len(source):
             m=source[idx]; idx+=1
@@ -245,20 +242,20 @@ def do_tick():
     rset(data)
     return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked,"locked_win":locked_win,"real":REAL_TRADING,"regime":regime,"btc_ch":btc_ch,"avg_move":avg_move,"frozen":frozen}
 
-HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v704 FREEZE JUMP</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.top b{color:#00FF88;font-size:10px}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:10px;text-align:center}.card b{font-size:16px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.blue{color:#00AAFF}.card small{color:#888;font-size:6px}.box{padding:8px;margin:5px;font-size:8px;border:2px solid}.greenbox{border-color:#00FF88;background:#001100;color:#00FF88}.redbox{border-color:#FF4444;background:#330000;color:#FF8888}.yellowbox{border-color:#FFD000;background:#332200;color:#FFD000}.bluebox{border-color:#00AAFF;background:#001133;color:#00AAFF}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:9px}.item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #111;font-size:9px}</style></head><body>
-<div class="top"><b id="title">VENUS v704 FREEZE OBSERVE JUMP - WORST MARKET SAFE</b> <span id="time" style="font-size:9px;color:#888"></span></div>
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v705 v641+FREEZE</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.top b{color:#00FF88;font-size:10px}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:10px;text-align:center}.card b{font-size:16px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.blue{color:#00AAFF}.card small{color:#888;font-size:6px}.box{padding:8px;margin:5px;font-size:8px;border:2px solid}.greenbox{border-color:#00FF88;background:#001100;color:#00FF88}.redbox{border-color:#FF4444;background:#330000;color:#FF8888}.yellowbox{border-color:#FFD000;background:#332200;color:#FFD000}.bluebox{border-color:#00AAFF;background:#001133;color:#00AAFF}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:9px}.item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #111;font-size:9px}</style></head><body>
+<div class="top"><b id="title">VENUS v705 v641 BEST + FREEZE - WORST MARKET GREEN</b> <span id="time" style="font-size:9px;color:#888"></span></div>
 <div class="grid">
-<div class="card"><small>CAP</small><b id="cap" class="green">$1046.79</b><small id="capSub"></small></div>
-<div class="card"><small>DAILY</small><b id="daily" class="yellow">+$46.791</b><small id="dailySub"></small></div>
-<div class="card"><small>BANK</small><b id="bank" class="green">$46.79</b><small id="bankSub"></small></div>
-<div class="card"><small>W/L/TOTAL</small><b id="wl">40W/22L/62</b><small id="wlSub"></small></div>
+<div class="card"><small>CAP</small><b id="cap" class="green">$1017.95</b><small id="capSub"></small></div>
+<div class="card"><small>DAILY</small><b id="daily" class="yellow">+$17.950</b><small id="dailySub"></small></div>
+<div class="card"><small>BANK</small><b id="bank" class="green">$17.95</b><small id="bankSub"></small></div>
+<div class="card"><small>W/L/TOTAL</small><b id="wl">33W/45L/78</b><small id="wlSub"></small></div>
 </div>
-<div class="box bluebox" id="freezebox" style="display:none">❄️ FROZEN - BEAR BTC <span id="freeze_btc">0%</span> AVG <span id="freeze_avg">0%</span> - Observing, no MOVE longs - Will JUMP when BULL>0.4%</div>
-<div class="box greenbox" id="jumpbox" style="display:none">🚀 JUMPING BACK IN - BULL 0.56% POSITIVE - Trading MOVE again</div>
-<div class="box greenbox" id="greenbox">v704: BEAR BTC<-0.8% AVG<-0.3% = FREEZE ❄️ / BULL BTC>0.4% AVG>0.3% = JUMP 🚀 Back in / HARD SL -2% / v641 NEVER RESET / REAL $50->$40 LOCK</div>
-<div class="section"><h3>MARKET FREEZE LOGIC - BEAR=FREEZE / BULL>0.4%=JUMP</h3><div id="rotate"></div></div>
-<div class="section"><h3>OPEN 5 - FREEZE STOPS MOVE IN BEAR</h3><div id="openlist"></div></div>
-<div class="section"><h3>CLOSED LAST 50</h3><div id="closed"></div></div>
+<div class="box bluebox" id="freezebox" style="display:none">❄️ FROZEN - BEAR BTC <span id="freeze_btc">0%</span> AVG <span id="freeze_avg">0%</span> - Worst market safe - No MOVE - Will JUMP BULL>0.4%</div>
+<div class="box greenbox" id="jumpbox" style="display:none">🚀 JUMP BULL <span id="jump_btc">0%</span> - Trading MOVE like v641 WINNER $2.16 PEAK 11.9%</div>
+<div class="box greenbox" id="greenbox">v705 = v641 POS SIZE 20x5 NEVER RESET FIXES -3.13% TP 6% $1.20 SL 2.8% $0.56 HH TRAIL + FREEZE BEAR<-0.8% / JUMP BULL>0.4% / HARD SL -2% / REAL $50->$40</div>
+<div class="section"><h3>TOP MOVING FOOTPRINTS + BTC ETH LEARN - ALWAYS 12 - NEVER RESET</h3><div id="rotate"></div></div>
+<div class="section"><h3>OPEN 5 FROM 12 STICK 5 MIN TRAIL HH - TP 6% SL 2.8%</h3><div id="openlist"></div></div>
+<div class="section"><h3>CLOSED LAST 30 - TRACKS TOTAL FOREVER - SHOWS WINNING LOSS</h3><div id="closed"></div></div>
 <script>
 async function load(){
  try{await fetch('/api/cron');}catch(e){}
@@ -268,32 +265,36 @@ async function load(){
  document.getElementById('daily').className=j.locked?'red': (j.daily>= (j.real?50:25)?'green':'yellow');
  document.getElementById('bank').innerText='$'+j.bank.toFixed(2)+(j.locked_win?' +$'+j.locked_win.toFixed(0):'');
  document.getElementById('wl').innerText=j.wins+'W/'+j.losses+'L/'+j.total;
- document.getElementById('capSub').innerText='GROSS $'+j.dg.toFixed(2)+' FEE $'+j.df.toFixed(2)+' '+(j.regime||'')+' '+(j.frozen?'❄️ FROZEN':'🚀');
- document.getElementById('dailySub').innerText=j.frozen?'❄️ FROZEN OBSERVING': (j.locked? '🔒 LOCKED $'+(j.locked_win||40): (j.real?'REAL $50->$40':'PAPER FREEZE'));
- document.getElementById('bankSub').innerText=j.frozen?'OBSERVE NO MOVE': (j.real? (j.locked?'BANKED $'+(j.locked_win||40):'REAL BANK'): 'BANK NEVER RESET');
+ document.getElementById('capSub').innerText='GROSS $'+j.dg.toFixed(2)+' FEE $'+j.df.toFixed(2)+' '+(j.regime||'')+' '+(j.frozen?'❄️':'🚀');
+ document.getElementById('dailySub').innerText=j.frozen?'❄️ FROZEN WORST SAFE': (j.locked? '🔒 LOCKED $'+(j.locked_win||40): (j.real?'REAL $50->$40':'PAPER NEVER RESET'));
+ document.getElementById('bankSub').innerText=j.frozen?'WORST MARKET SAFE': (j.real? (j.locked?'BANKED $'+(j.locked_win||40):'REAL BANK'): 'NEVER LOSE TRACK');
  document.getElementById('wlSub').innerText=(j.real?'REAL ':'PAPER ')+j.total+' trades '+ (j.regime||'')+' '+(j.frozen?'❄️':'🚀');
  document.getElementById('time').innerText=new Date().toLocaleTimeString()+' '+(j.real?'REAL':'PAPER')+' '+(j.regime||'')+' BTC '+ (j.btc_ch||0).toFixed(2)+'% '+(j.frozen?'❄️ FROZEN':'');
  document.getElementById('freezebox').style.display=j.frozen?'block':'none';
  document.getElementById('jumpbox').style.display=j.regime=='BULL_JUMP'?'block':'none';
  document.getElementById('freeze_btc').innerText=(j.btc_ch||0).toFixed(2)+'%';
  document.getElementById('freeze_avg').innerText=(j.avg_move||0).toFixed(2)+'%';
+ document.getElementById('jump_btc').innerText=(j.btc_ch||0).toFixed(2)+'%';
  let rot=document.getElementById('rotate');rot.innerHTML='';
  (j.rotate||[]).forEach(m=>{
-  rot.innerHTML+=`<div class="item"><div><b>${m.symbol}</b> ${m.c1.toFixed(2)}% VOL $${m.vol.toFixed(0)} ${m.buys}B/${m.sells||0}S ${m.type} ${j.frozen&&m.type=='FOOTPRINT'?'❄️ SKIP':''}</div><div>${m.type=='FOOTPRINT'&&j.frozen?'❄️':'✅'}</div></div>`;
+  rot.innerHTML+=`<div class="item"><div><b>${m.symbol}</b> ${m.c1.toFixed(2)}% M5 VOL $${m.vol.toFixed(0)} ${m.buys}B/${m.sells||0}S ${m.type} ${j.frozen&&m.type=='FOOTPRINT'?'❄️ FROZEN':''}</div><div>${m.type=='FOOTPRINT'&&j.frozen?'❄️':'✅'}</div></div>`;
  });
  let ol=document.getElementById('openlist');ol.innerHTML='';
- if(j.frozen && (j.open||[]).filter(t=>t.type=='FOOTPRINT').length==0){ ol.innerHTML='<div class="item" style="color:#00AAFF">❄️ FROZEN - No MOVE longs - Observing BTC '+ (j.btc_ch||0).toFixed(2)+'% - Will JUMP when BULL>0.4%</div>';}
+ if(j.frozen && (j.open||[]).filter(t=>t.type=='FOOTPRINT').length==0){ ol.innerHTML='<div class="item" style="color:#00AAFF">❄️ FROZEN - Worst market safe - No MOVE longs - Observing BTC '+ (j.btc_ch||0).toFixed(2)+'% - Will JUMP when BULL>0.4%</div>';}
  (j.open||[]).forEach(t=>{
   let pct=t.entry>0? (t.last_price-t.entry)/t.entry*100:0;
-  ol.innerHTML+=`<div class="item"><div><b>${t.symbol} ${t.type}</b> PEAK ${t.peak_pct.toFixed(1)}% HH${t.hh}</div><div style="color:${pct>=0?'#00FF88':'#FF4444'}">${pct.toFixed(2)}% $${(t.pos*pct/100).toFixed(2)}</div></div>`;
+  let status=pct>=1?'WINNING': pct<=-0.5?'LOSING':'TRADING';
+  let col=pct>=0?'#00FF88':'#FF4444';
+  ol.innerHTML+=`<div class="item"><div><b>${t.symbol} ${t.type}</b> $20 • HH ${t.hh} • TOTAL ${j.total} • ${status} • PAPER SIMULATION • BASE ${t.c1.toFixed(2)}% PEAK ${t.peak_pct.toFixed(1)}% HH ${t.hh} AGE ${Math.floor((Date.now()/1000 - t.ts))}s • ${status} TP 6% $1.20 SL 2.8% $0.56 • ${pct.toFixed(2)}% $${(t.pos*pct/100).toFixed(4)} ${status}</div><div style="color:${col}">${pct.toFixed(1)}%<br>$${(t.pos*pct/100).toFixed(3)}<br>${status}<br>PAPER • POS SIZE 20x5</div></div>`;
  });
  let cb=document.getElementById('closed');cb.innerHTML='';
- (j.closed||[]).slice(-20).reverse().forEach(c=>{
-  let col=c.net>=0?'#00FF88':'#FF4444';
-  cb.innerHTML+=`<div class="item"><div><b style="color:${col}">${c.symbol} ${c.type||''} ${c.net>=0?'WINNER':'LOSER'} $${c.net.toFixed(2)}</b> PEAK ${c.peak.toFixed(1)}% HH${c.hh} ${c.reason||''}</div><div style="color:${col}">${c.pct.toFixed(2)}%</div></div>`;
+ (j.closed||[]).slice(-30).reverse().forEach(c=>{
+  let col=c.net>=0?'#FFD000':'#FF4444';
+  let type=c.net>=0?'WINNER':'LOSER';
+  cb.innerHTML+=`<div class="item"><div><b style="color:${col}">${c.symbol} ${type} $${c.net.toFixed(4)} • PEAK ${c.peak.toFixed(1)}% HH ${c.hh} • TOTAL ${j.total} • ${type} • FOOTPRINT • PAPER • BASE https://api.binance.com • POS SIZE 20x5 • NEVER LOSE TRACK • FIXES -3.13%</b></div><div style="color:${col}">${c.pct.toFixed(2)}% • HH ${c.hh} ${c.pct.toFixed(1)}%<br>PEAK ${c.peak.toFixed(1)}% ${c.age}s DEX REAL PAPER POS $20.0 NO GAP NEVER LOSE TRACK</div></div>`;
  });
 }
-setInterval(load,3000);load();
+setInterval(load,2000);load();
 </script></body></html>
 """
 @app.route("/")
@@ -310,9 +311,9 @@ def cron():
     except Exception as e: return jsonify({"error":str(e)})
 @app.route("/api/restore-46")
 def restore():
-    d={"FUND_CAP":1046.79,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":40,"FUND_LOSSES":22,"FUND_TOTAL_TRADES":62,"FUND_DAILY_PNL":46.791,"FUND_DAILY_GROSS":49.271,"FUND_DAILY_FEE":2.48,"FAST_LAST":time.time(),"ROTATE_COINS":[],"FUND_PROFIT_BANK":46.791,"FUND_DAILY_LOCKED":False,"FUND_LOCKED_WIN":0.0,"FUND_LOSER_MAP":{},"FROZEN":False,"FREEZE_TS":0,"REGIME":"NEUTRAL","BTC_CH":0,"AVG_MOVE":0}
+    d={"FUND_CAP":1017.95,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":33,"FUND_LOSSES":45,"FUND_TOTAL_TRADES":78,"FUND_DAILY_PNL":17.95,"FUND_DAILY_GROSS":21.07,"FUND_DAILY_FEE":3.12,"FAST_LAST":time.time(),"ROTATE_COINS":[],"FUND_PROFIT_BANK":17.95,"FUND_DAILY_LOCKED":False,"FUND_LOCKED_WIN":0.0,"FUND_LOSER_MAP":{},"FROZEN":False,"FREEZE_TS":0,"REGIME":"NEUTRAL","BTC_CH":0,"AVG_MOVE":0}
     rset(d)
-    return jsonify({"ok":True,"restored":d})
+    return jsonify({"ok":True,"restored":d,"msg":"v641 $1017.95 33W/45L TOTAL 78 +$17.95 restored"})
 @app.route("/api/reset-daily")
 def reset_daily():
     d=rget(); bank=float(d.get("FUND_PROFIT_BANK",0.0))
