@@ -9,12 +9,23 @@ def env(n):
         v=os.environ.get(k)
         if v: return v.strip().strip('"').strip("'")
     return ""
-KV_URL=env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL"]).rstrip("/")
-KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN"]) or env(["KV_REST_API_READ_ONLY_TOKEN"])
+KV_URL=env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","UPSTASH_REDIS_REST_URL","UPSTASH_RE_S_REST_URL"]).rstrip("/")
+# also try direct os.environ case-insensitive search for any var containing REDIS and URL
+if not KV_URL:
+    for kk,vv in os.environ.items():
+        if "REDIS" in kk and "URL" in kk and "upstash" in kk.lower():
+            KV_URL=vv.strip().strip('"').strip("'").rstrip("/")
+            break
+KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","UPSTASH_REDIS_REST_TOKEN","UPSTASH_RE_REST_TOKEN"]) or env(["KV_REST_API_READ_ONLY_TOKEN"])
+if not KV_TOKEN:
+    for kk,vv in os.environ.items():
+        if "REDIS" in kk and "TOKEN" in kk and "upstash" in kk.lower():
+            KV_TOKEN=vv.strip().strip('"').strip("'")
+            break
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
 BINANCE_BASE=env(["BINANCE_BASE"]) or "https://testnet.binance.vision"
 BINANCE_KEY=env(["BINANCE_API_KEY","BINANCE_API_KEY_TESTNET"])
-BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRET_TESTNET"])
+BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRET_TESTNET","BINANCE_API_SECRET_KEY"])
 REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "true"
 POS_SIZE=env(["POS_SIZE"]) or "100"
 STATE_KEY="VENUS_V750_LEARN_100_REAL"
@@ -92,6 +103,12 @@ def round_qty(qty, step):
 
 def load_state():
     s=kv_get(STATE_KEY)
+    if not s:
+        for ok in OLD_KEYS:
+            s=kv_get(ok)
+            if s and isinstance(s, dict) and s.get("cap",0)>0:
+                break
+    
     if not s: s={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"real_orders":[],"learn":{"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0}}
     if s.get("cap",0)<100: s["cap"]=300.0
     if "learn" not in s: s["learn"]={"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0}
