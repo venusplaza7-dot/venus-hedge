@@ -10,7 +10,7 @@ for k in ["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN"]:
     v=os.getenv(k,"").strip()
     if v and v not in TOKENS: TOKENS.append(v)
 
-KEY="VENUS_V711_FEES"; KEY_BACKUP="VENUS_V711_FEES_BACKUP"
+KEY="VENUS_V712_FEES_FIXED"; KEY_BACKUP="VENUS_V712_FEES_BACKUP"
 CACHE={"data":None,"ts":0,"last_good":None}
 
 def rget():
@@ -26,7 +26,7 @@ def rget():
             except: pass
     if CACHE.get("last_good"): return CACHE["last_good"]
     if CACHE["data"]: return CACHE["data"]
-    return {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"FUND_LOCKED_WIN":0.0,"FROZEN":False,"REGIME":"NEUTRAL","BTC_CH":0}
+    return {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"REGIME":"NEUTRAL","BTC_CH":0}
 
 def rset(d):
     global CACHE
@@ -43,27 +43,22 @@ def rset(d):
 POS_SIZE=10
 REAL_TARGET=10
 BINANCE_BASE="https://api.binance.com"
-
-# REAL FEES - Calculated before real funds
-BINANCE_FEE_PCT=0.001 # 0.10% taker per side = 0.20% round trip
-SOLANA_NETWORK_FEE_USD=0.01 # $0.01 per tx
-JUPITER_FEE_PCT=0.003 # 0.30% Jupiter
-SOLANA_SLIPPAGE_PCT=0.005 # 0.5% slippage for low liq
-SOLANA_TOTAL_FEE_PCT=JUPITER_FEE_PCT+SOLANA_SLIPPAGE_PCT # 0.80%
+BINANCE_FEE_PCT=0.001
+SOLANA_NETWORK_FEE_USD=0.01
+JUPITER_FEE_PCT=0.003
+SOLANA_SLIPPAGE_PCT=0.005
 
 def calc_fees(chain, pos_usd, gross_pct):
     if chain=="binance":
-        fee_pct=BINANCE_FEE_PCT*2 # buy + sell
-        fee_usd=pos_usd*fee_pct
+        fee_usd=pos_usd*0.002
         gross_usd=pos_usd*gross_pct/100
         net_usd=gross_usd-fee_usd
-        return gross_usd, fee_usd, net_usd, fee_pct*100
-    else: # solana
-        fee_pct=SOLANA_TOTAL_FEE_PCT
-        fee_usd=pos_usd*fee_pct+SOLANA_NETWORK_FEE_USD*2 # buy+sell network
+        return gross_usd, fee_usd, net_usd, 0.2
+    else:
+        fee_usd=pos_usd*0.008+0.02
         gross_usd=pos_usd*gross_pct/100
         net_usd=gross_usd-fee_usd
-        return gross_usd, fee_usd, net_usd, fee_pct*100+0.2 # + network
+        return gross_usd, fee_usd, net_usd, 0.8
 
 def get_real_prices():
     binance_coins=[]
@@ -86,8 +81,13 @@ def get_real_prices():
                 try:
                     pr=requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{token}",timeout=4).json()
                     if not pr.get('pairs'): continue
-                    p=pr['pairs'][0]; price=float(p.get('priceUsd',0) or 0); ch5=float(p.get('priceChange',{}).get('m5',0) or 0)
-                    vol=float((p.get('volume',{}).get('m5',0) or 0) or 0); buys=int((p.get('txns',{}).get('m5',{}).get('buys',0) or 0)); sells=int((p.get('txns',{}).get('m5',{}).get('sells',0) or 0); liq=float(p.get('liquidity',{}).get('usd',0) or 0)
+                    p=pr['pairs'][0]
+                    price=float(p.get('priceUsd',0) or 0)
+                    ch5=float(p.get('priceChange',{}).get('m5',0) or 0)
+                    vol=float(p.get('volume',{}).get('m5',0) or 0)
+                    buys=int(p.get('txns',{}).get('m5',{}).get('buys',0) or 0)
+                    sells=int(p.get('txns',{}).get('m5',{}).get('sells',0) or 0)
+                    liq=float(p.get('liquidity',{}).get('usd',0) or 0)
                     if price<=0 or vol<5000 or buys+sells<20 or liq<10000 or abs(ch5)>50: continue
                     try:
                         jp=requests.get(f"https://price.jup.ag/v6/price?ids={token}",timeout=3).json()
@@ -101,9 +101,8 @@ def get_real_prices():
     binance_coins.sort(key=lambda x:abs(x['c1']),reverse=True)
     mixed=binance_coins[:2]+sol_coins[:2]
     btc_ch=next((x['c1']*6 for x in binance_coins if x['symbol']=='BTC'),0)
-    avg=sum([x['c1'] for x in mixed[:2]])/2 if mixed else 0
     regime="BEAR_FREEZE" if btc_ch<-0.8 else "BULL_JUMP_100" if btc_ch>0.4 else "BULL" if btc_ch>0.2 else "NEUTRAL"
-    return mixed[:4], regime, btc_ch, avg
+    return mixed[:4], regime, btc_ch, 0
 
 def get_price_real(cg_id, chain, last, token=None):
     if chain=="binance":
@@ -126,19 +125,16 @@ def do_tick():
     daily=float(data.get("FUND_DAILY_PNL",0.0)); dg=float(data.get("FUND_DAILY_GROSS",0.0)); df=float(data.get("FUND_DAILY_FEE",0.0))
     profit_bank=float(data.get("FUND_PROFIT_BANK",0.0)); rotate=data.get("ROTATE_COINS",[]); now=time.time()
     locked=bool(data.get("FUND_DAILY_LOCKED",False)); free_zone=bool(data.get("FREE_ZONE",False)); count100=int(data.get("FREE_ZONE_100_COUNT",0))
-
     if now-float(data.get("FAST_LAST",0))>300 or len(rotate)==0:
-        w,regime,btc_ch,avg=get_real_prices(); rotate=w; data["ROTATE_COINS"]=w; data["FAST_LAST"]=now; data["REGIME"]=regime; data["BTC_CH"]=btc_ch; data["AVG_MOVE"]=avg
+        w,regime,btc_ch,avg=get_real_prices(); rotate=w; data["ROTATE_COINS"]=w; data["FAST_LAST"]=now; data["REGIME"]=regime; data["BTC_CH"]=btc_ch
         if free_zone and regime=="BULL_JUMP_100": free_zone=False; locked=False; data["FREE_ZONE"]=False; data["FUND_DAILY_LOCKED"]=False
     else:
-        regime=data.get("REGIME","NEUTRAL"); btc_ch=data.get("BTC_CH",0); avg=data.get("AVG_MOVE",0)
-
+        regime=data.get("REGIME","NEUTRAL"); btc_ch=data.get("BTC_CH",0)
     if not locked and daily>=REAL_TARGET:
         profit_bank+=REAL_TARGET; cap+=REAL_TARGET; count100+=1
-        data.update({"FUND_CAP":cap,"FUND_OPEN":[],"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":now,"ROTATE_COINS":rotate,"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":True,"FREE_ZONE":True,"FREE_ZONE_100_COUNT":count100,"FUND_LOCKED_WIN":REAL_TARGET,"REGIME":regime,"BTC_CH":btc_ch})
+        data.update({"FUND_CAP":cap,"FUND_OPEN":[],"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":now,"ROTATE_COINS":rotate,"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":True,"FREE_ZONE":True,"FREE_ZONE_100_COUNT":count100,"REGIME":regime,"BTC_CH":btc_ch})
         rset(data)
         return {"cap":cap,"open":[],"wins":wins,"losses":losses,"total":wins+losses,"daily":0,"dg":0,"df":0,"rotate":rotate,"bank":profit_bank,"locked":True,"free_zone":True,"count100":count100,"regime":regime,"btc_ch":btc_ch}
-
     if free_zone or locked:
         new_open=[]
         for tr in open_t:
@@ -155,7 +151,6 @@ def do_tick():
         data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"FAST_LAST":now,"ROTATE_COINS":rotate,"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":locked,"FREE_ZONE":free_zone,"FREE_ZONE_100_COUNT":count100,"REGIME":regime,"BTC_CH":btc_ch})
         rset(data)
         return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked,"free_zone":free_zone,"count100":count100,"regime":regime,"btc_ch":btc_ch}
-
     new_open=[]
     for tr in list(open_t):
         cur=get_price_real(tr['cg_id'],tr.get('chain','binance'),float(tr.get('last_price',tr['entry'])),tr.get('token')); age=now-float(tr.get('ts',now))
@@ -165,8 +160,8 @@ def do_tick():
         if pct>peak: peak=pct; tr['peak_pct']=peak
         gross,fee,net,fee_pct=calc_fees(tr.get('chain','binance'),float(tr.get('pos',POS_SIZE)),pct)
         close=False; reason=""
-        sl = -4.0 if tr.get('chain')=='solana' else -2.0
-        tp = 6.0 if tr.get('chain')=='solana' else 4.0
+        sl=-4.0 if tr.get('chain')=='solana' else -2.0
+        tp=6.0 if tr.get('chain')=='solana' else 4.0
         if pct<=sl: close=True; reason=f"SL {sl}% NET ${net:.2f} FEE ${fee:.2f}"
         elif pct>=tp: close=True; reason=f"TP {tp}% GROSS ${gross:.2f} FEE ${fee:.2f} NET ${net:.2f}"
         elif pct>=2.0 and peak>=2.5 and pct<=peak-0.6: close=True; reason=f"TRAIL {peak:.1f}->{pct:.1f}% NET ${net:.2f}"
@@ -178,33 +173,30 @@ def do_tick():
             daily+=net; dg+=gross; df+=fee; cap+=net
         else:
             tr['last_price']=cur; new_open.append(tr)
-
     if len(new_open)<3:
         syms=set(x['symbol'] for x in new_open)
         for m in rotate:
             if len(new_open)>=3: break
             if m['symbol'] in syms: continue
             new_open.append({"symbol":m['symbol'],"entry":m['price'],"ts":now,"last_price":m['price'],"pos":POS_SIZE,"c1":m['c1'],"cg_id":m['cg_id'],"token":m.get('token'),"chain":m.get('chain','binance'),"peak_pct":0,"type":m['type'],"liquidity":m.get('liquidity',0)})
-
     data.update({"FUND_CAP":cap,"FUND_OPEN":new_open,"FUND_CLOSED":closed,"FUND_WINS":wins,"FUND_LOSSES":losses,"FUND_TOTAL_TRADES":wins+losses,"FUND_DAILY_PNL":daily,"FUND_DAILY_GROSS":dg,"FUND_DAILY_FEE":df,"FAST_LAST":now,"ROTATE_COINS":rotate,"FUND_PROFIT_BANK":profit_bank,"FUND_DAILY_LOCKED":locked,"FREE_ZONE":free_zone,"FREE_ZONE_100_COUNT":count100,"REGIME":regime,"BTC_CH":btc_ch})
     rset(data)
     return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked,"free_zone":free_zone,"count100":count100,"regime":regime,"btc_ch":btc_ch}
 
-HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v711 FEES REAL - BEFORE FUNDS</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:8px;text-align:center}.card b{font-size:13px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.blue{color:#00AAFF}.card small{color:#888;font-size:4px}.box{padding:8px;margin:5px;font-size:8px;border:2px solid}.greenbox{border-color:#00FF88;background:#001100;color:#00FF88}.bluebox{border-color:#00AAFF;background:#001133;color:#00AAFF}.purplebox{border-color:#AA00FF;background:#110033;color:#CC88FF}.yellowbox{border-color:#FFD000;background:#332200;color:#FFD000}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:9px}.item{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #111;font-size:8px}</style></head><body>
-<div class="top"><b>VENUS v711 FEES REAL - GROSS FEE NET - BEFORE REAL FUNDS - TEST</b> <span id="time" style="font-size:9px;color:#888"></span></div>
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v712 FEES FIXED</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:8px;text-align:center}.card b{font-size:12px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.blue{color:#00AAFF}.card small{color:#888;font-size:4px}.box{padding:8px;margin:5px;font-size:8px;border:2px solid}.greenbox{border-color:#00FF88;background:#001100;color:#00FF88}.yellowbox{border-color:#FFD000;background:#332200;color:#FFD000}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:9px}.item{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #111;font-size:8px}</style></head><body>
+<div class="top"><b>VENUS v712 FEES FIXED - GROSS FEE NET - TEST 0 FUNDS</b> <span id="time"></span></div>
 <div class="grid">
 <div class="card"><small>CAP TEST</small><b id="cap" class="green">$1000</b><small id="capSub"></small></div>
 <div class="card"><small>DAILY NET</small><b id="daily" class="green">+$0</b><small id="dailySub"></small></div>
-<div class="card"><small>GROSS</small><b id="gross" class="yellow">$0</b><small id="grossSub">Before fees</small></div>
-<div class="card"><small>FEE REAL</small><b id="fee" class="red">$0</b><small id="feeSub">Bin 0.2% Sol 0.8%+ $0.02</small></div>
+<div class="card"><small>GROSS</small><b id="gross" class="yellow">$0</b><small>GROSS</small></div>
+<div class="card"><small>FEE REAL</small><b id="fee" class="red">$0</b><small>BIN 0.2% SOL 0.8%</small></div>
 <div class="card"><small>W/L/TOTAL</small><b id="wl">0W/0L/0</b><small id="wlSub"></small></div>
-<div class="card"><small>BANK TEST</small><b id="bank" class="green">$0</b><small id="bankSub"></small></div>
+<div class="card"><small>BANK TEST</small><b id="bank" class="green">$0</b><small>BANK</small></div>
 </div>
-<div class="box yellowbox">⚠️ FEES REAL: Binance 0.10% x2 = 0.20% ($0.02 per $10) | Solana Jupiter 0.30% + Slippage 0.5% + Network $0.02 = 0.80%+ ($0.08 per $10) - Your $0.04 winner - $0.08 fee = $-0.04 NET LOSER - Now calculated!</div>
-<div class="box greenbox" id="greenbox">v711: REAL FEES - BINANCE 0.2% SOLANA 0.8%+ - GROSS FEE NET SEPARATE - TP SOL 6% needed for profit (6% -0.8% = 5.2% net) - TP BINANCE 4% (4% -0.2% = 3.8% net) - TEST BEFORE FUNDS</div>
-<div class="section"><h3>REAL PRICE + REAL FEES - BINANCE VOL>1M FEE 0.2% + SOLANA VOL>5000 LIQ>10k FEE 0.8%</h3><div id="rotate"></div></div>
-<div class="section"><h3>OPEN 3 MAX - SHOWS GROSS FEE NET</h3><div id="openlist"></div></div>
-<div class="section"><h3>CLOSED - GROSS FEE NET - REAL PROFIT AFTER FEES</h3><div id="closed"></div></div>
+<div class="box yellowbox">FEES REAL: BINANCE 0.2% ($0.02/$10) | SOLANA 0.8%+ $0.02 ($0.10/$10) - Now calculated GROSS FEE NET - TP SOL 6% = NET 5.2% | TP BINANCE 4% = NET 3.8%</div>
+<div class="section"><h3>REAL PRICE + REAL FEES</h3><div id="rotate"></div></div>
+<div class="section"><h3>OPEN - GROSS FEE NET</h3><div id="openlist"></div></div>
+<div class="section"><h3>CLOSED - NET AFTER FEES</h3><div id="closed"></div></div>
 <script>
 async function load(){
  try{await fetch('/api/cron');}catch(e){}
@@ -217,35 +209,25 @@ async function load(){
  document.getElementById('fee').innerText='$'+j.df.toFixed(2);
  document.getElementById('wl').innerText=j.wins+'W/'+j.losses+'L/'+j.total;
  document.getElementById('bank').innerText='$'+j.bank.toFixed(2);
- document.getElementById('capSub').innerText='GROSS $'+j.dg.toFixed(2)+' FEE $'+j.df.toFixed(2)+' NET $'+j.daily.toFixed(2)+' '+(j.regime||'');
- document.getElementById('dailySub').innerText=j.daily>=0?'✅ NET WINNING AFTER FEES':'⚠️ NET LOSING AFTER FEES';
- document.getElementById('grossSub').innerText='GROSS $'+j.dg.toFixed(2);
- document.getElementById('feeSub').innerText='FEE $'+j.df.toFixed(2)+' REAL';
- document.getElementById('wlSub').innerText=j.total+' trades NET';
- document.getElementById('bankSub').innerText='BANK NET AFTER FEES';
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' FEES REAL - BIN 0.2% SOL 0.8% - BTC '+ (j.btc_ch||0).toFixed(2)+'%';
+ document.getElementById('capSub').innerText='GROSS $'+j.dg.toFixed(2)+' FEE $'+j.df.toFixed(2)+' NET $'+j.daily.toFixed(2);
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' FEES REAL BTC '+ (j.btc_ch||0).toFixed(2)+'%';
  let rot=document.getElementById('rotate');rot.innerHTML='';
  (j.rotate||[]).forEach(m=>{
-  let fee = m.chain=='solana'?'FEE 0.8%+ $0.02':'FEE 0.2%';
-  let need = m.chain=='solana'?'NEED 6% TP for 5.2% NET':'NEED 4% TP for 3.8% NET';
-  let color = m.chain=='solana'?'#AA88FF':'#00FF88';
-  rot.innerHTML+=`<div class="item"><div><b style="color:${color}">${m.symbol} ${m.chain.toUpperCase()} REAL</b> ${m.c1.toFixed(2)}% VOL ${(m.vol/1000).toFixed(0)}k ${fee} ${need}</div><div style="color:${color}">${m.chain=='solana'?'SOL 0.8% FEE':'BIN 0.2% FEE'}</div></div>`;
+  let fee = m.chain=='solana'?'FEE 0.8%':'FEE 0.2%';
+  rot.innerHTML+=`<div class="item"><div><b>${m.symbol} ${m.chain.toUpperCase()}</b> ${m.c1.toFixed(2)}% VOL ${(m.vol/1000).toFixed(0)}k ${fee}</div><div>${m.chain}</div></div>`;
  });
  let ol=document.getElementById('openlist');ol.innerHTML='';
  (j.open||[]).forEach(t=>{
   let pct=t.entry>0?(t.last_price-t.entry)/t.entry*100:0;
-  let chain=t.chain||'binance';
-  let feePct = chain=='solana'?0.8:0.2;
-  let gross = t.pos*pct/100;
-  let fee = chain=='solana'? t.pos*0.008+0.02 : t.pos*0.002;
-  let net = gross-fee;
-  let color = chain=='solana'?'#AA88FF':'#00FF88';
-  ol.innerHTML+=`<div class="item"><div><b style="color:${color}">${t.symbol} ${chain.toUpperCase()}</b> ${pct.toFixed(2)}% GROSS $${gross.toFixed(2)} FEE $${fee.toFixed(2)} NET $${net.toFixed(2)} AGE ${Math.floor((Date.now()/1000 - t.ts))}s</div><div style="color:${net>=0?'#00FF88':'#FF4444'}">NET $${net.toFixed(2)}</div></div>`;
+  let gross=t.pos*pct/100;
+  let fee=t.chain=='solana'?t.pos*0.008+0.02:t.pos*0.002;
+  let net=gross-fee;
+  ol.innerHTML+=`<div class="item"><div><b>${t.symbol}</b> ${pct.toFixed(2)}% GROSS $${gross.toFixed(2)} FEE $${fee.toFixed(2)} NET $${net.toFixed(2)}</div><div>NET $${net.toFixed(2)}</div></div>`;
  });
  let cb=document.getElementById('closed');cb.innerHTML='';
  (j.closed||[]).slice(-20).reverse().forEach(c=>{
   let col=c.net>=0?'#00FF88':'#FF4444';
-  cb.innerHTML+=`<div class="item"><div><b style="color:${col}">${c.symbol} ${c.chain?.toUpperCase()} ${c.net>=0?'WINNER':'LOSER'} NET $${c.net.toFixed(2)}</b> GROSS $${(c.gross||0).toFixed(2)} FEE $${(c.fee||0).toFixed(2)} (${(c.fee_pct||0).toFixed(2)}%) ${c.reason||''} PEAK ${c.peak.toFixed(1)}%</div><div style="color:${col}">${c.pct.toFixed(2)}% NET $${c.net.toFixed(2)}</div></div>`;
+  cb.innerHTML+=`<div class="item"><div><b style="color:${col}">${c.symbol} NET $${c.net.toFixed(2)}</b> GROSS $${(c.gross||0).toFixed(2)} FEE $${(c.fee||0).toFixed(2)} ${c.reason||''}</div><div style="color:${col}">${c.pct.toFixed(2)}% NET $${c.net.toFixed(2)}</div></div>`;
  });
 }
 setInterval(load,3000);load();
@@ -265,6 +247,6 @@ def cron():
     except Exception as e: return jsonify({"error":str(e)})
 @app.route("/api/reset")
 def reset():
-    d={"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"FUND_LOCKED_WIN":0.0,"FROZEN":False,"REGIME":"NEUTRAL","BTC_CH":0}
+    d={"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"REGIME":"NEUTRAL","BTC_CH":0}
     rset(d)
-    return jsonify({"ok":True,"msg":"v711 FEES REAL - $1000 TEST - GROSS FEE NET - BINANCE 0.2% SOLANA 0.8%+ - Before real funds"})
+    return jsonify({"ok":True,"msg":"v712 FEES FIXED - READY"})
