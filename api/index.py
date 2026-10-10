@@ -14,7 +14,7 @@ BINANCE_KEY=env(["BINANCE_API_KEY","BINANCE_API_KEY_TESTNET"])
 BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRET_TESTNET"])
 REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "false"
 POS_SIZE=env(["POS_SIZE"]) or "100"
-STATE_KEY="VENUS_V742_300_REAL_50PERDAY"
+STATE_KEY="VENUS_V744_QUICK_1PCT_300_REAL"
 
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
@@ -141,11 +141,11 @@ def do_cron():
 
         close=False; reason=""
         # $300 REAL RULES: TP 2.5% = $2.40 net for $100 pos, SL -1.5% = -$1.60
-        if pct>=2.5: close=True; reason=f"TP 2.5% REAL +${net:.2f} PUMP"
-        elif pct<=-1.5: close=True; reason=f"SL -1.5% REAL {net:.2f}"
-        elif tr["peak"]>=3.5 and pct<=tr["peak"]-1.0: close=True; reason=f"TRAIL peak {tr['peak']:.1f}% -> {pct:.1f}% REAL +${net:.2f}"
-        elif tr["age"]>600 and pct>=1.0: close=True; reason=f"TIME TP 600s {pct:.1f}% REAL +${net:.2f}"
-        elif tr["age"]>900: close=True; reason=f"ROTATE 900s {pct:.1f}% REAL"
+        if pct>=1.0: close=True; reason=f"TP 1.0% QUICK +${net:.2f} PUMP"
+        elif pct<=-1.0: close=True; reason=f"SL -1.0% QUICK {net:.2f}"
+        elif tr["peak"]>=1.2 and pct<=tr["peak"]-0.5: close=True; reason=f"TRAIL QUICK peak {tr['peak']:.1f}%->{pct:.1f}% +${net:.2f}"
+        elif tr["age"]>180 and pct>=0.3: close=True; reason=f"TIME QUICK 180s {pct:.1f}% +${net:.2f}"
+        elif tr["age"]>600: close=True; reason=f"ROTATE 600s {pct:.1f}% QUICK"
 
         if close:
             state["closed"].insert(0,{"symbol":tr["symbol"],"net":net,"pct":pct,"reason":reason,"age":tr["age"],"pos":pos})
@@ -203,7 +203,7 @@ def render(state):
 <meta http-equiv="refresh" content="15">
 </head><body>
 <div class="topdash">
-<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold">VENUS v742 $300 REAL - $50/DAY TARGET - PUMP HUNTER H1>3% ONLY - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - REAL_TRADING={REAL_TRADING}</div>
+<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold">VENUS v744 $300 REAL QUICK 1% TP - $50/DAY - PUMP HUNTER - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - REAL_TRADING={REAL_TRADING}</div>
 <div style="text-align:center;color:{'#0f8' if daily>=0 else '#f44'};font-size:11px">DAILY {daily:+.2f} / $50 TARGET {daily_pct}% - CAP ${cap:.2f} + UNREAL ${unreal:+.2f} = ${cap+unreal:.2f} REAL</div>
 </div>
 <div class="bigrow">
@@ -218,10 +218,10 @@ def render(state):
     if not pumps:
         html+=f"""<div class="foot" style="border-color:#f44"><span style="color:#f44">NO PUMPS H1>3% TODAY - PROTECTING $300 - NO TRADE - Waiting for STRK +41% style pump</span></div>"""
 
-    html+=f"""<div class="yellowbar">OPEN {len(open_tr)}/3 MAX $300 REAL - PUMP HUNTER ONLY - TP 2.5% REAL +$2.40 | SL -1.5% | TRAIL 1% | POS ${POS_SIZE}</div>"""
+    html+=f"""<div class="yellowbar">OPEN {len(open_tr)}/3 MAX $300 REAL - PUMP HUNTER ONLY - TP 1.0% QUICK +$1.35 | SL -1.0% | TRAIL 0.5% | POS ${POS_SIZE}</div>"""
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
-        html+=f"""<div class="foot" style="border-color:{col}"><span style="color:#ffcc00;font-weight:bold">{tr.get('move')} {tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s PUMP</span><br><span style="color:#0f8">ENTRY ${tr['entry']:.6f} -> NOW ${tr['price']:.6f} PEAK {tr.get('peak',0):.1f}% H1 {tr.get('h1',0):+.1f}%</span><br><span style="color:{col};font-size:18px;font-weight:bold">{tr.get('pct',0):+.2f}% ${tr.get('net',0):+.2f} REAL</span><br><span style="font-size:9px;color:#aaa">TP 2.5% +$2.40 | SL -1.5% -$1.60 | TRAIL peak-1% | QTY {tr.get('qty',0)}</span></div>"""
+        html+=f"""<div class="foot" style="border-color:{col}"><span style="color:#ffcc00;font-weight:bold">{tr.get('move')} {tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s PUMP</span><br><span style="color:#0f8">ENTRY ${tr['entry']:.6f} -> NOW ${tr['price']:.6f} PEAK {tr.get('peak',0):.1f}% H1 {tr.get('h1',0):+.1f}%</span><br><span style="color:{col};font-size:18px;font-weight:bold">{tr.get('pct',0):+.2f}% ${tr.get('net',0):+.2f} REAL</span><br><span style="font-size:9px;color:#aaa">TP 2.5% +$2.40 | SL -1.0% -$1.65 | TRAIL peak-1% | QTY {tr.get('qty',0)}</span></div>"""
 
     html+=f"""<div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:12px">CLOSED {len(closed)} - WIN {wins} LOSS {loss} TOTAL {tot} CAP ${cap:.2f} DAILY ${daily:+.2f} / $50 TARGET</div>"""
     for cl in closed[:12]:
@@ -232,7 +232,7 @@ def render(state):
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
 
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v742 $300 REAL $50/DAY PUMP HUNTER H1>3% ONLY - 3 MAX - TP2.5% SL1.5% - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/test_real?key={ADMIN_KEY}" style="color:#0f8">TEST REAL</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div>
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v744 $300 REAL QUICK 1% TP - $50/DAY - 3 MAX - TP1% SL1% QUICK - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/test_real?key={ADMIN_KEY}" style="color:#0f8">TEST REAL</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div>
 <div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a> <a href="/api/test_real?key={ADMIN_KEY}" style="background:#0f8;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;margin-left:8px;font-size:12px">TEST REAL $300</a></div>
 </body></html>"""
     return html
