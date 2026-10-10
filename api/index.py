@@ -16,6 +16,7 @@ CACHE={"data":None,"ts":0,"last_good":None,"last_tick":0}
 def rget():
     global CACHE
     if CACHE["data"] and time.time()-CACHE["ts"]<10: return CACHE["data"]
+    # PRIMARY
     for url in URLS:
         for tok in TOKENS:
             try:
@@ -24,12 +25,30 @@ def rget():
                 if v:
                     d=json.loads(v); CACHE["data"]=d; CACHE["ts"]=time.time(); CACHE["last_good"]=d; return d
             except: pass
+    # BACKUP - restores your $1003
+    for url in URLS:
+        for tok in TOKENS:
+            try:
+                r=requests.get(f"{url}/get/{KEY_BACKUP}",headers={"Authorization":f"Bearer {tok}"},timeout=5)
+                v=r.json().get("result")
+                if v:
+                    d=json.loads(v); CACHE["data"]=d; CACHE["ts"]=time.time(); CACHE["last_good"]=d; return d
+            except: pass
     if CACHE.get("last_good"): return CACHE["last_good"]
     if CACHE["data"]: return CACHE["data"]
+    if URLS and TOKENS:
+        # KV exists but read failed - DON'T return $1000 default, return None to block overwrite
+        if CACHE.get("last_good"): return CACHE["last_good"]
+        return None
     return {"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"REGIME":"NEUTRAL","BTC_CH":0}
 
 def rset(d):
     global CACHE
+    # BLOCK AUTO-RESET $1003 -> $1000
+    if d.get("FUND_CAP",1000)==1000.0 and d.get("FUND_TOTAL_TRADES",0)==0:
+        last=CACHE.get("last_good")
+        if last and float(last.get("FUND_CAP",1000))>1000.5:
+            return
     CACHE["data"]=d; CACHE["ts"]=time.time(); CACHE["last_good"]=d; CACHE["last_tick"]=time.time()
     if len(d.get("FUND_CLOSED",[]))>50: d["FUND_CLOSED"]=d["FUND_CLOSED"][-50:]
     payload=json.dumps(d)
@@ -37,6 +56,7 @@ def rset(d):
         for tok in TOKENS:
             try:
                 requests.post(f"{url}",headers={"Authorization":f"Bearer {tok}"},json=["SET",KEY,payload],timeout=5)
+                requests.post(f"{url}",headers={"Authorization":f"Bearer {tok}"},json=["SET",KEY_BACKUP,payload],timeout=5)
             except: pass
 
 POS_SIZE=10
@@ -113,16 +133,20 @@ def get_price_real(cg_id, chain, last, token=None):
     return last
 
 def do_tick():
-    # TAB LOCK FIX - Even with 4 tabs, only trade every 12 sec
     global CACHE
     data=rget()
     now=time.time()
-    # If another tab traded <12 sec ago, just return data, no new trade
+    if data is None:
+        last=CACHE.get("last_good")
+        if last:
+            cap=float(last.get("FUND_CAP",1000.0)); wins=int(last.get("FUND_WINS",0)); losses=int(last.get("FUND_LOSSES",0))
+            daily=float(last.get("FUND_DAILY_PNL",0.0)); dg=float(last.get("FUND_DAILY_GROSS",0.0)); df=float(last.get("FUND_DAILY_FEE",0.0))
+            return {"cap":cap,"open":last.get("FUND_OPEN",[]),"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":last.get("ROTATE_COINS",[]),"bank":float(last.get("FUND_PROFIT_BANK",0.0)),"locked":bool(last.get("FUND_DAILY_LOCKED",False)),"free_zone":bool(last.get("FREE_ZONE",False)),"count100":int(last.get("FREE_ZONE_100_COUNT",0)),"regime":last.get("REGIME","NEUTRAL"),"btc_ch":float(last.get("BTC_CH",0)),"locked_tab":True,"kv_fail":True}
+        return {"cap":1000,"open":[],"wins":0,"losses":0,"total":0,"daily":0,"dg":0,"df":0,"rotate":[],"bank":0,"locked":False,"free_zone":False,"count100":0,"regime":"NEUTRAL","btc_ch":0,"kv_fail":True}
     if now - CACHE.get("last_tick",0) < 12 and CACHE.get("last_tick",0)!=0:
         cap=float(data.get("FUND_CAP",1000.0)); wins=int(data.get("FUND_WINS",0)); losses=int(data.get("FUND_LOSSES",0))
         daily=float(data.get("FUND_DAILY_PNL",0.0)); dg=float(data.get("FUND_DAILY_GROSS",0.0)); df=float(data.get("FUND_DAILY_FEE",0.0))
         return {"cap":cap,"open":data.get("FUND_OPEN",[]),"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":data.get("ROTATE_COINS",[]),"bank":float(data.get("FUND_PROFIT_BANK",0.0)),"locked":bool(data.get("FUND_DAILY_LOCKED",False)),"free_zone":bool(data.get("FREE_ZONE",False)),"count100":int(data.get("FREE_ZONE_100_COUNT",0)),"regime":data.get("REGIME","NEUTRAL"),"btc_ch":float(data.get("BTC_CH",0)),"locked_tab":True}
-
     cap=float(data.get("FUND_CAP",1000.0)); open_t=data.get("FUND_OPEN",[]); closed=data.get("FUND_CLOSED",[])
     wins=int(data.get("FUND_WINS",0)); losses=int(data.get("FUND_LOSSES",0))
     daily=float(data.get("FUND_DAILY_PNL",0.0)); dg=float(data.get("FUND_DAILY_GROSS",0.0)); df=float(data.get("FUND_DAILY_FEE",0.0))
@@ -179,20 +203,20 @@ def do_tick():
     rset(data)
     return {"cap":cap,"open":new_open,"wins":wins,"losses":losses,"total":wins+losses,"daily":daily,"dg":dg,"df":df,"rotate":rotate,"bank":profit_bank,"locked":locked,"free_zone":free_zone,"count100":count100,"regime":regime,"btc_ch":btc_ch}
 
-HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v714 TAB LOCK</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:8px;text-align:center}.card b{font-size:12px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.card small{color:#888;font-size:9px}.box{padding:8px;margin:5px;font-size:9px;border:2px solid}.yellowbox{border-color:#FFD000;background:#332200;color:#FFD000}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:10px}.item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #111;font-size:9px}</style></head><body>
-<div class="top"><b>VENUS v714 TAB LOCK - 1 TRADE/12s EVEN WITH 4 TABS</b> <span id="time"></span></div>
+HTML="""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VENUS v715 NO AUTO-RESET</title><style>*{margin:0;padding:0;box-sizing:border-box;font-family:monospace}body{background:#000;color:#fff}.top{background:#111;padding:10px;border-bottom:2px solid #00FF88}.grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:1px;background:#222}.card{background:#000;padding:8px;text-align:center}.card b{font-size:12px;display:block}.green{color:#00FF88}.yellow{color:#FFD000}.red{color:#FF4444}.card small{color:#888;font-size:9px}.box{padding:8px;margin:5px;font-size:9px;border:2px solid}.yellowbox{border-color:#FFD000;background:#332200;color:#FFD000}.section{padding:8px;border-bottom:1px solid #222}.section h3{color:#00FF88;font-size:10px}.item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #111;font-size:9px}</style></head><body>
+<div class="top"><b>VENUS v715 NO AUTO-RESET - TAB LOCK 12s</b> <span id="time"></span></div>
 <div class="grid">
-<div class="card"><small>CAP TEST</small><b id="cap" class="green">$1000</b><small id="capSub"></small></div>
+<div class="card"><small>CAP TEST</small><b id="cap" class="green">$1000</b></div>
 <div class="card"><small>DAILY NET</small><b id="daily" class="green">+$0</b></div>
 <div class="card"><small>GROSS</small><b id="gross" class="yellow">$0</b></div>
 <div class="card"><small>FEE REAL</small><b id="fee" class="red">$0</b></div>
 <div class="card"><small>W/L/TOTAL</small><b id="wl">0W/0L/0</b></div>
 <div class="card"><small>BANK</small><b id="bank" class="green">$0</b></div>
 </div>
-<div class="box yellowbox">TAB LOCK 12s: Even with 4 tabs (code+deploy+trade), only 1 trade per 12 sec. REAL FEES BIN 0.2% SOL 0.8%</div>
+<div class="box yellowbox">NO AUTO-RESET: Blocks $1003->$1000 overwrite. BACKUP KEY restore. TAB LOCK 12s</div>
 <div class="section"><h3>REAL PRICE + REAL FEES</h3><div id="rotate"></div></div>
-<div class="section"><h3>OPEN - GROSS FEE NET</h3><div id="openlist"></div></div>
-<div class="section"><h3>CLOSED - NET AFTER FEES</h3><div id="closed"></div></div>
+<div class="section"><h3>OPEN</h3><div id="openlist"></div></div>
+<div class="section"><h3>CLOSED</h3><div id="closed"></div></div>
 <script>
 async function load(){
  try{await fetch('/api/cron');}catch(e){}
@@ -203,16 +227,14 @@ async function load(){
  else { d.className='red'; d.innerText='-$'+Math.abs(j.daily).toFixed(2)+' NET'; }
  document.getElementById('gross').innerText='$'+j.dg.toFixed(2);
  document.getElementById('fee').innerText='$'+j.df.toFixed(2);
- document.getElementById('wl').innerText=j.wins+'W/'+j.losses+'L/'+j.total+(j.locked_tab?' LOCKED':'');
+ document.getElementById('wl').innerText=j.wins+'W/'+j.losses+'L/'+j.total+(j.locked_tab?' LOCKED':'')+(j.kv_fail?' KV FAIL':'');
  document.getElementById('bank').innerText='$'+j.bank.toFixed(2);
- document.getElementById('time').innerText=new Date().toLocaleTimeString()+' BTC '+ (j.btc_ch||0).toFixed(2)+'% '+j.regime+(j.locked_tab?' TAB LOCKED':'');
+ document.getElementById('time').innerText=new Date().toLocaleTimeString()+' BTC '+ (j.btc_ch||0).toFixed(2)+'% '+j.regime+(j.locked_tab?' LOCKED':'')+(j.kv_fail?' KV FAIL - USING BACKUP':'');
  let rot=document.getElementById('rotate');rot.innerHTML='';
- (j.rotate||[]).forEach(m=>{
-  rot.innerHTML+=`<div class="item"><div><b>${m.symbol} ${m.chain.toUpperCase()}</b> ${m.c1.toFixed(2)}% VOL ${(m.vol/1000).toFixed(0)}k</div><div>LIQ $${(m.liquidity/1000).toFixed(0)}k</div></div>`;
- });
+ (j.rotate||[]).forEach(m=>{ rot.innerHTML+=`<div class="item"><div><b>${m.symbol} ${m.chain.toUpperCase()}</b> ${m.c1.toFixed(2)}% VOL ${(m.vol/1000).toFixed(0)}k</div><div>LIQ $${(m.liquidity/1000).toFixed(0)}k</div></div>`; });
  let ol=document.getElementById('openlist');ol.innerHTML='';
  (j.open||[]).forEach(t=>{
-  let pct=t.entry>0?(t.last_price-t.entry)/t.entry*100:0; let gross=t.pos*pct/100; let fee=t.chain=='solana'?t.pos*0.008+0.02:t.pos*0.002; let net=gross-fee;
+  let pct=t.entry>0?(t.last_price-t.entry)/t.entry*100:0; let fee=t.chain=='solana'?t.pos*0.008+0.02:t.pos*0.002; let gross=t.pos*pct/100; let net=gross-fee;
   let age=Math.floor(Date.now()/1000-t.ts); if(age<0) age=0;
   ol.innerHTML+=`<div class="item"><div><b>${t.symbol}</b> ${pct.toFixed(2)}% NET $${net.toFixed(3)} AGE ${age}s</div><div>NET $${net.toFixed(3)}</div></div>`;
  });
@@ -230,9 +252,12 @@ def home(): return HTML
 @app.route("/api/state")
 def state():
     try: data=do_tick()
-    except Exception as e: data={"error":str(e),"cap":1000,"open":[],"wins":0,"losses":0,"total":0,"closed":[],"daily":0,"dg":0,"df":0,"rotate":[],"bank":0,"locked":False,"free_zone":False,"count100":0,"regime":"NEUTRAL","btc_ch":0}
+    except Exception as e: 
+        import traceback; traceback.print_exc()
+        data={"cap":1000,"open":[],"wins":0,"losses":0,"total":0,"closed":[],"daily":0,"dg":0,"df":0,"rotate":[],"bank":0,"locked":False,"free_zone":False,"count100":0,"regime":"NEUTRAL","btc_ch":0}
     d=rget()
-    return jsonify({"cap":float(data.get("cap",d.get("FUND_CAP",1000))),"open":data.get("open",d.get("FUND_OPEN",[])),"wins":int(data.get("wins",d.get("FUND_WINS",0))),"losses":int(data.get("losses",d.get("FUND_LOSSES",0))),"total":int(data.get("total",d.get("FUND_TOTAL_TRADES",0))),"closed":d.get("FUND_CLOSED",[]),"daily":float(data.get("daily",d.get("FUND_DAILY_PNL",0))),"dg":float(data.get("dg",d.get("FUND_DAILY_GROSS",0))),"df":float(data.get("df",d.get("FUND_DAILY_FEE",0))),"rotate":data.get("rotate",d.get("ROTATE_COINS",[])),"bank":float(data.get("bank",d.get("FUND_PROFIT_BANK",0.0))),"locked":bool(data.get("locked",d.get("FUND_DAILY_LOCKED",False))),"free_zone":bool(data.get("free_zone",d.get("FREE_ZONE",False))),"count100":int(data.get("count100",d.get("FREE_ZONE_100_COUNT",0))),"regime":data.get("regime",d.get("REGIME","NEUTRAL")),"btc_ch":float(data.get("btc_ch",d.get("BTC_CH",0))),"locked_tab":bool(data.get("locked_tab",False))})
+    if d is None: d=CACHE.get("last_good") or {"FUND_CAP":1000,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"REGIME":"NEUTRAL","BTC_CH":0}
+    return jsonify({"cap":float(data.get("cap",d.get("FUND_CAP",1000))),"open":data.get("open",d.get("FUND_OPEN",[])),"wins":int(data.get("wins",d.get("FUND_WINS",0))),"losses":int(data.get("losses",d.get("FUND_LOSSES",0))),"total":int(data.get("total",d.get("FUND_TOTAL_TRADES",0))),"closed":d.get("FUND_CLOSED",[]),"daily":float(data.get("daily",d.get("FUND_DAILY_PNL",0))),"dg":float(data.get("dg",d.get("FUND_DAILY_GROSS",0))),"df":float(data.get("df",d.get("FUND_DAILY_FEE",0))),"rotate":data.get("rotate",d.get("ROTATE_COINS",[])),"bank":float(data.get("bank",d.get("FUND_PROFIT_BANK",0.0))),"locked":bool(data.get("locked",d.get("FUND_DAILY_LOCKED",False))),"free_zone":bool(data.get("free_zone",d.get("FREE_ZONE",False))),"count100":int(data.get("count100",d.get("FREE_ZONE_100_COUNT",0))),"regime":data.get("regime",d.get("REGIME","NEUTRAL")),"btc_ch":float(data.get("btc_ch",d.get("BTC_CH",0))),"locked_tab":bool(data.get("locked_tab",False)),"kv_fail":bool(data.get("kv_fail",False))})
 @app.route("/api/cron")
 def cron():
     try: return jsonify(do_tick())
@@ -241,4 +266,4 @@ def cron():
 def reset():
     d={"FUND_CAP":1000.0,"FUND_OPEN":[],"FUND_CLOSED":[],"FUND_WINS":0,"FUND_LOSSES":0,"FUND_TOTAL_TRADES":0,"FUND_DAILY_PNL":0,"FUND_DAILY_GROSS":0,"FUND_DAILY_FEE":0,"FAST_LAST":0,"ROTATE_COINS":[],"FUND_PROFIT_BANK":0,"FUND_DAILY_LOCKED":False,"FREE_ZONE":False,"FREE_ZONE_100_COUNT":0,"REGIME":"NEUTRAL","BTC_CH":0}
     rset(d); CACHE["last_tick"]=0
-    return jsonify({"ok":True,"msg":"v714 TAB LOCK - READY - 12s mutex"})
+    return jsonify({"ok":True,"msg":"v715 NO AUTO-RESET - READY"})
