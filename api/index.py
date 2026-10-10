@@ -300,3 +300,6 @@ class handler(BaseHTTPRequestHandler):
         st=load_state(); h=render(st)
         self.send_response(200); self.send_header("Content-Type","text/html"); self.end_headers(); self.wfile.write(h.encode())
     def do_POST(self): self.do_GET()
+
+# Vercel compatibility - define top-level app
+app = handler
