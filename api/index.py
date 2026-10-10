@@ -15,7 +15,7 @@ BINANCE_KEY=env(["BINANCE_API_KEY","BINANCE_API_KEY_TESTNET"])
 BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRET_TESTNET"])
 REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "false"
 POS_SIZE=env(["POS_SIZE"]) or "150"
-STATE_KEY="VENUS_V745_WHALE_PUMP_HUNTER"
+STATE_KEY="VENUS_V747_LOTSIZE_FIXED_100_REAL"
 
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
@@ -69,6 +69,32 @@ def get_tickers():
             return data, base
     except:
         return [], base
+
+
+def get_lot_size(symbol):
+    try:
+        req=urllib.request.Request(f"https://data-api.binance.vision/api/v3/exchangeInfo?symbol={symbol}", headers={"User-Agent":"Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data=json.loads(r.read().decode())
+            for s in data.get("symbols",[]):
+                for f in s.get("filters",[]):
+                    if f.get("filterType")=="LOT_SIZE":
+                        return float(f.get("stepSize","1")), float(f.get("minQty","0"))
+    except: pass
+    return 1.0, 0.0
+
+def round_qty(qty, step):
+    if step==0 or step==1:
+        return int(qty)
+    # floor to step
+    import math
+    prec = int(round(-math.log10(step),0)) if step<1 else 0
+    # round down
+    floored = math.floor(qty/step)*step
+    if prec>0:
+        return round(floored, prec)
+    return int(floored)
+
 
 def build_pump_hunter():
     tickers, used_base = get_tickers()
@@ -156,6 +182,8 @@ def do_cron():
             state["total"]+=1
             if REAL_TRADING.lower()=="true" and BINANCE_KEY and "testnet" in BINANCE_BASE:
                 qty=tr.get("qty",0)
+                step=tr.get("step",1)
+                qty=round_qty(qty, step)
                 if qty>0:
                     params={"symbol":tr["full"],"side":"SELL","type":"MARKET","quantity":qty}
                     data, err = binance_req("/api/v3/order", BINANCE_KEY, BINANCE_SECRET, BINANCE_BASE, params, "POST")
@@ -170,8 +198,11 @@ def do_cron():
         if i>=len(cands): break
         c=cands[i]
         pos=float(POS_SIZE)
-        qty= round(pos / c["price"], 6) if c["price"]>0 else 0
-        state["open"].append({"symbol":c["symbol"],"full":c["full"],"entry":c["price"],"price":c["price"],"pct":0,"peak":0,"net":-pos*0.001,"opened":now,"age":0,"h1":c["h1"],"vol":c["vol"],"move":f"{c.get('tier','PUMP')}-{c['id']}","id":c["id"],"pos":pos,"qty":qty,"tier":c.get("tier","PUMP")})
+        step,minQty=get_lot_size(c["full"])
+        raw_qty=pos / c["price"] if c["price"]>0 else 0
+        qty=round_qty(raw_qty, step)
+        if qty<minQty: qty=minQty
+        state["open"].append({"symbol":c["symbol"],"full":c["full"],"entry":c["price"],"price":c["price"],"pct":0,"peak":0,"net":-pos*0.001,"opened":now,"age":0,"h1":c["h1"],"vol":c["vol"],"move":f"{c.get('tier','PUMP')}-{c['id']}","id":c["id"],"pos":pos,"qty":qty,"step":step,"tier":c.get("tier","PUMP")})
         if REAL_TRADING.lower()=="true" and BINANCE_KEY and "testnet" in BINANCE_BASE:
             params={"symbol":c["full"],"side":"BUY","type":"MARKET","quoteOrderQty":str(int(pos))}
             data, err = binance_req("/api/v3/order", BINANCE_KEY, BINANCE_SECRET, BINANCE_BASE, params, "POST")
@@ -195,7 +226,7 @@ def render(state):
 <meta http-equiv="refresh" content="15">
 </head><body>
 <div class="topdash">
-<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold">VENUS v746 FLASK $300 REAL WHALE+PUMP - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - REAL_TRADING={REAL_TRADING}</div>
+<div style="text-align:center;color:#ffcc00;font-size:12px;font-weight:bold">VENUS v747 FLASK $300 REAL LOTSIZE FIXED 3x$100 - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - REAL_TRADING={REAL_TRADING}</div>
 <div style="text-align:center;color:{'#0f8' if daily>=0 else '#f44'};font-size:11px">DAILY {daily:+.2f} / $50 TARGET {daily_pct}% - CAP ${cap:.2f} + UNREAL ${unreal:+.2f} = ${cap+unreal:.2f} REAL</div>
 </div>
 <div class="bigrow">
@@ -220,7 +251,7 @@ def render(state):
     html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING}</div>"""
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v746 FLASK $300 REAL WHALE+PUMP - TP1% SL1% QUICK - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/test_real?key={ADMIN_KEY}" style="color:#0f8">TEST REAL</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div>
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v747 FLASK $300 REAL LOTSIZE FIXED - 3x$100 - TP1% SL1% QUICK - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/test_real?key={ADMIN_KEY}" style="color:#0f8">TEST REAL</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div>
 <div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a> <a href="/api/test_real?key={ADMIN_KEY}" style="background:#0f8;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;margin-left:8px;font-size:12px">TEST REAL $300</a></div>
 </body></html>"""
     return html
