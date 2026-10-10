@@ -15,7 +15,7 @@ ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
 BINANCE_BASE=env(["BINANCE_BASE"]) or "https://testnet.binance.vision"
 BINANCE_KEY=env(["BINANCE_API_KEY","BINANCE_API_KEY_TESTNET"])
 BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRET_TESTNET"])
-REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "false"
+REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "true"
 POS_SIZE=env(["POS_SIZE"]) or "100"
 STATE_KEY="VENUS_V750_LEARN_100_REAL"
 
@@ -268,7 +268,7 @@ def render(state):
     bad = sorted([(k,v) for k,v in learn.get("coins",{}).items() if v.get("pnl",0)<0], key=lambda x: x[1]["pnl"])[:2]
     if bad: learn_txt+= " | BAD: " + ", ".join([f"{k} {v['w']}W{v['l']}L ${v['pnl']:+.1f}" for k,v in bad])
     html=f"""<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{background:#000;color:#0f8;font-family:monospace;font-size:11px;margin:0;padding:4px}} .foot{{border:1px solid #333;padding:6px;margin:4px 0;background:#0a0a0a}} .bigrow{{display:flex;gap:4px}} .bigbox{{flex:1;border:1px solid #333;padding:6px;text-align:center;background:#111}} .yellowbar{{background:#ffcc00;color:#000;padding:6px;font-weight:bold;margin:4px 0;font-size:10px}}</style></head><body>
-<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v751 SMART LEARNING AI $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - {"LEARNING" if learn else ""}</div>
+<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v752 RESTORED SMART LEARNING $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - {"LEARNING" if learn else ""}</div>
 <div class="bigrow"><div class="bigbox"><div style="font-size:10px;color:#aaa">CAP $300 REAL</div><div style="font-size:26px;font-weight:bold;color:#ffcc00">${cap:.2f}</div><div style="font-size:10px;color:#aaa">WITH OPEN {cap+unreal:.2f}</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">TODAY / $50</div><div style="font-size:26px;font-weight:bold;color:{'#0f8' if daily>=0 else '#f44'}">${daily:+.2f}</div><div style="font-size:10px;color:#aaa">{daily_pct}% OF $50 TARGET</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">WIN {winrate}%</div><div style="font-size:18px;font-weight:bold;color:#0f8">W:{wins} L:{loss}<br>T:{tot}</div><div style="font-size:10px;color:#aaa">3 MAX PUMP+WHALE LEARN</div></div></div>
 <div style="padding:6px;background:#111;border:1px solid #0ff;margin:4px"><div style="color:#0ff;font-size:10px">{learn_txt}</div></div>
 <div class="yellowbar">PUMP+WHALE HUNTER {len(pumps)} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'% '+pumps[0].get('tier','') if pumps else 'NO PUMPS'} - TODAY $300 REAL HUNT LEARN</div>"""
@@ -285,7 +285,7 @@ def render(state):
     html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING}</div>"""
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v751 SMART LEARNING AI $300 REAL - 3x$100 - LEARN FROM MISTAKES - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a></div></body></html>"""
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v752 RESTORED SMART LEARNING $300 REAL - 3x$100 - LEARN FROM MISTAKES - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a></div></body></html>"""
     return html
 
 @app.route('/', defaults={'path': ''})
