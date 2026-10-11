@@ -21,11 +21,18 @@ if not KV_TOKEN:
             break
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
 STATE_KEY="VENUS_V755_MERGED_HISTORY_100_REAL"
+
+# v781 FEE AWARE - $0.50 NET GOAL AFTER FEE
 POS=100.0
-TP=1.1  # v780: 1.1% to beat fees and lock more than 0.9%
-SL=0.50 # tighter SL
-MAXP=2  # 2 MAX quality over 3 quantity - avoids flat OP
-BAD=set(["ZRO","WLD","FET","RLC","1000SATS","LUNA","LUNC","UP","DOWN","BULL","BEAR","OP"]) # BAN OP - was flat 566s 0.00%
+FEE_PCT=0.20  # Binance spot 0.1% buy + 0.1% sell = 0.20% total = $0.20 on $100
+FEE_USD=POS*FEE_PCT/100  # $0.20
+NET_TARGET=0.50  # user wants 50 cents net after fee
+TP_GROSS=0.75  # 0.75% gross = 0.55% net = $0.55 (covers 0.50 goal + slippage)
+TP_NET=TP_GROSS - FEE_PCT  # 0.55% net = $0.55
+SL_GROSS=0.50
+SL_NET=SL_GROSS + FEE_PCT  # 0.70% loss net = $0.70 loss after fee
+MAXP=2
+BAD=set(["ZRO","WLD","FET","RLC","1000SATS","LUNA","LUNC","UP","DOWN","OP","ATOM"]) # OP and ATOM were flat/losers
 
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
@@ -67,49 +74,58 @@ def get_tickers():
 def load_state():
     s=kv_get(STATE_KEY)
     if not s:
-        s={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":""}}
-    if "learn" not in s: s["learn"]={"blacklist":{},"pause_until":0,"last_date":""}
+        s={"cap":300.0,"daily":0.0,"daily_gross":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":"","last_coins":{}}}
+    if "learn" not in s: s["learn"]={"blacklist":{},"pause_until":0,"last_date":"","last_coins":{}}
     L=s["learn"]
     L.setdefault("blacklist",{})
     L.setdefault("pause_until",0)
     L.setdefault("last_date","")
+    L.setdefault("last_coins",{})
     today=time.strftime("%Y-%m-%d")
     if L.get("last_date")!=today:
         s["daily"]=0.0
+        s["daily_gross"]=0.0
+        s["fees_paid"]=0.0
         L["last_date"]=today
         L["pause_until"]=0
+        L["last_coins"]={}
     now=int(time.time())
+    # clean old blacklist
     L["blacklist"]={k:v for k,v in L["blacklist"].items() if v>now}
+    # clean last_coins cooldown 10 min
+    L["last_coins"]={k:v for k,v in L["last_coins"].items() if v>now}
     return s
 
-def shark_early(t):
-    """v780 SHARK EARLY 3-5% ONLY - not late +6.3%"""
+def shark_fee_aware(t, last_coins):
+    """v781: FEE AWARE EARLY SHARK - must make $0.50 net after fee"""
     try:
         sym=t.get("symbol","")
         if not sym.endswith("USDT"): return None
         base=sym.replace("USDT","")
         if base in BAD: return None
+        if base in last_coins: return None  # cooldown - jump to DIFFERENT coin
         if not base.isalnum(): return None
         if len(base)<2 or len(base)>10: return None
         price=float(t.get("lastPrice","0"))
-        if price<0.005 or price>2.0: return None  # tighter price <2 not 5
+        if price<0.005 or price>1.5: return None
         h1=float(t.get("priceChangePercent","0"))
         vol=float(t.get("quoteVolume","0"))
         high=float(t.get("highPrice","0"))
         low=float(t.get("lowPrice","0"))
         if high==0 or low==0: return None
-        # EARLY ONLY: 2.8-5.5% not 6.3% late
-        if h1<2.8 or h1>5.5: return None
-        if vol<12000000: return None  # higher vol 12M not 8M - stronger shark
+        # EARLY but with momentum to reach 0.75% gross
+        if h1<2.8 or h1>6.0: return None  # 2.8-6% early - not late +6.3%
+        if vol<13000000: return None  # strong shark 13M
         from_low=(price-low)/low*100 if low>0 else 0
-        if from_low<2.8 or from_low>5.5: return None  # early from low
+        if from_low<2.8 or from_low>6.0: return None
         near_high=price/high*100
-        if near_high<97.5: return None  # must be very near high = still pumping early
-        if near_high>99.8: return None  # too near top = will dump
-        # Early shark score
-        score=(vol/1000000)*h1/max(1,from_low)* (near_high/98)
-        if base in ["LUMIA","MANTA","ARB","NIL","AERO","EIGEN","ATOM"]: score*=2.0
-        return {"symbol":base,"h1":h1,"price":price,"vol":int(vol),"from_low":from_low,"near_high":near_high,"score":score}
+        if near_high<97.0 or near_high>99.5: return None
+        # Must have enough room to go +0.75% more
+        room_to_high=(high-price)/price*100
+        if room_to_high<0.6: return None  # need room for TP
+        score=(vol/1000000)*h1/max(1,from_low)* (room_to_high)
+        if base in ["LUMIA","MANTA","ARB","NIL","AERO","EIGEN"]: score*=2.2
+        return {"symbol":base,"h1":h1,"price":price,"vol":int(vol),"from_low":from_low,"near_high":near_high,"room":room_to_high,"score":score}
     except: return None
 
 def do_cron():
@@ -122,15 +138,17 @@ def do_cron():
     tickers=get_tickers()
     sharks=[]
     for t in tickers:
-        s=shark_early(t)
+        s=shark_fee_aware(t, L.get("last_coins",{}))
         if s and s["symbol"] not in L.get("blacklist",{}):
             sharks.append(s)
-    sharks=sorted(sharks, key=lambda x: x["score"], reverse=True)[:8]
+    sharks=sorted(sharks, key=lambda x: x["score"], reverse=True)[:10]
 
     open_tr=state.get("open",[])
     closed=state.get("closed",[])
     cap=state.get("cap",300.0)
-    daily=state.get("daily",0.0)
+    daily=state.get("daily",0.0)  # net after fee
+    daily_gross=state.get("daily_gross",0.0)
+    fees_paid=state.get("fees_paid",0.0)
     wins=state.get("wins",0)
     loss=state.get("loss",0)
     tot=state.get("total",0)
@@ -145,35 +163,50 @@ def do_cron():
                 if tk.get("symbol")==sym:
                     price_now=float(tk.get("lastPrice",price_now))
                     break
-            pct=(price_now-tr["entry"])/tr["entry"]*100 if tr["entry"] else 0
+            pct_gross=(price_now-tr["entry"])/tr["entry"]*100 if tr["entry"] else 0
+            pct_net=pct_gross - FEE_PCT
+            net_usd=POS*pct_net/100
+            gross_usd=POS*pct_gross/100
             age=now_ts-tr.get("ts",now_ts)
-            peak=max(tr.get("peak",0),pct)
+            peak_gross=max(tr.get("peak_gross",0), pct_gross)
+            peak_net=peak_gross - FEE_PCT
             tr["price"]=price_now
-            tr["pct"]=pct
-            tr["peak"]=peak
+            tr["pct_gross"]=pct_gross
+            tr["pct"]=pct_net
+            tr["peak_gross"]=peak_gross
+            tr["peak"]=peak_net
             tr["age"]=age
-            tr["net"]=POS*pct/100
+            tr["net"]=net_usd
+            tr["gross"]=gross_usd
 
             should=None
-            # v780: EARLY TP 1.1% and quick jump
-            if pct>=TP: should=f"SHARK EARLY TP {TP}% +{pct:.2f}% JUMP"
-            elif pct<=-SL: should=f"SHARK EARLY SL -{SL}% {pct:.1f}% JUMP"
-            elif peak>=0.8 and pct<peak-0.15 and pct>0.4: should=f"EARLY TRAIL +{peak:.1f}->{pct:.1f}%"
-            elif age>300 and pct>0.45: should=f"EARLY TIME 300s {pct:.1f}% NEXT"
-            elif age>600 and pct>0.15: should=f"EARLY TIME 600s {pct:.1f}% NEXT"
-            elif age>900: should=f"EARLY TIME 900s FORCE {pct:.1f}% NEXT" # no more 1200s flat OP 566s 0%
-            elif age>180 and pct<-0.25: should=f"EARLY FLAT CUT {pct:.1f}% {age}s"
+            # FEE AWARE: need $0.50 net = 0.75% gross
+            if pct_gross>=TP_GROSS:
+                should=f"TP {TP_GROSS}% GROSS {pct_gross:.2f}% NET +{pct_net:.2f}% +${net_usd:+.2f} NET (${gross_usd:+.2f} gross -${FEE_USD:.2f} fee) JUMP"
+            elif pct_gross<=-SL_GROSS:
+                should=f"SL -{SL_GROSS}% GROSS {pct_gross:.1f}% NET {pct_net:.1f}% ${net_usd:+.2f} JUMP"
+            elif peak_gross>=0.9 and pct_gross<peak_gross-0.18 and pct_net>0.35:
+                should=f"TRAIL +{peak_gross:.1f}%->{pct_gross:.1f}% GROSS NET +{pct_net:.1f}% +${net_usd:+.2f} JUMP"
+            elif age>300 and pct_net>=0.35:  # $0.35 net = $0.55 gross
+                should=f"TIME 300s {pct_gross:.2f}% GROSS {pct_net:.2f}% NET +${net_usd:+.2f} JUMP"
+            elif age>600 and pct_net>=0.15:
+                should=f"TIME 600s {pct_gross:.2f}% GROSS {pct_net:.2f}% NET +${net_usd:+.2f} JUMP"
+            elif age>900:
+                should=f"TIME 900s FORCE {pct_gross:.2f}% GROSS {pct_net:.2f}% NET ${net_usd:+.2f} JUMP"
+            elif age>200 and pct_gross<-0.30:
+                should=f"FLAT CUT {pct_gross:.1f}% GROSS {pct_net:.1f}% NET {age}s"
 
             if should:
-                net=POS*pct/100
-                cap+=net
-                daily+=net
-                if net>0: wins+=1
+                cap+=net_usd
+                daily+=net_usd
+                daily_gross+=gross_usd
+                fees_paid+=FEE_USD
+                if net_usd>0: wins+=1
                 else: loss+=1
                 tot+=1
-                closed.insert(0,{"symbol":tr["symbol"],"net":net,"reason":should,"pct":pct,"age":age})
-                # blacklist if flat loser
-                if pct<-0.4:
+                closed.insert(0,{"symbol":tr["symbol"],"net":net_usd,"gross":gross_usd,"fee":FEE_USD,"reason":should,"pct_gross":pct_gross,"pct_net":pct_net,"age":age})
+                L["last_coins"][tr["symbol"]]=now_ts+600  # 10 min cooldown - jump to different coin
+                if pct_net<-0.6:
                     L["blacklist"][tr["symbol"]]=now_ts+1800
             else:
                 final.append(tr)
@@ -185,11 +218,11 @@ def do_cron():
         if len(final)>=MAXP: break
         if sh["symbol"] in open_syms: continue
         if sh["symbol"] in L.get("blacklist",{}): continue
+        if sh["symbol"] in L.get("last_coins",{}): continue
         price=sh["price"]
         qty=POS/price if price>0 else 0
-        if qty<10: continue
-        if 100/price<40: continue # need at least 40 qty
-        tr={"symbol":sh["symbol"],"entry":price,"price":price,"pos":POS,"qty":qty,"ts":now_ts,"peak":0,"pct":0,"net":0,"age":0,"h1":sh["h1"],"from_low":sh["from_low"],"score":sh["score"]}
+        if qty<15: continue
+        tr={"symbol":sh["symbol"],"entry":price,"price":price,"pos":POS,"qty":qty,"ts":now_ts,"peak_gross":0,"peak":0,"pct_gross":0,"pct":0,"net":0,"gross":0,"age":0,"h1":sh["h1"],"from_low":sh["from_low"],"score":sh["score"],"room":sh["room"]}
         final.append(tr)
         open_syms.append(sh["symbol"])
 
@@ -197,18 +230,22 @@ def do_cron():
     state["closed"]=closed[:200]
     state["cap"]=cap
     state["daily"]=daily
+    state["daily_gross"]=daily_gross
+    state["fees_paid"]=fees_paid
     state["wins"]=wins
     state["loss"]=loss
     state["total"]=tot
     state["scan"]=scan
     kv_set(STATE_KEY, state)
-    return {"ok":True,"scan":scan,"open":len(final),"cap":cap,"daily":daily,"sharks":len(sharks),"total":tot,"wins":wins,"loss":loss,"v":"v780 EARLY"}
+    return {"ok":True,"scan":scan,"open":len(final),"cap":cap,"daily":daily,"daily_gross":daily_gross,"fees":fees_paid,"sharks":len(sharks),"total":tot,"wins":wins,"loss":loss,"v":"v781 FEE AWARE 0.50 NET"}
 
 def render(state):
     open_tr=state.get("open",[])
     closed=state.get("closed",[])
     cap=state.get("cap",300.0)
     daily=state.get("daily",0.0)
+    daily_gross=state.get("daily_gross",0.0)
+    fees_paid=state.get("fees_paid",0.0)
     wins=state.get("wins",0)
     loss=state.get("loss",0)
     tot=state.get("total",0)
@@ -216,12 +253,13 @@ def render(state):
     learn=state.get("learn",{})
     winrate=int(wins/tot*100) if tot>0 else 0
     unreal=sum([t.get("net",0) for t in open_tr])
+    unreal_gross=sum([t.get("gross",0) for t in open_tr])
 
     try:
         tickers=get_tickers()
         sharks=[]
         for t in tickers:
-            s=shark_early(t)
+            s=shark_fee_aware(t, learn.get("last_coins",{}))
             if s and s["symbol"] not in learn.get("blacklist",{}):
                 sharks.append(s)
         sharks=sorted(sharks, key=lambda x: x["score"], reverse=True)[:5]
@@ -230,31 +268,29 @@ def render(state):
 
     html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
     html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:12px;margin:0;padding:8px}"
-    html += ".h{background:linear-gradient(90deg,#ffcc00,#ff9900);color:#000;padding:12px;text-align:center;font-weight:900;font-size:14px;position:sticky;top:0;z-index:10}"
+    html += ".h{background:linear-gradient(90deg,#00ff88,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:14px;position:sticky;top:0;z-index:10}"
     html += ".g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}"
     html += ".c{background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;border-radius:10px}"
     html += ".b{padding:9px;margin:8px 0;border-radius:7px;font-weight:800;font-size:11px}"
-    html += ".by{background:#ffcc00;color:#000} .bb{background:#00d4ff;color:#000} .bd{background:#222;color:#888} .bg{background:#00ff88;color:#000}"
+    html += ".by{background:#ffcc00;color:#000} .bb{background:#00d4ff;color:#000} .bd{background:#222;color:#888} .bg{background:#00ff88;color:#000} .bw{background:#fff;color:#000}"
     html += ".it{background:#111;border:1px solid #333;padding:10px;margin:6px 0;border-radius:10px}"
     html += ".live{width:10px;height:10px;background:#0f0;border-radius:50%;display:inline-block;animation:blink 1s infinite} @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}"
     html += "</style></head><body>"
-    html += f"<div class='h'><span class='live'></span> VENUS v780 SHARK EARLY 3-5% - SCAN #{scan} - {MAXP} MAX - TP {TP}% - <span id='clock'>LIVE</span></div>"
+    html += f"<div class='h'><span class='live'></span> VENUS v781 FEE AWARE $0.50 NET - SCAN #{scan} - {MAXP} MAX - TP {TP_GROSS}% GROSS = ${NET_TARGET:.2f} NET AFTER ${FEE_USD:.2f} FEE - <span id='clock'>LIVE</span></div>"
     html += "<div class='g'>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL</div><div style='font-size:24px;color:#ffcc00;font-weight:900' id='cap'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN <span>{cap+unreal:.2f}</span> <span style='color:#0f0'>{unreal:+.2f}</span></div></div>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>TODAY LIVE EARLY</div><div style='font-size:24px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f}</div><div style='font-size:10px'>W:{wins} L:{loss} T:{tot} {winrate}%</div></div>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>AUTO EARLY</div><div style='font-size:14px;color:#0f8;font-weight:900'>LIVE <span id='scan'>{scan}</span></div><div style='font-size:10px'>Next <span id='countdown'>10s</span> - TP {TP}% 3-5% EARLY</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL NET</div><div style='font-size:24px;color:#ffcc00;font-weight:900' id='cap'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f} GROSS {daily_gross:+.2f} FEES ${fees_paid:.2f}</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>TODAY NET (AFTER FEE)</div><div style='font-size:24px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f} = NET ${daily:+.2f} | W:{wins} L:{loss} {winrate}%</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>GOAL $0.50 NET/TRADE</div><div style='font-size:14px;color:#0f8;font-weight:900'>LIVE <span id='scan'>{scan}</span> JUMP COIN</div><div style='font-size:10px'>Next <span id='countdown'>10s</span> - TP {TP_GROSS}% GROSS = {TP_NET:.2f}% NET ${NET_TARGET:.2f}</div></div>"
     html += "</div>"
 
-    html += "<div id='sharkbox'><div class='b bd'>Scanning early sharks 2.8-5.5%...</div></div>"
+    html += "<div id='sharkbox'><div class='b bd'>Scanning early sharks for $0.50 net...</div></div>"
     html += "<div id='openbox'></div>"
     html += "<div id='closedbox'></div>"
-    html += f"<div style='text-align:center;padding:12px'><a href='/api/cron?key={ADMIN_KEY}&cron=1' style='background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:900;border-radius:8px'>MANUAL CRON v780 EARLY</a> "
-    html += f"<a href='/api/nuke?key={ADMIN_KEY}' style='background:#ff3333;color:#fff;padding:10px 14px;text-decoration:none;border-radius:8px;margin-left:6px'>NUKE</a> "
+    html += f"<div style='text-align:center;padding:12px'><a href='/api/cron?key={ADMIN_KEY}&cron=1' style='background:#00ff88;color:#000;padding:12px 20px;text-decoration:none;font-weight:900;border-radius:8px'>MANUAL CRON v781 $0.50 NET</a> "
     html += f"<a href='/api/reset?key={ADMIN_KEY}' style='background:#333;color:#888;padding:10px 14px;text-decoration:none;border-radius:8px;margin-left:6px'>RESET $300</a></div>"
 
     html += """
 <script>
-let scanNum = """ + str(scan) + """;
 function fmt(n){return n.toFixed(2)}
 async function loadLive(){
   try{
@@ -263,7 +299,7 @@ async function loadLive(){
     if(data.cap!==undefined){
       document.getElementById('cap').textContent = '$'+fmt(data.cap);
     }
-    const pageRes = await fetch('/?key=""" + ADMIN_KEY + """&partial=1');
+    const pageRes = await fetch('/?key=""" + ADMIN_KEY + """');
     const html = await pageRes.text();
     const parser = new DOMParser();
     const doc = parser.parseFromString(html,'text/html');
@@ -284,18 +320,13 @@ setInterval(()=>{
   if(clk) clk.textContent = new Date().toLocaleTimeString();
   if(count<=0){ count=10; loadLive(); }
 },1000);
-setTimeout(()=>{ 
-  fetch(window.location.href).then(r=>r.text()).then(html=>{
-    const parser=new DOMParser();
-    const doc=parser.parseFromString(html,'text/html');
-    const sharkEl=doc.getElementById('sharkbox-inner');
-    const openEl=doc.getElementById('openbox-inner');
-    const closedEl=doc.getElementById('closedbox-inner');
-    if(sharkEl) document.getElementById('sharkbox').innerHTML=sharkEl.innerHTML;
-    if(openEl) document.getElementById('openbox').innerHTML=openEl.innerHTML;
-    if(closedEl) document.getElementById('closedbox').innerHTML=closedEl.innerHTML;
-  });
-},1200);
+setTimeout(()=>{ fetch(window.location.href).then(r=>r.text()).then(html=>{
+  const parser=new DOMParser(); const doc=parser.parseFromString(html,'text/html');
+  const sharkEl=doc.getElementById('sharkbox-inner'); const openEl=doc.getElementById('openbox-inner'); const closedEl=doc.getElementById('closedbox-inner');
+  if(sharkEl) document.getElementById('sharkbox').innerHTML=sharkEl.innerHTML;
+  if(openEl) document.getElementById('openbox').innerHTML=openEl.innerHTML;
+  if(closedEl) document.getElementById('closedbox').innerHTML=closedEl.innerHTML;
+});},1200);
 </script>
 <script>
 async function updateLivePrices(){
@@ -309,10 +340,12 @@ async function updateLivePrices(){
       const entry = parseFloat(el.dataset.entry);
       const now = map[sym];
       if(now && entry){
-        const pct = (now-entry)/entry*100;
-        const net = 100*pct/100;
-        el.textContent = (pct>=0?'+':'')+pct.toFixed(2)+'% $'+(net>=0?'+':'')+net.toFixed(2)+' REAL';
-        el.style.color = pct>=0?'#0f8':'#f44';
+        const pct_gross = (now-entry)/entry*100;
+        const pct_net = pct_gross - """ + str(FEE_PCT) + """;
+        const net_usd = 100*pct_net/100;
+        const gross_usd = 100*pct_gross/100;
+        el.textContent = pct_gross.toFixed(2)+'% GROSS '+pct_net.toFixed(2)+'% NET $'+net_usd.toFixed(2)+' NET ($'+gross_usd.toFixed(2)+' - $0.20 fee) REAL';
+        el.style.color = pct_net>=0?'#0f8':'#f44';
       }
     });
   }catch(e){}
@@ -325,27 +358,32 @@ updateLivePrices();
     html += "<div style='display:none'><div id='sharkbox-inner'>"
     if sharks:
         top=sharks[0]
-        html += f"<div class='b bg'>SHARK EARLY 3-5% ONLY - TOP {top['symbol']} +{top['h1']:.1f}% SCORE {top['score']:.0f} VOL ${top['vol']} FROM_LOW {top['from_low']:.1f}% - EARLY NOT LATE +6.3% - AUTO EVERY 10s</div>"
+        html += f"<div class='b bg'>FEE AWARE SHARK EARLY 3-6% FOR $0.50 NET - TOP {top['symbol']} +{top['h1']:.1f}% SCORE {top['score']:.0f} VOL ${top['vol']} ROOM {top['room']:.1f}% TO HIGH - NEED {TP_GROSS}% GROSS = ${NET_TARGET:.2f} NET - AUTO JUMP COIN</div>"
         for s in sharks[:4]:
-            html += f"<div class='it' style='border-color:#00ff88'><b style='color:#00ff88'>#{sharks.index(s)+1} {s['symbol']} H1 +{s['h1']:.1f}% SCORE {s['score']:.0f} EARLY</b><br><span style='color:#0f8'>VOL ${s['vol']} PRICE ${s['price']:.6f} FROM_LOW {s['from_low']:.1f}% NEAR_HIGH {s['near_high']:.1f}%</span><br>POS $100 TP {TP}% SL {SL}%</div>"
+            net_est=(TP_GROSS-FEE_PCT)*POS/100
+            html += f"<div class='it' style='border-color:#00ff88'><b style='color:#00ff88'>#{sharks.index(s)+1} {s['symbol']} H1 +{s['h1']:.1f}% SCORE {s['score']:.0f} ROOM {s['room']:.1f}%</b><br><span style='color:#0f8'>VOL ${s['vol']} PRICE ${s['price']:.6f} FROM_LOW {s['from_low']:.1f}% - TP {TP_GROSS}% GROSS = ${net_est:.2f} NET AFTER ${FEE_USD:.2f} FEE - JUMP DIFFERENT COIN</span></div>"
     else:
-        html += "<div class='b bd'>SHARK EARLY 0 - NO 2.8-5.5% EARLY PUMPS - MARKET WAITING - TOO LATE +6.3% SKIPPED - AUTO SCANNING</div>"
+        html += "<div class='b bd'>SHARK EARLY 0 - NO 2.8-6% EARLY WITH ROOM FOR 0.75% GROSS - WAITING NEXT WAVE FOR $0.50 NET - JUMP DIFFERENT COIN</div>"
     html += "</div>"
 
     html += "<div id='openbox-inner'>"
-    html += f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX QUALITY - EARLY TP {TP}% - NO FLAT 566s 0% - SL {SL}% - 900s FORCE - <span class='live'></span> LIVE</div>"
+    html += f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX FEE AWARE - NEED {TP_GROSS}% GROSS = {TP_NET:.2f}% NET ${NET_TARGET:.2f} AFTER ${FEE_USD:.2f} FEE - JUMP DIFFERENT COIN - <span class='live'></span> LIVE</div>"
     if not open_tr:
-        html += "<div class='it' style='text-align:center;color:#666'>NO OPEN - WAITING EARLY SHARK 2.8-5.5% - SKIPPING LATE +6.3% - AUTO SCAN</div>"
+        html += f"<div class='it' style='text-align:center;color:#666'>NO OPEN - WAITING EARLY SHARK FOR $0.50 NET AFTER FEE - JUMP TO DIFFERENT COIN EACH TIME - AUTO SCAN</div>"
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
-        html += f"<div class='it' style='border-color:{col}'><b style='color:{col}'>{tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s PEAK {tr.get('peak',0):.1f}% SCORE {tr.get('score',0):.0f} EARLY</b><br>ENTRY ${tr['entry']:.6f} -> NOW <span style='color:#ffcc00'>${tr['price']:.6f}</span> H1 +{tr.get('h1',0):.1f}%<br><span style='color:{col};font-size:18px;font-weight:900' class='live-pct' data-entry='{tr['entry']}' data-symbol='{tr['symbol']}'>{tr.get('pct',0):+.2f}% ${tr.get('net',0):+.2f} REAL</span> <span class='live'></span> LIVE<br><span style='font-size:10px;color:#888'>TP {TP}% SL {SL}% QTY {tr.get('qty',0):.1f}</span></div>"
+        pct_gross=tr.get("pct_gross",0)
+        pct_net=tr.get("pct",0)
+        net_usd=tr.get("net",0)
+        gross_usd=tr.get("gross",0)
+        html += f"<div class='it' style='border-color:{col}'><b style='color:{col}'>{tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s PEAK {tr.get('peak_gross',0):.1f}% GROSS SCORE {tr.get('score',0):.0f} ROOM {tr.get('room',0):.1f}%</b><br>ENTRY ${tr['entry']:.6f} -> NOW <span style='color:#ffcc00'>${tr['price']:.6f}</span> H1 +{tr.get('h1',0):.1f}%<br><span style='color:{col};font-size:15px;font-weight:900' class='live-pct' data-entry='{tr['entry']}' data-symbol='{tr['symbol']}'>{pct_gross:.2f}% GROSS {pct_net:.2f}% NET ${net_usd:+.2f} NET (${gross_usd:+.2f} - ${FEE_USD:.2f} fee) REAL</span> <span class='live'></span> LIVE<br><span style='font-size:10px;color:#888'>NEED {TP_GROSS}% GROSS = {TP_NET:.2f}% NET ${NET_TARGET:.2f} | SL {SL_GROSS}% GROSS | QTY {tr.get('qty',0):.1f}</span></div>"
     html += "</div>"
 
     html += "<div id='closedbox-inner'>"
-    html += f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} {winrate}% CAP ${cap:.2f} DAILY ${daily:+.2f} - EARLY 3-5% ONLY</div>"
+    html += f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} {winrate}% - CAP ${cap:.2f} DAILY NET ${daily:+.2f} (GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f}) - GOAL ${NET_TARGET:.2f} NET/TRADE - JUMP COIN</div>"
     for cl in closed[:15]:
         c="#0f8" if cl["net"]>0 else "#f44"
-        html += f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{c}'><b>{cl['symbol']}</b> ${cl['net']:+.2f} {cl['reason']} {cl['pct']:+.1f}% AGE {cl['age']}s</div>"
+        html += f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{c}'><b>{cl['symbol']}</b> ${cl['net']:+.2f} NET (${cl['gross']:+.2f} GROSS - ${cl['fee']:.2f} FEE) {cl['reason']} {cl['pct_gross']:+.2f}% GROSS {cl['pct_net']:+.2f}% NET AGE {cl['age']}s</div>"
     html += "</div></div></div>"
     html += "</body></html>"
     return html
@@ -362,52 +400,12 @@ def catch_all(path):
             return Response(json.dumps(res), mimetype="application/json")
         except Exception as e:
             return Response(json.dumps({"ok":False,"error":str(e)[:300]}), mimetype="application/json", status=200)
-    if p.startswith("/api/nuke"):
-        if key!=ADMIN_KEY: return Response("Forbidden", status=403)
-        try:
-            state=load_state()
-            now_ts=int(time.time())
-            open_tr=state.get("open",[])
-            closed=state.get("closed",[])
-            cap=state.get("cap",300.0)
-            daily=state.get("daily",0.0)
-            wins=state.get("wins",0)
-            loss=state.get("loss",0)
-            tot=state.get("total",0)
-            tickers=get_tickers()
-            for tr in open_tr:
-                try:
-                    price_now=tr["price"]
-                    for tk in tickers:
-                        if tk.get("symbol")==tr["symbol"]+"USDT":
-                            price_now=float(tk.get("lastPrice",price_now))
-                            break
-                    pct=(price_now-tr["entry"])/tr["entry"]*100 if tr["entry"] else 0
-                    net=POS*pct/100
-                    cap+=net
-                    daily+=net
-                    if net>0: wins+=1
-                    else: loss+=1
-                    tot+=1
-                    closed.insert(0,{"symbol":tr["symbol"],"net":net,"reason":f"NUKE {pct:+.2f}%","pct":pct,"age":now_ts-tr.get("ts",now_ts)})
-                except: pass
-            state["open"]=[]
-            state["closed"]=closed[:200]
-            state["cap"]=cap
-            state["daily"]=daily
-            state["wins"]=wins
-            state["loss"]=loss
-            state["total"]=tot
-            kv_set(STATE_KEY, state)
-            return Response(json.dumps({"ok":True,"nuked":len(open_tr),"cap":cap}), mimetype="application/json")
-        except Exception as e:
-            return Response(json.dumps({"ok":False,"error":str(e)[:200]}), mimetype="application/json")
     if p.startswith("/api/reset"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         try:
             kv_del(STATE_KEY)
             time.sleep(0.6)
-            new={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d")}}
+            new={"cap":300.0,"daily":0.0,"daily_gross":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}}}
             ok=kv_set(STATE_KEY, new)
             verify=kv_get(STATE_KEY)
             return Response(json.dumps({"ok":ok,"cap":300,"verify":verify.get("cap") if verify else None}), mimetype="application/json")
@@ -416,10 +414,9 @@ def catch_all(path):
     if p.startswith("/api/force_reset"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         try:
-            for kk in [STATE_KEY,"VENUS_V752_RESTORED_SMART_100_REAL"]:
-                kv_del(kk)
+            kv_del(STATE_KEY)
             time.sleep(0.6)
-            new={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d")}}
+            new={"cap":300.0,"daily":0.0,"daily_gross":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}}}
             kv_set(STATE_KEY, new)
             return Response(json.dumps({"ok":True,"cap":300,"force":True}), mimetype="application/json")
         except Exception as e:
