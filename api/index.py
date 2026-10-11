@@ -24,28 +24,26 @@ STATE_KEY="VENUS_V755_MERGED_HISTORY_100_REAL"
 POS=100.0
 FEE_PCT=0.20
 FEE_USD=0.20
-TP_GROSS=0.70  # $0.50 net
-TP_NET=0.50
-SL_GROSS=0.40
-MAXP=3  # USER WANTS 3 COINS AT A TIME $100 EACH
+TP_GROSS=0.72
+TP_NET=0.52
+SL_GROSS=0.35
+MAXP=3
 
-# SECTOR MAP for diversification - chain wifi blockchain best moving
 SECTORS = {
-    "L1_CHAIN": ["ARB","SUI","SEI","APT","TIA","ATOM","AVAX","SOL","NEAR","OP","STRK","MANTA","NIL"],
-    "DEPIN_WIFI": ["FIL","RNDR","THETA","IOTX","AR","STORJ","HNT","AKT","GRT","FET"],  # wifi chain dePIN
-    "AI": ["EIGEN","TAO","FET","WLD","ARKM","AGIX","RNDR","GRT","NMR","OCEAN"],
-    "DEFI": ["ENA","PENDLE","AERO","LUMIA","LDO","UNI","AAVE","CRV","MKR","1INCH"],
-    "MEME": ["PEPE","BONK","WIF","FLOKI","SHIB","DOGE","MEME","BOME","MEW"],
-    "RWA_GAMING": ["IMX","RONIN","GALA","AXS","FLOW","CHZ","ENJ","MANA","SAND"]
+    "L1_CHAIN": ["ARB","SUI","SEI","APT","TIA","ATOM","AVAX","SOL","NEAR","OP","STRK","MANTA","NIL","ZK","ZRO"],
+    "DEPIN_WIFI": ["FIL","RNDR","THETA","IOTX","AR","STORJ","HNT","AKT","GRT","FET","PUMP"],
+    "AI": ["EIGEN","TAO","FET","WLD","ARKM","AGIX","RNDR","GRT","NMR","OCEAN","AI","VIRTUAL"],
+    "DEFI": ["ENA","PENDLE","AERO","LUMIA","LDO","UNI","AAVE","CRV","MKR","1INCH","PUMP","ETHFI"],
+    "MEME": ["PEPE","BONK","WIF","FLOKI","SHIB","DOGE","MEME","BOME","MEW","PUMP"],
+    "RWA_GAMING": ["IMX","RONIN","GALA","AXS","FLOW","CHZ","ENJ","MANA","SAND","BEAM"]
 }
-# reverse map coin -> sector
 COIN_SECTOR={}
 for sec, coins in SECTORS.items():
     for c in coins:
         if c not in COIN_SECTOR:
             COIN_SECTOR[c]=sec
 
-BAD=set(["ZRO","WLD","1000SATS","LUNA","LUNC","UP","DOWN","1000PEPE","ONDO","XLM","WLD"])
+BAD=set(["1000SATS","LUNA","LUNC","UP","DOWN","1000PEPE","ONDO","XLM"])
 
 def get_sector(coin):
     return COIN_SECTOR.get(coin, "OTHER_BEST")
@@ -110,7 +108,7 @@ def load_state():
     L["last_coins"]={k:v for k,v in L["last_coins"].items() if v>now}
     return s
 
-def shark_sector(t, last_coins, used_sectors):
+def shark_smart(t, last_coins, used_sectors):
     try:
         sym=t.get("symbol","")
         if not sym.endswith("USDT"): return None
@@ -120,26 +118,26 @@ def shark_sector(t, last_coins, used_sectors):
         if not base.isalnum(): return None
         if len(base)<2 or len(base)>10: return None
         price=float(t.get("lastPrice","0"))
-        if price<0.001 or price>5.0: return None
+        if price<0.001 or price>4.0: return None
         h1=float(t.get("priceChangePercent","0"))
         vol=float(t.get("quoteVolume","0"))
         high=float(t.get("highPrice","0"))
         low=float(t.get("lowPrice","0"))
         if high==0 or low==0: return None
-        if h1<2.5 or h1>9.0: return None
-        if vol<8000000: return None
+        # SMART: need stronger pump for $0.50 net
+        if h1<3.2 or h1>9.0: return None
+        if vol<11000000: return None  # 11M not 8M - avoid low vol OP $9.3M that lost $0.27
         from_low=(price-low)/low*100 if low>0 else 0
-        if from_low<2.0 or from_low>10.0: return None
+        if from_low<3.0 or from_low>11.0: return None
         near_high=price/high*100
-        if near_high<94.0: return None
+        if near_high<96.0: return None  # 96% not 94% - must be near high with momentum
         room=(high-price)/price*100
-        if room<0.35: return None
+        if room<0.55: return None  # need 0.55% room for 0.72% TP if breaks high
         sector=get_sector(base)
-        # DIVERSIFY: if sector already used in open positions, penalize heavily
-        sector_penalty = 0.25 if sector in used_sectors else 1.0
+        sector_penalty = 0.20 if sector in used_sectors else 1.0
         score=(vol/1000000)*h1*(1+room)*sector_penalty
-        # Boost best moving sectors
-        if base in ["ARB","SUI","SEI","APT","TIA","OP","ENA","PENDLE","AERO","LUMIA","RNDR","FIL","EIGEN","TAO","PEPE","WIF","BONK"]: score*=2.2
+        if base in ["PUMP","ENA","PENDLE","AERO","RNDR","FIL","EIGEN","TAO","SEI","SUI","TIA","WIF","BONK"]: score*=2.5
+        if base in ["ZK","OP"] and vol<15000000: score*=0.5  # ZK OP need 15M vol to avoid flat losers
         return {"symbol":base,"h1":h1,"price":price,"vol":int(vol),"from_low":from_low,"near_high":near_high,"room":room,"score":score,"sector":sector}
     except: return None
 
@@ -150,12 +148,11 @@ def do_cron():
     if L.get("pause_until",0)>now_ts:
         return {"ok":False,"paused":True,"left":L["pause_until"]-now_ts,"scan":state.get("scan",0)}
     tickers=get_tickers()
-    # used sectors from open
     open_tr=state.get("open",[])
     used_sectors=set([get_sector(t["symbol"]) for t in open_tr])
     sharks=[]
     for t in tickers:
-        s=shark_sector(t, L.get("last_coins",{}), used_sectors)
+        s=shark_smart(t, L.get("last_coins",{}), used_sectors)
         if s and s["symbol"] not in L.get("blacklist",{}):
             sharks.append(s)
     sharks=sorted(sharks, key=lambda x: x["score"], reverse=True)[:18]
@@ -193,22 +190,25 @@ def do_cron():
             tr["net"]=net_usd
             tr["gross"]=gross_usd
             should=None
+            # SMART CLOSE - avoid holding ZK 192s 0.19% gross -0.01% net flat
             if pct_gross>=TP_GROSS:
-                should=f"TP {TP_GROSS}% GRAPH {pct_gross:.2f}% NET +${net_usd:+.2f} $0.50 GOAL JUMP SECTOR {get_sector(tr['symbol'])}"
+                should=f"TP {TP_GROSS}% GRAPH HIT +${net_usd:+.2f} NET $0.50 GOAL JUMP {get_sector(tr['symbol'])}"
             elif pct_gross<=-SL_GROSS:
-                should=f"SL -{SL_GROSS}% GRAPH DROP SECTOR {get_sector(tr['symbol'])} CUT"
-            elif peak_gross>=0.55 and pct_gross<peak_gross-0.14 and pct_net>=0.25:
-                should=f"GRAPH TRAIL {peak_gross:.1f}%->{pct_gross:.1f}% DROP -0.14% NET +{pct_net:.1f}% JUMP SECTOR {get_sector(tr['symbol'])}"
-            elif age>350 and pct_net>=0.50:
-                should=f"TIME 350s GRAPH {pct_gross:.2f}% NET +${net_usd:+.2f} $0.50 GOAL SECTOR {get_sector(tr['symbol'])}"
-            elif age>700 and pct_net>=0.18:
-                should=f"TIME 700s GRAPH {pct_gross:.2f}% NET ${net_usd:+.2f} JUMP"
-            elif age>900:
-                should=f"TIME 900s FORCE GRAPH {pct_gross:.2f}% NET ${net_usd:+.2f}"
-            elif age>180 and pct_gross<0.12 and pct_gross>-0.22:
-                should=f"GRAPH FLAT {pct_gross:.2f}% {age}s NO TICK CUT SECTOR {get_sector(tr['symbol'])}"
-            elif age>140 and pct_gross<-0.25:
-                should=f"GRAPH CUT {pct_gross:.1f}% {age}s"
+                should=f"SL -{SL_GROSS}% GRAPH DROP CUT FAST {get_sector(tr['symbol'])}"
+            elif peak_gross>=0.50 and pct_gross<peak_gross-0.16 and pct_net>=0.20:
+                should=f"GRAPH TRAIL PEAK {peak_gross:.2f}%->{pct_gross:.2f}% DROP -0.16% JUMP"
+            elif age>90 and peak_gross<0.10 and pct_gross<0.15:
+                # NEW: cut if never peaked 0.10% after 90s - avoids OP PEAK 0.00% 162s holding
+                should=f"GRAPH NO PEAK 0.10% {age}s FLAT CUT {pct_gross:.2f}% - NO TICK"
+            elif age>150 and pct_gross<0.25 and peak_gross<0.35:
+                # NEW: cut ZK 189s 0.190% PEAK 0.32% flat - cut at 150s not 202s
+                should=f"GRAPH FLAT {pct_gross:.2f}% PEAK {peak_gross:.2f}% {age}s CUT FAST - AVOID FEE"
+            elif age>320 and pct_net>=0.50:
+                should=f"TIME 320s GRAPH {pct_gross:.2f}% NET +${net_usd:+.2f} $0.50 GOAL"
+            elif age>650 and pct_net>=0.15:
+                should=f"TIME 650s GRAPH {pct_gross:.2f}% NET ${net_usd:+.2f} JUMP"
+            elif age>850:
+                should=f"TIME 850s FORCE GRAPH {pct_gross:.2f}% NET ${net_usd:+.2f}"
             if should:
                 cap+=net_usd
                 daily+=net_usd
@@ -217,9 +217,8 @@ def do_cron():
                 tot+=1
                 closed.insert(0,{"symbol":tr["symbol"],"net":net_usd,"gross":gross_usd,"fee":FEE_USD,"reason":should,"pct_gross":pct_gross,"pct_net":pct_net,"age":age,"sector":get_sector(tr["symbol"])})
                 L["last_coins"][tr["symbol"]]=now_ts+600
-                if pct_net<-0.45:
+                if pct_net<-0.40:
                     L["blacklist"][tr["symbol"]]=now_ts+1800
-                # free up sector
                 used_sectors.discard(get_sector(tr["symbol"]))
             else:
                 final.append(tr)
@@ -234,9 +233,7 @@ def do_cron():
         if sh["symbol"] in open_syms: continue
         if sh["symbol"] in L.get("blacklist",{}): continue
         if sh["symbol"] in L.get("last_coins",{}): continue
-        # DIVERSIFY: skip if sector already used and we still have other sectors available
-        if sh["sector"] in used_sectors and len(sharks)>3:
-            # allow only if no other sector options
+        if sh["sector"] in used_sectors and len(sharks)>4:
             other_options = [s for s in sharks if s["sector"] not in used_sectors and s["symbol"] not in open_syms and s["symbol"] not in L.get("last_coins",{}) and s["symbol"] not in L.get("blacklist",{})]
             if len(other_options)>0:
                 continue
@@ -258,7 +255,7 @@ def do_cron():
     state["total"]=tot
     state["scan"]=scan
     kv_set(STATE_KEY, state)
-    return {"ok":True,"scan":scan,"open":len(final),"cap":cap,"daily":daily,"sharks":len(sharks),"total":tot,"wins":wins,"loss":loss,"top":sharks[0]["symbol"]+" "+sharks[0]["sector"] if sharks else "none","sectors":list(used_sectors),"v":"v787 3COIN SECTOR DIVERSIFIED"}
+    return {"ok":True,"scan":scan,"open":len(final),"cap":cap,"daily":daily,"sharks":len(sharks),"total":tot,"wins":wins,"loss":loss,"top":sharks[0]["symbol"]+" "+sharks[0]["sector"] if sharks else "none","sectors":list(used_sectors),"v":"v788 SMART 3COIN"}
 
 def render(state):
     open_tr=state.get("open",[])
@@ -279,7 +276,7 @@ def render(state):
         used_sectors=set([get_sector(t["symbol"]) for t in open_tr])
         sharks=[]
         for t in tickers:
-            s=shark_sector(t, learn.get("last_coins",{}), used_sectors)
+            s=shark_smart(t, learn.get("last_coins",{}), used_sectors)
             if s and s["symbol"] not in learn.get("blacklist",{}):
                 sharks.append(s)
         sharks=sorted(sharks, key=lambda x: x["score"], reverse=True)[:6]
@@ -288,7 +285,7 @@ def render(state):
         used_sectors=set()
     html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
     html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:12px;margin:0;padding:8px}"
-    html += ".h{background:linear-gradient(90deg,#00ff88,#ffcc00,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:12px;position:sticky;top:0;z-index:10}"
+    html += ".h{background:linear-gradient(90deg,#00ff88,#ffcc00,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;position:sticky;top:0;z-index:10}"
     html += ".g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}"
     html += ".c{background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;border-radius:10px}"
     html += ".b{padding:9px;margin:8px 0;border-radius:7px;font-weight:800;font-size:11px}"
@@ -299,13 +296,13 @@ def render(state):
     html += ".sec{padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900;margin-left:6px}"
     html += ".s-L1_CHAIN{background:#00d4ff;color:#000} .s-DEPIN_WIFI{background:#ffcc00;color:#000} .s-AI{background:#ff00ff;color:#fff} .s-DEFI{background:#00ff88;color:#000} .s-MEME{background:#ff8800;color:#000} .s-RWA_GAMING{background:#8800ff;color:#fff} .s-OTHER_BEST{background:#555;color:#fff}"
     html += "</style></head><body>"
-    html += f"<div class='h'><span class='live'></span> VENUS v787 3-COIN DIVERSIFIED $0.50 NET - SCAN #{scan} - 3 MAX $100 EACH - SECTORS CHAIN WIFI AI DEFI MEME - TP {TP_GROSS}%=${TP_NET:.2f} NET LIVE TICK GRAPH - <span id='clock'>LIVE</span></div>"
+    html += f"<div class='h'><span class='live'></span> VENUS v788 SMART 3-COIN DIVERSIFIED $0.50 NET - SCAN #{scan} - 3 MAX $100 EACH - FIX FLAT ZK OP - TP {TP_GROSS}%=${TP_NET:.2f} NET LIVE TICK GRAPH - <span id='clock'>LIVE</span></div>"
     html += "<div class='g'>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL 3x$100</div><div style='font-size:22px;color:#ffcc00;font-weight:900'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f} UNREAL {unreal:+.2f} | 3 MAX</div></div>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>TODAY NET $0.50x3 GOAL</div><div style='font-size:22px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f} | W:{wins} L:{loss} {winrate}% | $0.50x3=${daily/0.5:.0f} trades</div></div>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>3 SECTORS DIVERSIFIED</div><div style='font-size:11px;color:#0f8;font-weight:900'>{' '.join(list(used_sectors)) if used_sectors else 'NONE'} LIVE {scan}</div><div style='font-size:10px'>Next <span id='countdown'>10s</span> TICK <span id='tickcount'>1s</span> - 3x$100</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL 3x$100</div><div style='font-size:22px;color:#ffcc00;font-weight:900'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f} UNREAL {unreal:+.2f} | 3 MAX SMART</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>TODAY NET $0.50x3 SMART</div><div style='font-size:22px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f} | W:{wins} L:{loss} {winrate}% | FIX FLAT 90s CUT</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>3 SECTORS SMART</div><div style='font-size:11px;color:#0f8;font-weight:900'>{' '.join(list(used_sectors)) if used_sectors else 'NONE'} LIVE {scan}</div><div style='font-size:10px'>Next <span id='countdown'>10s</span> TICK <span id='tickcount'>1s</span> - 11M VOL</div></div>"
     html += "</div>"
-    html += "<div id='sharkbox'><div class='b bd'>Scanning 3 sectors...</div></div>"
+    html += "<div id='sharkbox'><div class='b bd'>Scanning smart 3 sectors...</div></div>"
     html += "<div id='openbox'></div>"
     html += "<div id='closedbox'></div>"
     import json as jsjson
@@ -369,7 +366,7 @@ async function fetchPrices(){{
           const tpY = h - ((TP_GROSS-min)/range)*h;
           ctx.strokeStyle='#ffcc00'; ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke(); ctx.setLineDash([]);
         }}
-        if(pct_gross >= TP_GROSS || pct_gross <= -SL_GROSS || (tr.peak_gross >= 0.55 && pct_gross < tr.peak_gross - 0.14 && pct_net>=0.25)){{
+        if(pct_gross >= TP_GROSS || pct_gross <= -SL_GROSS || (tr.peak_gross >= 0.50 && pct_gross < tr.peak_gross - 0.16)){{
           shouldCron = true;
         }}
       }}
@@ -446,16 +443,16 @@ setInterval(()=>{{
     html += "<div style='display:none'><div id='sharkbox-inner'>"
     if sharks:
         top=sharks[0]
-        html += f"<div class='b bg'>3-SECTOR DIVERSIFIED SHARK FOR $0.50x3 NET - TOP {top['symbol']} {top['sector']} +{top['h1']:.1f}% SCORE {top['score']:.0f} VOL ${top['vol']} ROOM {top['room']:.1f}% - NEED 3 DIFFERENT SECTORS</div>"
+        html += f"<div class='b bg'>SMART 3-SECTOR DIVERSIFIED - TOP {top['symbol']} {top['sector']} +{top['h1']:.1f}% SCORE {top['score']:.0f} VOL ${top['vol']} ROOM {top['room']:.1f}% - NEED 3 DIFF SECTORS - NO FLAT ZK OP</div>"
         for s in sharks[:6]:
-            html += f"<div class='it' style='border-color:#00ff88'><b style='color:#00ff88'>#{sharks.index(s)+1} {s['symbol']} <span class='sec s-{s['sector']}'>{s['sector']}</span> H1 +{s['h1']:.1f}% ROOM {s['room']:.1f}% SCORE {s['score']:.0f}</b><br><span style='color:#0f8'>VOL ${s['vol']} PRICE ${s['price']:.6f} - TP 0.70% = $0.50 NET - SECTOR {s['sector']}</span></div>"
+            html += f"<div class='it' style='border-color:#00ff88'><b style='color:#00ff88'>#{sharks.index(s)+1} {s['symbol']} <span class='sec s-{s['sector']}'>{s['sector']}</span> H1 +{s['h1']:.1f}% ROOM {s['room']:.1f}% SCORE {s['score']:.0f}</b><br><span style='color:#0f8'>VOL ${s['vol']} PRICE ${s['price']:.6f} - TP {TP_GROSS}% = ${TP_NET:.2f} NET - 11M VOL MIN - NO FLAT</span></div>"
     else:
-        html += f"<div class='b by'>3-SECTOR SHARK 0 - NO 2.5-9% - USED {','.join(list(used_sectors))} - WAITING DIFF SECTOR FOR $0.50x3 NET - LIVE TICK</div>"
+        html += f"<div class='b by'>SMART SHARK 0 - NO 3.2%+ WITH 11M VOL - USED {','.join(list(used_sectors))} - WAITING DIFF SECTOR FOR $0.50x3 NET - FIX FLAT 90s CUT - LIVE TICK</div>"
     html += "</div>"
     html += "<div id='openbox-inner'>"
-    html += f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX 3-COIN DIVERSIFIED $100 EACH - NEED {TP_GROSS}% GROSS = {TP_NET:.2f}% NET $0.50x3 = $1.50 NET - SECTORS {','.join(list(used_sectors)) if used_sectors else 'NONE'} - <span class='live'></span> LIVE TICK GRAPH 1s</div>"
+    html += f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX SMART 3-COIN $100 EACH - NEED {TP_GROSS}% GROSS = {TP_NET:.2f}% NET $0.50x3 = $1.56 NET - SECTORS {','.join(list(used_sectors)) if used_sectors else 'NONE'} - FIX FLAT 90s CUT - <span class='live'></span> LIVE TICK GRAPH 1s</div>"
     if not open_tr:
-        html += f"<div class='it' style='text-align:center;color:#666'>NO OPEN - SCAN #{scan} - WAITING 3 COINS $100 EACH DIVERSIFIED: 1x L1_CHAIN (ARB/SUI) + 1x DEPIN_WIFI (RNDR/FIL) + 1x BEST MOVING (AI/DEFI/MEME) - SEC WILL TICK LIVE 1s - GRAPH WILL CLOSE $0.50 EACH</div>"
+        html += f"<div class='it' style='text-align:center;color:#666'>NO OPEN - SCAN #{scan} - SMART WAITING 3 COINS $100 EACH DIVERSIFIED: 1x L1_CHAIN + 1x DEPIN_WIFI/AI + 1x DEFI/MEME - FIX FLAT 90s NO PEAK CUT - 11M VOL MIN - SEC TICK LIVE 1s</div>"
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         pct_gross=tr.get("pct_gross",0)
@@ -465,10 +462,10 @@ setInterval(()=>{{
         ts=tr.get("ts", int(time.time()))
         peak=tr.get("peak_gross",0)
         sector=tr.get("sector", get_sector(tr["symbol"]))
-        html += f"<div class='it' style='border-color:{col}' data-symbol='{tr['symbol']}' data-entry='{entry}' data-ts='{ts}' data-peak='{peak}'><b style='color:{col}'>{tr['symbol']} <span class='sec s-{sector}'>{sector}</span> AGE <span class='age-val'>{tr.get('age',0)}s</span> PEAK <span class='peak-val'>{peak:.2f}% PEAK</span> ROOM {tr.get('room',0):.1f}%</b><br>ENTRY ${entry:.6f} -> NOW <span class='price-now' style='color:#ffcc00'>${tr.get('price',0):.6f}</span> $100 POS<br><span style='font-size:13px;font-weight:900' class='gross-val'>{pct_gross:.3f}% GROSS</span> <span style='font-size:13px;font-weight:900' class='net-val'>{pct_net:.3f}% NET ${net_usd:+.3f} NET REAL $100</span> <span class='live'></span> TICK GRAPH<br><canvas class='spark tick-graph' width='300' height='32'></canvas><br><span style='font-size:10px;color:#888'>SECTOR {sector} | GRAPH CLOSE TP {TP_GROSS}% | TRAIL -0.14% | SL {SL_GROSS}% | AGE 1s TICK | PRICE 1s TICK | $0.50 NET GOAL</span></div>"
+        html += f"<div class='it' style='border-color:{col}' data-symbol='{tr['symbol']}' data-entry='{entry}' data-ts='{ts}' data-peak='{peak}'><b style='color:{col}'>{tr['symbol']} <span class='sec s-{sector}'>{sector}</span> AGE <span class='age-val'>{tr.get('age',0)}s</span> PEAK <span class='peak-val'>{peak:.2f}% PEAK</span> ROOM {tr.get('room',0):.1f}%</b><br>ENTRY ${entry:.6f} -> NOW <span class='price-now' style='color:#ffcc00'>${tr.get('price',0):.6f}</span> $100 POS<br><span style='font-size:13px;font-weight:900' class='gross-val'>{pct_gross:.3f}% GROSS</span> <span style='font-size:13px;font-weight:900' class='net-val'>{pct_net:.3f}% NET ${net_usd:+.3f} NET REAL $100</span> <span class='live'></span> TICK GRAPH<br><canvas class='spark tick-graph' width='300' height='32'></canvas><br><span style='font-size:10px;color:#888'>SECTOR {sector} | FIX FLAT 90s NO PEAK CUT | GRAPH CLOSE TP {TP_GROSS}% | TRAIL -0.16% | SL {SL_GROSS}% | AGE 1s TICK | PRICE 1s TICK | $0.50 NET GOAL</span></div>"
     html += "</div>"
     html += "<div id='closedbox-inner'>"
-    html += f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} {winrate}% - CAP ${cap:.2f} DAILY NET ${daily:+.2f} (GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f}) - 3x$100 DIVERSIFIED $0.50x3 = $1.50 TARGET</div>"
+    html += f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} {winrate}% - CAP ${cap:.2f} DAILY NET ${daily:+.2f} (GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f}) - SMART 3x$100 FIX FLAT 90s $0.50x3 = $1.56 TARGET</div>"
     for cl in closed[:15]:
         net=cl.get("net",0)
         gross=cl.get("gross",0)
