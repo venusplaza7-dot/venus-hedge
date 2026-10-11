@@ -194,8 +194,8 @@ def do_cron():
     pumps=sorted(pumps, key=lambda x: (x.get("is_early",False), x["score"]), reverse=True)[:25]
     for i,p in enumerate(pumps): p["id"]=i+1
 
-    tp_a=0.6
-    sl_a=0.5
+    tp_a=0.8
+    sl_a=0.4
     now_ts=int(time.time())
     open_tr=state.get("open",[])
     closed=state.get("closed",[])
@@ -230,8 +230,8 @@ def do_cron():
             should_close=None
             if pct >= tp_a: should_close=f"TP {tp_a}% QUICK +{pct:.1f}%"
             elif pct <= -sl_a: should_close=f"SL -{sl_a}% QUICK {pct:.1f}%"
-            elif peak>0.5 and pct < peak-0.4: should_close=f"TRAIL peak-{peak-pct:.1f}% {pct:.1f}%"
-            elif age>90 and pct>0.5: should_close=f"TIME QUICK 600s {pct:.1f}%"
+            elif peak>0.7 and pct < peak-0.35: should_close=f"TRAIL peak-{peak-pct:.1f}% {pct:.1f}%"
+            elif age>120 and pct>0.6: should_close=f"TIME QUICK 600s {pct:.1f}%"
             if should_close:
                 net=float(POS_SIZE)*pct/100
                 cap+=net
@@ -298,14 +298,14 @@ def render(state):
     tot=state.get("total",0)
     scan=state.get("scan",0)
     learn=state.get("learn",{})
-    tp_a=0.6
-    sl_a=0.5
+    tp_a=0.8
+    sl_a=0.4
     winrate=int(wins/(tot)*100) if tot>0 else 0
     daily_pct= round(daily/50*100,1) if True else 0
     unreal=sum([t.get("net",0) for t in open_tr])
     bl=learn.get("blacklist",{})
     av=learn.get("avoid_pump",0)
-    learn_txt=f"KEEP TRACK LEARN AI: TP {tp_a}% SL {sl_a}% R:R 5.0 BL:{len(bl)} "
+    learn_txt=f"KEEP TRACK LEARN AI: TP {tp_a}% SL {sl_a}% R:R 2.0 BL:{len(bl)} "
     if bl:
         try: learn_txt+=",".join([f"{k}({int((v-time.time())/60)}m)" for k,v in list(bl.items())[:4]])
         except: learn_txt+=",".join(list(bl.keys())[:4])
@@ -335,13 +335,13 @@ def render(state):
     pumps=sorted(pumps, key=lambda x: x["score"], reverse=True)[:15]
     for i,p in enumerate(pumps): p["id"]=i+1
     html=f"""<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{background:#000;color:#0f8;font-family:monospace;font-size:11px;margin:0;padding:4px}} .foot{{border:1px solid #333;padding:6px;margin:4px 0;background:#0a0a0a}} .bigrow{{display:flex;gap:4px}} .bigbox{{flex:1;border:1px solid #333;padding:6px;text-align:center;background:#111}} .yellowbar{{background:#ffcc00;color:#000;padding:6px;font-weight:bold;margin:4px 0;font-size:10px}}</style></head><body>
-<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v762 QUICK SCALP 0.5% $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - KEEPS TRACK</div>
+<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v763 OPTIMIZED SCALP 0.8% $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - KEEPS TRACK</div>
 <div class="bigrow"><div class="bigbox"><div style="font-size:10px;color:#aaa">CAP $300 REAL</div><div style="font-size:26px;font-weight:bold;color:#ffcc00">${cap:.2f}</div><div style="font-size:10px;color:#aaa">WITH OPEN {cap+unreal:.2f}</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">TODAY / $50</div><div style="font-size:26px;font-weight:bold;color:{'#0f8' if daily>=0 else '#f44'}">${daily:+.2f}</div><div style="font-size:10px;color:#aaa">{daily_pct}% OF $50 TARGET</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">WIN {winrate}%</div><div style="font-size:18px;font-weight:bold;color:#0f8">W:{wins} L:{loss}<br>T:{tot}</div><div style="font-size:10px;color:#aaa">3 MAX PUMP+WHALE LEARN - NO MBL</div></div></div>
 <div style="padding:6px;background:#111;border:1px solid #0ff;margin:4px"><div style="color:#0ff;font-size:10px">{learn_txt}</div></div>
-<div class="yellowbar">PUMP+WHALE HUNTER {len(pumps)} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'% '+pumps[0].get('tier','') if pumps else 'NO PUMPS'} - TODAY $300 REAL HUNT LEARN - QUICK SCALP 0.6% TP - Takes +0.50% Fast - TP 0.6% SL 0.5% R:R 1.2:1</div>"""
+<div class="yellowbar">PUMP+WHALE HUNTER {len(pumps)} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'% '+pumps[0].get('tier','') if pumps else 'NO PUMPS'} - TODAY $300 REAL HUNT LEARN - OPTIMIZED SCALP 0.8% TP 0.4% SL R:R 2:1 - Takes +0.50%+ Fast</div>"""
     for fp in pumps[:10]:
-        html+=f"""<div class="foot" style="border-color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'}"><span style="color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'};font-weight:bold">{fp.get('tier','')} #{fp['id']} {fp['symbol']} H1 +{fp['h1']:.1f}% {fp['type']}</span><br><span style="color:#0f8">VOL ${fp['vol']} PRICE ${fp['price']:.6f} SCORE {fp['score']:.1f}</span><br><span style="color:#ffcc00">POS ${POS_SIZE} TP {tp_a}% | SL {sl_a}% R:R 1.2:1</span></div>"""
-    html+=f"""<div class="yellowbar">OPEN {len(open_tr)}/3 MAX $300 REAL - LEARN AI - TP {tp_a}% | SL {sl_a}% R:R 1.2:1 SCALP 0.5% | POS ${POS_SIZE} - NO MBL</div>"""
+        html+=f"""<div class="foot" style="border-color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'}"><span style="color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'};font-weight:bold">{fp.get('tier','')} #{fp['id']} {fp['symbol']} H1 +{fp['h1']:.1f}% {fp['type']}</span><br><span style="color:#0f8">VOL ${fp['vol']} PRICE ${fp['price']:.6f} SCORE {fp['score']:.1f}</span><br><span style="color:#ffcc00">POS ${POS_SIZE} TP {tp_a}% | SL {sl_a}% R:R 2:1</span></div>"""
+    html+=f"""<div class="yellowbar">OPEN {len(open_tr)}/3 MAX $300 REAL - LEARN AI - TP {tp_a}% | SL {sl_a}% R:R 2:1 OPTIMIZED 0.5%+ | POS ${POS_SIZE} - NO MBL</div>"""
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         html+=f"""<div class="foot" style="border-color:{col}"><span style="color:{'#ffcc00' if tr.get('tier')=='PUMP' else '#0ff'};font-weight:bold">{tr.get('move')} {tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s {tr.get('tier','')}</span><br><span style="color:#0f8">ENTRY ${tr['entry']:.6f} -> NOW ${tr['price']:.6f} PEAK {tr.get('peak',0):.1f}% H1 {tr.get('h1',0):+.1f}%</span><br><span style="color:{col};font-size:18px;font-weight:bold">{tr.get('pct',0):+.2f}% ${tr.get('net',0):+.2f} REAL</span><br><span style="font-size:9px;color:#aaa">TP {tp_a}% | SL {sl_a}% | TRAIL peak-0.4% | QTY {tr.get('qty',0)}</span></div>"""
@@ -352,7 +352,7 @@ def render(state):
     html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING} - NO MBL</div>"""
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v762 QUICK SCALP 0.5% $300 REAL - 3x$100 - TP 2.5% SL 0.5% R:R 1.2:1 - NO MBL - KEEP TRACK SCAN #{scan} - KV:{'OK' if KV_URL else 'MISS'} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#f44">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50 - TP 2.5% SL 0.5%</a></div></body></html>"""
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v763 OPTIMIZED SCALP 0.8% $300 REAL - 3x$100 - TP 2.5% SL 0.4% R:R 2:1 - NO MBL - KEEP TRACK SCAN #{scan} - KV:{'OK' if KV_URL else 'MISS'} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#f44">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50 - TP 2.5% SL 0.4%</a></div></body></html>"""
     return html
 
 @app.route('/', defaults={'path': ''})
