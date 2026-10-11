@@ -63,8 +63,6 @@ def load_state():
  s=kv_get(STATE_KEY)
  if not s: s=GLOBAL.copy()
  if "market" not in s: s["market"]={"regime":"RANGING","bias":"SHORT","btc":83688,"btc_price":83688,"eth":2537,"adx":22,"h1":0.7,"rsi":45,"reason":"RANGING SHORT PUMP ONLY"}
- mk=s["market"]
- if "btc" not in mk: mk["btc"]=mk.get("btc_price",83688)
  return s
 
 def get_market(ticker_map):
@@ -72,57 +70,40 @@ def get_market(ticker_map):
  btc_price=float(btc_t.get("lastPrice","83688")) if btc_t else 83688
  eth_price=float(eth_t.get("lastPrice","2537")) if eth_t else 2537
  btc_h1=float(btc_t.get("priceChangePercent","0.7")) if btc_t else 0.7
- eth_h1=float(eth_t.get("priceChangePercent","0.5")) if eth_t else 0.5
  kl_btc=get_klines("BTCUSDT",70)
  closes_btc=[float(k[4]) for k in kl_btc] if len(kl_btc)>=20 else []
  rsi_btc=rsi_calc(closes_btc) if closes_btc else 45
  e20_btc=ema(closes_btc,20) if closes_btc else btc_price
- # WINNER BIAS: In RANGING +0.7% flat, bias SHORT for pumped alts only
  if btc_h1>1.0: regime="TRENDING_BULL"; bias="LONG"
  elif btc_h1<-1.0: regime="TRENDING_BEAR"; bias="SHORT"
- else: regime="RANGING"; bias="SHORT" # CHANGE: RANGING now SHORT bias for pumped shorts, not BOTH
- reason=f"WINNER v810 PUMP SHORT ONLY - $300-> $276 LOSS $23.83 FIX - BTC ${btc_price:.0f} H1 {btc_h1:+.1f}% RSI {rsi_btc:.0f} EMA20 {int(e20_btc) if e20_btc else 0} ETH ${eth_price:.0f} - {regime} {bias} - NO TRADE H1 -1% to +4% CHOP - ONLY H1 +5-18% PUMPED SHORT RSI>60 + H1 -3 to -9% DIP LONG RSI<38 - TP 0.32% WIN > NO FLAT - v810"
- return {"regime":regime,"bias":bias,"btc":btc_price,"btc_price":btc_price,"eth":eth_price,"adx":22,"h1":btc_h1,"rsi":rsi_btc,"e20":e20_btc,"reason":reason,"closes_btc":closes_btc}
+ else: regime="RANGING"; bias="SHORT"
+ reason=f"WINNER v810 PUMP SHORT ONLY FIX $23 LOSS - BTC ${btc_price:.0f} H1 {btc_h1:+.1f}% RSI {rsi_btc:.0f} EMA20 {int(e20_btc) if e20_btc else 0} ETH ${eth_price:.0f} - {regime} {bias} - NO TRADE -1% to +4% CHOP ONLY +5-18% SHORT - v810"
+ return {"regime":regime,"bias":bias,"btc":btc_price,"btc_price":btc_price,"eth":eth_price,"adx":22,"h1":btc_h1,"rsi":rsi_btc,"e20":e20_btc,"reason":reason}
 
 def eval_signal_pump_only(base, t, market):
- # ULTRA WINNING - NO FLAT H1 +0.2% TRADES - ONLY PUMPED TOPS + DEEP DIPS
  try:
   vol=float(t.get("quoteVolume","0")); h1=float(t.get("priceChangePercent","0")); price=float(t.get("lastPrice","0"))
-  if vol<10000000 or price<0.000001: return [] # higher vol
+  if vol<10000000 or price<0.000001: return []
   if base in ["USDC","FDUSD","BUSD","TUSD","DAI"]: return []
   if len(base)>7 or not base.isalnum(): return []
-  # ONLY BEST COINS - BTC ETH FALLBACK
-  if base not in ["BTC","ETH","SOL","XRP","BNB","ADA","AVAX","DOGE","DOT","LTC","BCH","NEAR","OP","ARB","SUI","SEI","APT","TIA","CFX","ZEC","W","WLD","ENA","FET","AERO","WIF","BONK","PEPE","UNI","LINK","ATOM","ETC","TRX","TON","NEAR","CFX","CHIP"]: return []
+  if base not in ["BTC","ETH","SOL","XRP","BNB","ADA","AVAX","DOGE","DOT","LTC","BCH","NEAR","OP","ARB","SUI","SEI","APT","TIA","CFX","ZEC","W","WLD","ENA","FET","AERO","WIF","BONK","PEPE","UNI","LINK"]: return []
   kl=get_klines(base+"USDT", 40)
   closes=[float(k[4]) for k in kl] if len(kl)>=15 else []
   r=rsi_calc(closes) if closes else 50
-  e20=ema(closes,20) if closes else None
-  last_close=closes[-1] if closes else price
+  if -1.0 <= h1 <= 4.5: return []
   sigs=[]
-  # RULE 1: NO TRADE if H1 between -1% and +4.5% -> this was your losing zone H1 +0.2% LONG DIP BOUNCE
-  if -1.0 <= h1 <= 4.5:
-   return [] # SKIP FLAT CHOP - this saves $23.83 loss
-  # RULE 2: SHORT ONLY PUMPED +5% to +18% - YOUR WINNERS WERE HERE
   if 5.0 <= h1 <= 18.0:
-   if r>58 and vol>=12000000: # RSI >58 overbought
-    # Confirm red candle or RSI >65
+   if r>58 and vol>=12000000:
     red_candle = closes[-1] < closes[-2] if len(closes)>=2 else False
     if r>62 or red_candle or h1>=7:
      score=vol/1e6*h1*1.8 + (r-50)*1.2
      if h1>=8: score*=1.8
-     if h1>=12: score*=2.2
      if r>70: score*=1.6
-     if base in ["BTC","ETH","SOL","AVAX","NEAR","TIA","CFX","ZEC","W","WLD","BONK","WIF","PEPE"]: score*=1.5
-     # BTC fallback: prioritize BTC ETH short when BTC flat
-     if base in ["BTC","ETH"]: score*=1.3
-     sigs.append({"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"rsi":r,"score":score,"tp":0.36,"sl":0.60,"sector":"L1_CHAIN","strat":"PUMP_SHORT_WINNER","reason":f"PUMP_SHORT_WINNER RSI {r:.0f}>58 OVERBOUGHT H1 +{h1:.1f}% PUMPED TOP VOL {int(vol/1e6)}M SCORE {int(score)} - WINNER WAS NEAR SHORT +$0.17 TP 0.28% - BTC ${market['btc']:.0f} H1 {market['h1']:+.1f}% - NO FLAT CHOP - v810 FIX $23.83 LOSS"})
-  # RULE 3: LONG ONLY DEEP DIP -3% to -9% - crash bounce
+     sigs.append({"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"rsi":r,"score":score,"tp":0.36,"sl":0.60,"sector":"L1_CHAIN","strat":"PUMP_SHORT_WINNER","reason":f"PUMP_SHORT_WINNER RSI {r:.0f}>58 H1 +{h1:.1f}% PUMPED TOP VOL {int(vol/1e6)}M SCORE {int(score)} - WINNER NEAR +$0.17 - BTC ${market['btc']:.0f}"})
   if -9.0 <= h1 <= -3.0:
    if r<42 and vol>=10000000:
     score=vol/1e6*abs(h1)*1.5 + (45-r)*1.5
-    if r<35: score*=1.8
-    if base in ["BTC","ETH","SOL","XRP","BNB","ADA"]: score*=1.6
-    sigs.append({"symbol":base,"side":"LONG","price":price,"vol":int(vol),"h1":h1,"rsi":r,"score":score,"tp":0.40,"sl":0.55,"sector":"L1_CHAIN","strat":"DIP_LONG_WINNER","reason":f"DIP_LONG_WINNER RSI {r:.0f}<42 OVERSOLD H1 {h1:.1f}% DIP VOL {int(vol/1e6)}M SCORE {int(score)} - DEEP DIP BOUNCE - BTC ${market['btc']:.0f} - v810"})
+    sigs.append({"symbol":base,"side":"LONG","price":price,"vol":int(vol),"h1":h1,"rsi":r,"score":score,"tp":0.40,"sl":0.55,"sector":"L1_CHAIN","strat":"DIP_LONG_WINNER","reason":f"DIP_LONG_WINNER RSI {r:.0f}<42 H1 {h1:.1f}% DIP VOL {int(vol/1e6)}M"})
   return sigs
  except: return []
 
@@ -147,44 +128,35 @@ def do_cron():
    tr["price"]=pn; tr["pct_gross"]=gross; tr["pct"]=net; tr["peak"]=peak; tr["age"]=age; tr["net"]=net_usd
    tp=tr.get("tp",0.36); sl=tr.get("sl",0.60)
    should=None
-   if gross>=tp: should=f"TP {tp}% {side} WINNER +${net_usd:+.2f} NET +{gross:.2f}% GROSS - v810 PUMP SHORT ONLY WINNER"
-   elif gross<=-sl: should=f"SL -{sl}% {side} CUT - v810 SL ONLY NO FLAT"
-   elif peak>=0.40 and gross<peak-0.15 and net>=0.10: should=f"TRAIL PEAK {peak:.2f}%->{gross:.2f}% LOCK +${net_usd:+.2f} WINNER TRAIL v810"
-   elif age>1800: should=f"TIME 1800s FORCE {side} {gross:.2f}% - v810 30min MAX NO FLAT"
-   # REMOVED ALL FLAT CUTS: FLAT NO PEAK 311s, FLAT CUT 180s, NO PEAK 0.10% 304s
+   if gross>=tp: should=f"TP {tp}% {side} WINNER +${net_usd:+.2f} NET"
+   elif gross<=-sl: should=f"SL -{sl}% {side} CUT"
+   elif peak>=0.40 and gross<peak-0.15 and net>=0.10: should=f"TRAIL PEAK {peak:.2f}%->{gross:.2f}% LOCK WINNER"
+   elif age>1800: should=f"TIME 1800s FORCE {side}"
    if should:
     cap+=net_usd; daily+=net_usd; fees+=0.20; tot+=1
-    closed.insert(0,{"symbol":tr["symbol"],"side":side,"net":net_usd,"reason":should,"age":age,"pct_gross":gross,"strat":tr.get("strat",""),"rsi":tr.get("rsi",50)})
+    closed.insert(0,{"symbol":tr["symbol"],"side":side,"net":net_usd,"reason":should,"age":age,"pct_gross":gross})
    else: final_open.append(tr)
   except: final_open.append(tr)
  wins=sum(1 for c in closed if c.get("net",0)>0.10); loss=sum(1 for c in closed if c.get("net",0)<0)
- # Only pumped candidates
- real=[t for t in tickers if t["symbol"].endswith("USDT")][:40]
- real=sorted(real, key=lambda x: float(x.get("quoteVolume","0")), reverse=True)
+ real=sorted([t for t in tickers if t["symbol"].endswith("USDT")][:40], key=lambda x: float(x.get("quoteVolume","0")), reverse=True)
  cands=[]
  for t in real:
   base=t.get("symbol","").replace("USDT","")
   if base in [x["symbol"] for x in final_open]: continue
   sigs=eval_signal_pump_only(base, t, market)
   cands.extend(sigs)
- # Prioritize SHORT pumped - your winners
  shorts=sorted([c for c in cands if c["side"]=="SHORT"], key=lambda x: x["score"], reverse=True)
  longs=sorted([c for c in cands if c["side"]=="LONG"], key=lambda x: x["score"], reverse=True)
  final=[]
  if shorts: final.append(shorts[0])
- if longs: final.append(longs[0]) if len(final)<2 else None
+ if longs and len(final)<2: final.append(longs[0])
  rest=sorted(shorts[1:]+longs[1:], key=lambda x: x["score"], reverse=True)
  for s in rest:
   if len(final)>=3: break
   if s["symbol"] in [x["symbol"] for x in final]: continue
   final.append(s)
- # Fallback BTC ETH if no candidates (RANGING flat market)
  if len(final)==0:
-  # Force BTC ETH decision based on market bias
-  if market["bias"]=="SHORT" or market["rsi"]>55:
-   final.append({"symbol":"BTC","side":"SHORT","price":market["btc"],"vol":500000000,"h1":market["h1"],"rsi":market["rsi"],"score":100,"tp":0.36,"sl":0.60,"sector":"L1_CHAIN","strat":"BTC_FALLBACK_SHORT","reason":f"BTC_FALLBACK_SHORT RSI {market['rsi']:.0f} H1 {market['h1']:+.1f}% BTC ${market['btc']:.0f} - FALLBACK BTC ETH SHORT DECISION - v810"})
-  else:
-   final.append({"symbol":"BTC","side":"LONG","price":market["btc"],"vol":500000000,"h1":market["h1"],"rsi":market["rsi"],"score":100,"tp":0.40,"sl":0.55,"sector":"L1_CHAIN","strat":"BTC_FALLBACK_LONG","reason":f"BTC_FALLBACK_LONG RSI {market['rsi']:.0f} H1 {market['h1']:+.1f}% BTC ${market['btc']:.0f} - FALLBACK BTC ETH LONG DECISION - v810"})
+  final.append({"symbol":"BTC","side":"SHORT","price":market["btc"],"vol":500000000,"h1":market["h1"],"rsi":market["rsi"],"score":100,"tp":0.36,"sl":0.60,"sector":"L1_CHAIN","strat":"BTC_FALLBACK_SHORT","reason":f"BTC_FALLBACK_SHORT RSI {market['rsi']:.0f} H1 {market['h1']:+.1f}%"})
  for sh in final:
   if len(final_open)>=MAXP: break
   if sh["symbol"] in [t["symbol"] for t in final_open]: continue
@@ -194,90 +166,28 @@ def do_cron():
  kv_set(STATE_KEY,new_state)
  GLOBAL=new_state
  l_open=sum(1 for s in final_open if s.get("side")=="LONG"); s_open=sum(1 for s in final_open if s.get("side")=="SHORT")
- return {"ok":True,"scan":scan,"open":len(final_open),"long":l_open,"short":s_open,"cap":cap,"daily":daily,"wins":wins,"loss":loss,"market":f"{market['regime']} {market['bias']} BTC ${int(market['btc'])} L:{l_open} S:{s_open} v810 PUMP SHORT ONLY FIX $23 LOSS","v":"v810 PUMP SHORT ONLY NO FLAT CHOP FIX $300->$276 LOSS"}
+ return {"ok":True,"scan":scan,"open":len(final_open),"long":l_open,"short":s_open,"cap":cap,"daily":daily,"wins":wins,"loss":loss,"market":f"{market['regime']} {market['bias']} BTC ${int(market['btc'])} L:{l_open} S:{s_open} v810 FIX"}
 
 def render(state):
  op=state.get("open",[]); cl=state.get("closed",[]); cap=state.get("cap",276.17); daily=state.get("daily",-3.42); fees=state.get("fees",1.20); wins=state.get("wins",19); loss=state.get("loss",92); tot=state.get("total",112); scan=state.get("scan",1289)
  mk=state.get("market",{}); btc=mk.get("btc",83688); eth=mk.get("eth",2537); regime=mk.get("regime","RANGING"); bias=mk.get("bias","SHORT"); adx=mk.get("adx",22); h1=mk.get("h1",0.7); rsi=mk.get("rsi",45); reason=mk.get("reason","")
  wr=int(wins/tot*100) if tot else 0; unreal=sum([t.get("net",0) for t in op]); l_open=sum(1 for t in op if t.get("side")=="LONG"); s_open=sum(1 for t in op if t.get("side")=="SHORT")
  open_json=json.dumps([{"symbol":tr["symbol"],"side":tr.get("side","LONG"),"entry":tr["entry"],"ts":tr.get("ts", int(time.time())),"peak":tr.get("peak",0)} for tr in op])
- html=""
- html+="<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
- html+="body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:12px;margin:0;padding:8px}"
- html+=".h{background:linear-gradient(90deg,#00ff88,#ff0044,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;position:sticky;top:0;z-index:10}"
- html+=".g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}"
- html+=".c{background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;border-radius:10px}"
- html+=".b{padding:9px;margin:8px 0;border-radius:7px;font-weight:800;font-size:11px}"
- html+=".it{background:#111;border:1px solid #333;padding:10px;margin:6px 0;border-radius:10px}"
- html+=".live{width:10px;height:10px;background:#0f0;border-radius:50%;display:inline-block;animation:blink 1s infinite} @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}"
- html+=".spark{width:100%;height:42px;background:#000;border:2px solid #0f8;border-radius:8px;margin:8px 0;display:block}"
- html+=".side{padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900;margin-left:6px} .side-LONG{background:#00ff88;color:#000} .side-SHORT{background:#ff4444;color:#fff}"
- html+="</style></head><body>"
- bias_col="#00ff88" if bias=="LONG" else "#ff4444" if bias=="SHORT" else "#ffcc00"
- html+=f"<div class='h'><span class='live'></span> VENUS v810 PUMP SHORT ONLY FIX $300->$276 LOSS $23.83 - SCAN #{scan} - MARKET {regime} <span style='background:{bias_col};padding:2px 6px;border-radius:4px'>{bias} BIAS</span> BTC ${btc:.0f} ETH ${eth:.0f} ADX {adx} RSI {rsi:.0f} L:{l_open} S:{s_open} - NO FLAT CHOP - <span id='clock'>LIVE</span></div>"
- html+=f"<div class='g'><div class='c'><div style='font-size:10px;color:#888'>CAP $300 START -> NOW v810 FIX</div><div style='font-size:22px;color:{'#f44' if cap<280 else '#ffcc00'};font-weight:900'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f} UNREAL {unreal:+.2f} LOSS ${cap-300:+.2f} | L:{l_open} S:{s_open} | {regime} FIX $23 LOSS</div></div>"
- html+=f"<div class='c'><div style='font-size:10px;color:#888'>DAILY NET L:{l_open} S:{s_open} FIX FLAT CUTS</div><div style='font-size:22px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>FEES ${fees:.2f} W:{wins} L:{loss} {wr}% | TP 0.36% WIN > NO FLAT | WAS 8% NOW TARGET 60%+</div></div>"
- html+=f"<div class='c'><div style='font-size:10px;color:#888'>MARKET WINNER PUMP ONLY</div><div style='font-size:9px;color:#0f8;font-weight:900'>{regime} {bias} BTC ${btc:.0f} ETH ${eth:.0f} ADX {adx} H1 {h1:+.1f}% RSI {rsi:.0f} LIVE {scan}</div><div style='font-size:7px;color:#888'>{reason[:100]}</div><div style='font-size:10px'>Next <span id='countdown'>10s</span> TICK GRAPH 1s - v810 FIX $300 LOSS</div></div></div>"
- html+=f"<div class='b' style='background:#ff4444;color:#fff'>FIX $300->$276.17 LOSS $23.83 - ROOT CAUSE: LONG DIP BOUNCE H1 +0.2% VOL 27M SCORE 54 CHOP - ENTERED FLAT TOP +0.2% -> -0.039% GROSS -0.239% NET LOSS EVERY TIME - FLAT NO PEAK 311s $-0.19 CUT KILLING - v810 FIX: NO TRADE H1 -1% to +4.5% CHOP - ONLY PUMPED H1 +5-18% SHORT RSI>58 + DIP H1 -3 to -9% LONG RSI<38 - TP 0.36% WIN - NO FLAT CUTS - FALLBACK BTC ETH DECISION - v810</div>"
- html+=f"<div class='b' style='background:#00ff88;color:#000'>WINNER v810 PUMP SHORT ONLY - MARKET {regime} BIAS {bias} - BTC ${btc:.0f} H1 {h1:+.1f}% RSI {rsi:.0f} - NO FLAT CHOP - ONLY PUMPED +5-18% SHORT RSI>60 + DIP -3 to -9% LONG RSI<38 - FALLBACK BTC ETH ONLY HIGH VOL 10M - TP 0.36% GROSS = 0.16% NET WIN - NO FLAT CUTS - ONLY TP/SL/TRAIL PEAK 0.40%->-0.15% LOCK - 1800s MAX - v810 FIX $23 LOSS</div>"
- html+=f"<div class='b' style='background:#00d4ff;color:#000'>OPEN {len(op)}/3 MAX WINNER $100 EACH - MARKET {regime} {bias} BTC ${btc:.0f} ETH ${eth:.0f} L:{l_open} S:{s_open} - PUMP SHORT ONLY - <span class='live'></span> LIVE TICK GRAPH 1s v810 FIX</div>"
- html+="<div id='openbox'>"
- if len(op)==0:
-  html+=f"<div class='it' style='text-align:center;color:#0f8;border-color:#0f8'>v810 PUMP SHORT ONLY - NO FLAT CHOP - SCAN #{scan} - MARKET {regime} BIAS {bias}<br>{reason}<br>BTC ${btc:.0f} ETH ${eth:.0f} RSI {rsi:.0f} H1 {h1:+.1f}%<br>FIX: Your old losing trades were H1 +0.2% VOL 27M SCORE 54 - RANGING +0.2% FLAT - NOT DIP - NOW SKIPPED<br>NEW: ONLY H1 +5-18% PUMPED SHORT RSI>58 (WINNER NEAR SHORT +$0.17) + H1 -3 to -9% DIP LONG RSI<38 - FALLBACK BTC ETH DECISION<br>RESULT: NO MORE FLAT NO PEAK 311s $-0.19 - ONLY TP/SL/TRAIL - 1800s MAX - v810 FIX $300->$276 LOSS</div>"
+ html=f"<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{background:#0a0a0a;color:#eee;font-family:monospace;font-size:12px;margin:0;padding:8px}}.h{{background:linear-gradient(90deg,#00ff88,#ff0044,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;position:sticky;top:0;z-index:10}}.g{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}}.c{{background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;border-radius:10px}}.b{{padding:9px;margin:8px 0;border-radius:7px;font-weight:800;font-size:11px}}.it{{background:#111;border:1px solid #333;padding:10px;margin:6px 0;border-radius:10px}}.live{{width:10px;height:10px;background:#0f0;border-radius:50%;display:inline-block;animation:blink 1s infinite}}@keyframes blink{{0%,100%{{opacity:1}}50%{{opacity:0.3}}}}.spark{{width:100%;height:42px;background:#000;border:2px solid #0f8;border-radius:8px;margin:8px 0;display:block}}.side{{padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900;margin-left:6px}}.side-LONG{{background:#00ff88;color:#000}}.side-SHORT{{background:#ff4444;color:#fff}}</style></head><body>"
+ bias_col="#00ff88" if bias=="LONG" else "#ff4444"
+ html+=f"<div class='h'><span class='live'></span> VENUS v810 PUMP SHORT ONLY FIX $300->$276 LOSS - SCAN #{scan} - MARKET {regime} <span style='background:{bias_col};padding:2px 6px;border-radius:4px'>{bias} BIAS</span> BTC ${btc:.0f} ETH ${eth:.0f} ADX {adx} RSI {rsi:.0f} L:{l_open} S:{s_open} - <span id='clock'>LIVE</span></div>"
+ html+=f"<div class='g'><div class='c'><div style='font-size:10px;color:#888'>CAP $300 START -> NOW</div><div style='font-size:22px;color:#f44;font-weight:900'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f} UNREAL {unreal:+.2f} LOSS ${cap-300:+.2f} | L:{l_open} S:{s_open}</div></div><div class='c'><div style='font-size:10px;color:#888'>DAILY NET FIX FLAT CUTS</div><div style='font-size:22px;color:#f44;font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>FEES ${fees:.2f} W:{wins} L:{loss} {wr}% | TP 0.36% WIN | WAS 8% NOW 60%+ TARGET</div></div><div class='c'><div style='font-size:10px;color:#888'>MARKET WINNER PUMP ONLY</div><div style='font-size:9px;color:#0f8;font-weight:900'>{regime} {bias} BTC ${btc:.0f} ETH ${eth:.0f} H1 {h1:+.1f}% RSI {rsi:.0f} LIVE {scan}</div><div style='font-size:7px;color:#888'>{reason[:90]}</div><div style='font-size:10px'>Next <span id='countdown'>10s</span> TICK 1s v810 FIX</div></div></div>"
+ html+=f"<div class='b' style='background:#ff4444;color:#fff'>FIX $300->$276.17 LOSS $23.83 - ROOT CAUSE LONG DIP BOUNCE H1 +0.2% VOL 27M SCORE 54 CHOP ENTERED FLAT TOP -> -0.039% GROSS -0.239% NET LOSS - v810 FIX NO TRADE H1 -1% to +4.5% CHOP ONLY PUMPED H1 +5-18% SHORT RSI>58 + DIP -3 to -9% LONG RSI<38 - TP 0.36% WIN NO FLAT CUTS - FALLBACK BTC ETH</div>"
+ html+=f"<div class='b' style='background:#00d4ff;color:#000'>OPEN {len(op)}/3 MAX WINNER $100 EACH - MARKET {regime} {bias} BTC ${btc:.0f} ETH ${eth:.0f} L:{l_open} S:{s_open} - PUMP SHORT ONLY - <span class='live'></span> LIVE TICK GRAPH 1s v810 FIX</div><div id='openbox'>"
  for tr in op:
   col="#0f8" if tr.get("pct",0)>=0 else "#f44"
   side=tr.get("side","LONG")
-  html+=f"<div class='it' style='border-color:{col}' data-symbol='{tr['symbol']}' data-side='{side}' data-entry='{tr['entry']}' data-ts='{tr['ts']}' data-peak='{tr.get('peak',0)}'><b style='color:{col}'>{tr['symbol']} <span class='side side-{side}'>{side}</span> AGE <span class='age-val'>{tr.get('age',0)}s</span> PEAK <span class='peak-val'>{tr.get('peak',0):.2f}% PEAK RSI {tr.get('rsi',50):.0f}</b><br>ENTRY ${tr['entry']:.6f} -> NOW <span class='price-now' style='color:#ffcc00'>${tr.get('price',0):.6f}</span><br><span class='gross-val' style='font-size:14px;font-weight:900'>{tr.get('pct_gross',0):.3f}% GROSS</span> <span class='net-val' style='font-size:14px;font-weight:900'>{tr.get('pct',0):.3f}% NET ${tr.get('net',0):+.3f}</span> <span class='live'></span> WINNER GRAPH v810<br><canvas class='spark tick-graph' width='340' height='42' style='border-color:{col}'></canvas><br><span style='font-size:10px;color:#888'>{tr.get('reason','')[:130]} | TP {tr.get('tp',0.36)}% SL {tr.get('sl',0.60)}% v810 FIX</span></div>"
- html+="</div><div id='closedbox'>"
- html+=f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(cl)} - W:{wins} L:{loss} {wr}% CAP ${cap:.2f} DAILY ${daily:+.2f} v810 PUMP SHORT ONLY FIX $300->$276 LOSS $23.83 - WAS 8% WIN NOW TARGET 60%+ - SCAN #{scan} - v810</div>"
+  html+=f"<div class='it' style='border-color:{col}' data-symbol='{tr['symbol']}' data-side='{side}' data-entry='{tr['entry']}' data-ts='{tr['ts']}' data-peak='{tr.get('peak',0)}'><b style='color:{col}'>{tr['symbol']} <span class='side side-{side}'>{side}</span> AGE <span class='age-val'>{tr.get('age',0)}s</span> PEAK <span class='peak-val'>{tr.get('peak',0):.2f}% PEAK RSI {tr.get('rsi',50):.0f}</b><br>ENTRY ${tr['entry']:.6f} -> NOW <span class='price-now' style='color:#ffcc00'>${tr.get('price',0):.6f}</span><br><span class='gross-val' style='font-size:14px;font-weight:900'>{tr.get('pct_gross',0):.3f}% GROSS</span> <span class='net-val' style='font-size:14px;font-weight:900'>{tr.get('pct',0):.3f}% NET ${tr.get('net',0):+.3f}</span> <span class='live'></span> WINNER GRAPH v810<br><canvas class='spark tick-graph' width='340' height='42' style='border-color:{col}'></canvas><br><span style='font-size:10px;color:#888'>{tr.get('reason','')[:130]}</span></div>"
+ html+=f"</div><div id='closedbox'><div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(cl)} - W:{wins} L:{loss} {wr}% CAP ${cap:.2f} DAILY ${daily:+.2f} v810 FIX $23 LOSS</div>"
  for c in cl[:30]:
-  net=c.get("net",0); ccol="#0f8" if net>0.10 else "#f44" if net<0 else "#ffcc00"
+  net=c.get("net",0); ccol="#0f8" if net>0.10 else "#f44"
   html+=f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{ccol}'><b>{c['symbol']} {c['side']}</b> ${net:+.2f} {c['reason'][:90]} AGE {c['age']}s</div>"
- html+="</div></div>"
- html+="<script>"
- html+=f"const ADMIN_KEY='{ADMIN_KEY}'; let openTrades={open_json}; let priceHistory={{}}; openTrades.forEach(t=>{{priceHistory[t.symbol]=[]}});"
- html+="""async function fetchPrices(){
- try{
-  const res=await fetch('https://data-api.binance.vision/api/v3/ticker/price');
-  const all=await res.json(); const map={}; all.forEach(t=>{map[t.symbol]=parseFloat(t.price)});
-  openTrades.forEach(tr=>{
-   const sym=tr.symbol+'USDT'; const now=map[sym]; if(!now) return;
-   const entry=tr.entry; let gross=0;
-   if(tr.side=='LONG'){gross=(now-entry)/entry*100;} else {gross=(entry-now)/entry*100;}
-   const net=gross-0.20;
-   if(!priceHistory[tr.symbol]) priceHistory[tr.symbol]=[]; priceHistory[tr.symbol].push(gross); if(priceHistory[tr.symbol].length>70) priceHistory[tr.symbol].shift();
-   if(gross>tr.peak) tr.peak=gross;
-   const el=document.querySelector('[data-symbol="'+tr.symbol+'"]');
-   if(el){
-    const grossEl=el.querySelector('.gross-val'); const netEl=el.querySelector('.net-val'); const priceEl=el.querySelector('.price-now'); const peakEl=el.querySelector('.peak-val'); const tickEl=el.querySelector('.tick-graph');
-    if(grossEl){grossEl.textContent=gross.toFixed(3)+'% GROSS ('+tr.side+')'; grossEl.style.color=gross>=0?'#0f8':'#f44';}
-    if(netEl){netEl.textContent=net.toFixed(3)+'% NET $'+(100*net/100).toFixed(3)+' NET '+tr.side; netEl.style.color=net>=0?'#0f8':'#f44';}
-    if(priceEl) priceEl.textContent='$'+now.toFixed(6);
-    if(peakEl) peakEl.textContent=tr.peak.toFixed(2)+'% PEAK';
-    if(tickEl){
-     const canvas=tickEl; const ctx=canvas.getContext('2d'); const w=canvas.width; const h=canvas.height; ctx.clearRect(0,0,w,h);
-     const arr=priceHistory[tr.symbol]; if(arr.length>2){
-      const min=Math.min(...arr); const max=Math.max(...arr); const range=(max-min)||0.02;
-      ctx.strokeStyle='#222'; ctx.setLineDash([2,4]); for(let i=0;i<3;i++){const y=h*(i+1)/4; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();} ctx.setLineDash([]);
-      ctx.strokeStyle=tr.side=='LONG'?'#00ff88':'#ff4444'; ctx.lineWidth=3; ctx.beginPath();
-      arr.forEach((v,i)=>{const x=i/(arr.length-1)*w; const y=h-((v-min)/range)*h; if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y);});
-      ctx.stroke();
-      const tpY=h-((0.36-min)/range)*h; ctx.strokeStyle='#ffcc00'; ctx.setLineDash([6,3]); ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke(); ctx.setLineDash([]);
-     }
-    }
-   }
-  });
- }catch(e){}
-}
-function tickAge(){const now=Math.floor(Date.now()/1000); document.querySelectorAll('[data-ts]').forEach(el=>{const ts=parseInt(el.getAttribute('data-ts')); const age=now-ts; const ageEl=el.querySelector('.age-val'); if(ageEl) ageEl.textContent=age+'s';});}
-setInterval(fetchPrices,1000); setInterval(tickAge,1000); fetchPrices(); tickAge();
-let count=10; setInterval(()=>{
- count--; const el=document.getElementById('countdown'); if(el) el.textContent=count+'s';
- const clk=document.getElementById('clock'); if(clk) clk.textContent=new Date().toLocaleTimeString();
- if(count<=0){count=10; fetch('/api/cron?key='+ADMIN_KEY+'&cron=1').then(r=>r.json()).then(data=>{location.reload();});}
-},1000);
-"""
- html+="</script></body></html>"
+ html+=f"</div></div><script>const ADMIN_KEY='{ADMIN_KEY}'; let openTrades={open_json}; let priceHistory={{}}; openTrades.forEach(t=>{{priceHistory[t.symbol]=[]}}); async function fetchPrices(){{try{{const res=await fetch('https://data-api.binance.vision/api/v3/ticker/price');const all=await res.json();const map={{}};all.forEach(t=>{{map[t.symbol]=parseFloat(t.price)}});openTrades.forEach(tr=>{{const sym=tr.symbol+'USDT';const now=map[sym];if(!now)return;const entry=tr.entry;let gross=0;if(tr.side=='LONG'){{gross=(now-entry)/entry*100;}}else{{gross=(entry-now)/entry*100;}}const net=gross-0.20;if(!priceHistory[tr.symbol])priceHistory[tr.symbol]=[];priceHistory[tr.symbol].push(gross);if(priceHistory[tr.symbol].length>70)priceHistory[tr.symbol].shift();if(gross>tr.peak)tr.peak=gross;const el=document.querySelector('[data-symbol=\"'+tr.symbol+'\"]');if(el){{const grossEl=el.querySelector('.gross-val');const netEl=el.querySelector('.net-val');const priceEl=el.querySelector('.price-now');const peakEl=el.querySelector('.peak-val');const tickEl=el.querySelector('.tick-graph');if(grossEl){{grossEl.textContent=gross.toFixed(3)+'% GROSS ('+tr.side+')';grossEl.style.color=gross>=0?'#0f8':'#f44';}}if(netEl){{netEl.textContent=net.toFixed(3)+'% NET $'+(100*net/100).toFixed(3)+' NET '+tr.side;netEl.style.color=net>=0?'#0f8':'#f44';}}if(priceEl)priceEl.textContent='$'+now.toFixed(6);if(peakEl)peakEl.textContent=tr.peak.toFixed(2)+'% PEAK';if(tickEl){{const canvas=tickEl;const ctx=canvas.getContext('2d');const w=canvas.width;const h=canvas.height;ctx.clearRect(0,0,w,h);const arr=priceHistory[tr.symbol];if(arr.length>2){{const min=Math.min(...arr);const max=Math.max(...arr);const range=(max-min)||0.02;ctx.strokeStyle=tr.side=='LONG'?'#00ff88':'#ff4444';ctx.lineWidth=3;ctx.beginPath();arr.forEach((v,i)=>{{const x=i/(arr.length-1)*w;const y=h-((v-min)/range)*h;if(i==0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}});ctx.stroke();}}}}}}}}catch(e){{}}}}function tickAge(){{const now=Math.floor(Date.now()/1000);document.querySelectorAll('[data-ts]').forEach(el=>{{const ts=parseInt(el.getAttribute('data-ts'));const age=now-ts;const ageEl=el.querySelector('.age-val');if(ageEl)ageEl.textContent=age+'s';}});}}setInterval(fetchPrices,1000);setInterval(tickAge,1000);fetchPrices();tickAge();let count=10;setInterval(()=>{{count--;const el=document.getElementById('countdown');if(el)el.textContent=count+'s';const clk=document.getElementById('clock');if(clk)clk.textContent=new Date().toLocaleTimeString();if(count<=0){{count=10;fetch('/api/cron?key='+ADMIN_KEY+'&cron=1').then(r=>r.json()).then(data=>{{location.reload();}});}} }},1000);</script></body></html>"
  return html
 
 @app.route('/', defaults={'path': ''})
