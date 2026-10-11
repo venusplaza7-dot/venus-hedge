@@ -90,7 +90,7 @@ def load_state():
     L["last_coins"]={k:v for k,v in L["last_coins"].items() if v>now}
     return s
 
-def shark_v786(t, last_coins):
+def shark_live(t, last_coins):
     try:
         sym=t.get("symbol","")
         if not sym.endswith("USDT"): return None
@@ -129,7 +129,7 @@ def do_cron():
     tickers=get_tickers()
     sharks=[]
     for t in tickers:
-        s=shark_v786(t, L.get("last_coins",{}))
+        s=shark_live(t, L.get("last_coins",{}))
         if s and s["symbol"] not in L.get("blacklist",{}):
             sharks.append(s)
     sharks=sorted(sharks, key=lambda x: x["score"], reverse=True)[:12]
@@ -169,10 +169,10 @@ def do_cron():
             tr["gross"]=gross_usd
             should=None
             if pct_gross>=TP_GROSS:
-                should=f"TP {TP_GROSS}% GROSS {pct_gross:.2f}% NET +${net_usd:+.2f} GRAPH HIT JUMP"
+                should=f"TP {TP_GROSS}% GROSS GRAPH HIT +${net_usd:+.2f} NET $0.50 GOAL JUMP"
             elif pct_gross<=-SL_GROSS:
-                should=f"SL -{SL_GROSS}% GROSS {pct_gross:.1f}% GRAPH DROP CUT"
-            elif peak_gross>=0.55 and pct_gross<peak_gross-0.14 and pct_net>=0.30:
+                should=f"SL -{SL_GROSS}% GRAPH DROP CUT"
+            elif peak_gross>=0.55 and pct_gross<peak_gross-0.14 and pct_net>=0.25:
                 should=f"GRAPH TRAIL PEAK {peak_gross:.2f}%->{pct_gross:.2f}% DROP -0.14% NET +{pct_net:.2f}% JUMP"
             elif age>400 and pct_net>=0.50:
                 should=f"TIME 400s GRAPH {pct_gross:.2f}% NET +${net_usd:+.2f} $0.50 GOAL"
@@ -223,7 +223,7 @@ def do_cron():
     state["total"]=tot
     state["scan"]=scan
     kv_set(STATE_KEY, state)
-    return {"ok":True,"scan":scan,"open":len(final),"cap":cap,"daily":daily,"sharks":len(sharks),"total":tot,"wins":wins,"loss":loss,"top":sharks[0]["symbol"] if sharks else "none","v":"v786 LIVE TICK GRAPH"}
+    return {"ok":True,"scan":scan,"open":len(final),"cap":cap,"daily":daily,"sharks":len(sharks),"total":tot,"wins":wins,"loss":loss,"top":sharks[0]["symbol"] if sharks else "none","v":"v786 LIVE TICK GRAPH FIXED"}
 
 def render(state):
     open_tr=state.get("open",[])
@@ -243,7 +243,7 @@ def render(state):
         tickers=get_tickers()
         sharks=[]
         for t in tickers:
-            s=shark_v786(t, learn.get("last_coins",{}))
+            s=shark_live(t, learn.get("last_coins",{}))
             if s and s["symbol"] not in learn.get("blacklist",{}):
                 sharks.append(s)
         sharks=sorted(sharks, key=lambda x: x["score"], reverse=True)[:5]
@@ -260,20 +260,17 @@ def render(state):
     html += ".live{width:10px;height:10px;background:#0f0;border-radius:50%;display:inline-block;animation:blink 1s infinite} @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}"
     html += ".spark{width:100%;height:36px;background:#0a0a0a;border:1px solid #222;border-radius:6px;margin:6px 0}"
     html += "</style></head><body>"
-    html += f"<div class='h'><span class='live'></span> VENUS v786 LIVE TICK GRAPH - SCAN #{scan} - {MAXP} MAX - TP {TP_GROSS}% GROSS = ${TP_NET:.2f} NET - GRAPH TRACKS TICK - NO REFRESH - <span id='clock'>LIVE</span></div>"
+    html += f"<div class='h'><span class='live'></span> VENUS v786 LIVE TICK GRAPH FIXED - SCAN #{scan} - {MAXP} MAX - TP {TP_GROSS}% GROSS = ${TP_NET:.2f} NET - GRAPH TRACKS TICK 1s - <span id='clock'>LIVE</span></div>"
     html += "<div class='g'>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL NET</div><div style='font-size:24px;color:#ffcc00;font-weight:900' id='cap'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN <span id='withopen'>{cap+unreal:.2f}</span> UNREAL <span id='unreal'>{unreal:+.2f}</span></div></div>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>TODAY NET $0.50 GOAL GRAPH</div><div style='font-size:24px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900' id='daily'>${daily:+.2f} NET</div><div style='font-size:10px'>GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f} | W:{wins} L:{loss} {winrate}%</div></div>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>LIVE TICK 1s</div><div style='font-size:14px;color:#0f8;font-weight:900'>LIVE <span id='scan'>{scan}</span> TICK</div><div style='font-size:10px'>Next CRON <span id='countdown'>10s</span> - TICK <span id='tickcount'>1s</span> - GRAPH CLOSE</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL NET</div><div style='font-size:24px;color:#ffcc00;font-weight:900'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f} UNREAL {unreal:+.2f}</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>TODAY NET $0.50 GOAL GRAPH</div><div style='font-size:24px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f} | W:{wins} L:{loss} {winrate}%</div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>LIVE TICK 1s GRAPH</div><div style='font-size:14px;color:#0f8;font-weight:900'>LIVE {scan} TICK</div><div style='font-size:10px'>Next CRON <span id='countdown'>10s</span> - TICK <span id='tickcount'>1s</span></div></div>"
     html += "</div>"
     html += "<div id='sharkbox'><div class='b bd'>Scanning live tick graph...</div></div>"
     html += "<div id='openbox'></div>"
     html += "<div id='closedbox'></div>"
-    html += f"<div style='text-align:center;padding:12px'><a href='/api/cron?key={ADMIN_KEY}&cron=1' style='background:#00ff88;color:#000;padding:12px 20px;text-decoration:none;font-weight:900;border-radius:8px'>CRON v786 LIVE TICK GRAPH</a></div>"
-    # Build JSON for open trades for JS
     import json as jsjson
     open_json = jsjson.dumps([{"symbol":tr["symbol"],"entry":tr["entry"],"ts":tr.get("ts", int(time.time())),"peak_gross":tr.get("peak_gross",0)} for tr in open_tr])
-
     html += f"""
 <script>
 const ADMIN_KEY="{ADMIN_KEY}";
@@ -283,8 +280,7 @@ const FEE_PCT={FEE_PCT};
 let openTrades = {open_json};
 let priceHistory = {{}};
 openTrades.forEach(t=>{{priceHistory[t.symbol]=[]}});
-
-async function fetchPrices(){
+async function fetchPrices(){{
   try{{
     const res = await fetch('https://data-api.binance.vision/api/v3/ticker/price');
     const all = await res.json();
@@ -299,14 +295,10 @@ async function fetchPrices(){
       const pct_gross = (now-entry)/entry*100;
       const pct_net = pct_gross - FEE_PCT;
       const net_usd = 100*pct_net/100;
-      const gross_usd = 100*pct_gross/100;
-      // update history for graph
       if(!priceHistory[tr.symbol]) priceHistory[tr.symbol]=[];
       priceHistory[tr.symbol].push(pct_gross);
       if(priceHistory[tr.symbol].length>60) priceHistory[tr.symbol].shift();
-      // update peak
       if(pct_gross > tr.peak_gross) tr.peak_gross = pct_gross;
-      // find DOM elements
       const el = document.querySelector(`[data-symbol="${{tr.symbol}}"]`);
       if(el){{
         const grossEl = el.querySelector('.gross-val');
@@ -318,7 +310,6 @@ async function fetchPrices(){
         if(netEl){{ netEl.textContent = pct_net.toFixed(3)+'% NET $'+net_usd.toFixed(3)+' NET'; netEl.style.color = pct_net>=0?'#0f8':'#f44'; }}
         if(priceEl) priceEl.textContent = '$'+now.toFixed(6);
         if(peakEl) peakEl.textContent = tr.peak_gross.toFixed(2)+'% PEAK';
-        // draw sparkline
         if(tickEl && priceHistory[tr.symbol].length>2){{
           const canvas = tickEl;
           const ctx = canvas.getContext('2d');
@@ -336,35 +327,21 @@ async function fetchPrices(){
             if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
           }});
           ctx.stroke();
-          // TP line
           const tpY = h - ((TP_GROSS-min)/range)*h;
           ctx.strokeStyle='#ffcc00'; ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke(); ctx.setLineDash([]);
         }}
-        // GRAPH CLOSE logic - not seconds!
-        if(pct_gross >= TP_GROSS){{
-          console.log('GRAPH TP HIT', tr.symbol, pct_gross);
-          shouldCron = true;
-        }} else if(pct_gross <= -SL_GROSS){{
-          console.log('GRAPH SL HIT', tr.symbol);
-          shouldCron = true;
-        }} else if(tr.peak_gross >= 0.55 && pct_gross < tr.peak_gross - 0.14 && pct_net>=0.25){{
-          console.log('GRAPH TRAIL DROP', tr.symbol, tr.peak_gross, '->', pct_gross);
+        if(pct_gross >= TP_GROSS || pct_gross <= -SL_GROSS || (tr.peak_gross >= 0.55 && pct_gross < tr.peak_gross - 0.14 && pct_net>=0.25)){{
           shouldCron = true;
         }}
       }}
     }});
     if(shouldCron){{
-      // auto call cron to close from graph - no waiting for 10s timer
       fetch('/api/cron?key='+ADMIN_KEY+'&cron=1').then(()=>{{
-        // reload open trades from server after close
         fetch('/?key='+ADMIN_KEY).then(r=>r.text()).then(html=>{{
           const parser=new DOMParser(); const doc=parser.parseFromString(html,'text/html');
-          const openEl=doc.getElementById('openbox-inner'); const closedEl=doc.getElementById('closedbox-inner'); const sharkEl=doc.getElementById('sharkbox-inner');
-          const capEl=doc.getElementById('cap-val');
+          const openEl=doc.getElementById('openbox-inner'); const closedEl=doc.getElementById('closedbox-inner');
           if(openEl) document.getElementById('openbox').innerHTML = openEl.innerHTML;
           if(closedEl) document.getElementById('closedbox').innerHTML = closedEl.innerHTML;
-          if(sharkEl) document.getElementById('sharkbox').innerHTML = sharkEl.innerHTML;
-          // rebuild openTrades list
           const newOpen = [];
           doc.querySelectorAll('[data-symbol]').forEach(div=>{{
             const sym = div.getAttribute('data-symbol');
@@ -374,15 +351,13 @@ async function fetchPrices(){
             newOpen.push({{symbol:sym, entry:entry, ts:ts, peak_gross:peak}});
           }});
           openTrades = newOpen;
-          // reset history for closed ones
           Object.keys(priceHistory).forEach(k=>{{ if(!newOpen.find(t=>t.symbol==k)) delete priceHistory[k]; }});
           newOpen.forEach(t=>{{ if(!priceHistory[t.symbol]) priceHistory[t.symbol]=[]; }});
         }});
       }});
     }}
-  }}catch(e){{ console.log('tick error', e); }}
+  }}catch(e){{}}
 }}
-
 function tickAge(){{
   const now = Math.floor(Date.now()/1000);
   document.querySelectorAll('[data-ts]').forEach(el=>{{
@@ -392,12 +367,10 @@ function tickAge(){{
     if(ageEl) ageEl.textContent = age+'s';
   }});
 }}
-
 setInterval(fetchPrices, 1000);
 setInterval(tickAge, 1000);
 fetchPrices();
 tickAge();
-
 let count=10;
 setInterval(()=>{{
   count--;
@@ -405,18 +378,9 @@ setInterval(()=>{{
   if(el) el.textContent = count+'s';
   const clk=document.getElementById('clock');
   if(clk) clk.textContent = new Date().toLocaleTimeString();
-  const tickEl=document.getElementById('tickcount');
-  if(tickEl) tickEl.textContent = 'LIVE 1s TICK GRAPH';
   if(count<=0){{ 
     count=10; 
     fetch('/api/cron?key='+ADMIN_KEY+'&cron=1').then(r=>r.json()).then(data=>{{
-      const capEl=document.getElementById('cap');
-      if(capEl && data.cap) capEl.textContent = '$'+data.cap.toFixed(2);
-      const withEl=document.getElementById('withopen');
-      if(withEl && data.cap!==undefined && data.daily!==undefined){{
-        // will be updated on full reload
-      }}
-      // full reload of boxes every 10s cron
       fetch('/?key='+ADMIN_KEY).then(r=>r.text()).then(html=>{{
         const parser=new DOMParser(); const doc=parser.parseFromString(html,'text/html');
         const openEl=doc.getElementById('openbox-inner'); const closedEl=doc.getElementById('closedbox-inner'); const sharkEl=doc.getElementById('sharkbox-inner');
@@ -442,16 +406,16 @@ setInterval(()=>{{
     html += "<div style='display:none'><div id='sharkbox-inner'>"
     if sharks:
         top=sharks[0]
-        html += f"<div class='b bg'>LIVE TICK GRAPH SHARK 2.8-7.5% FOR $0.50 MIN - TOP {top['symbol']} +{top['h1']:.1f}% SCORE {top['score']:.0f} VOL ${top['vol']} ROOM {top['room']:.1f}% - TICK 1s GRAPH CLOSE NOT SEC COUNT</div>"
+        html += f"<div class='b bg'>LIVE TICK GRAPH SHARK - TOP {top['symbol']} +{top['h1']:.1f}% SCORE {top['score']:.0f} VOL ${top['vol']} ROOM {top['room']:.1f}% - TICK 1s GRAPH CLOSE</div>"
         for s in sharks[:5]:
-            html += f"<div class='it' style='border-color:#00ff88'><b style='color:#00ff88'>#{sharks.index(s)+1} {s['symbol']} H1 +{s['h1']:.1f}% ROOM {s['room']:.1f}% SCORE {s['score']:.0f}</b><br><span style='color:#0f8'>VOL ${s['vol']} PRICE ${s['price']:.6f} - TP 0.70% = $0.50 NET - GRAPH TRAIL -0.14% DROP CLOSE</span></div>"
+            html += f"<div class='it' style='border-color:#00ff88'><b style='color:#00ff88'>#{sharks.index(s)+1} {s['symbol']} H1 +{s['h1']:.1f}% ROOM {s['room']:.1f}% SCORE {s['score']:.0f}</b><br><span style='color:#0f8'>VOL ${s['vol']} PRICE ${s['price']:.6f}</span></div>"
     else:
-        html += "<div class='b by'>LIVE TICK 0 - NO 2.8-7.5% - GRAPH TRACKING 1s - WAITING FOR $0.50 MIN - TICK TICK</div>"
+        html += "<div class='b by'>LIVE TICK 0 - GRAPH TRACKING 1s - WAITING FOR $0.50 MIN</div>"
     html += "</div>"
     html += "<div id='openbox-inner'>"
-    html += f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX LIVE TICK GRAPH - NEED {TP_GROSS}% GROSS = {TP_NET:.2f}% NET $0.50 - GRAPH TRAIL -0.14% DROP CLOSE - SEC TICKS LIVE 1s - <span class='live'></span> LIVE TICK</div>"
+    html += f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX LIVE TICK GRAPH - TP {TP_GROSS}% = ${TP_NET:.2f} NET - SEC TICKS LIVE 1s - <span class='live'></span> LIVE TICK</div>"
     if not open_tr:
-        html += f"<div class='it' style='text-align:center;color:#666'>NO OPEN - SCAN #{scan} - LIVE TICK GRAPH WAITING FOR $0.50 MIN - SEC WILL TICK LIVE 1s - NO REFRESH NEEDED - GRAPH WILL CLOSE</div>"
+        html += f"<div class='it' style='text-align:center;color:#666'>NO OPEN - SCAN #{scan} - LIVE TICK GRAPH WAITING - SEC WILL TICK LIVE 1s - NO REFRESH - GRAPH WILL CLOSE</div>"
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         pct_gross=tr.get("pct_gross",0)
@@ -460,10 +424,10 @@ setInterval(()=>{{
         entry=tr.get("entry",0)
         ts=tr.get("ts", int(time.time()))
         peak=tr.get("peak_gross",0)
-        html += f"<div class='it' style='border-color:{col}' data-symbol='{tr['symbol']}' data-entry='{entry}' data-ts='{ts}' data-peak='{peak}'><b style='color:{col}'>{tr['symbol']} AGE <span class='age-val'>{tr.get('age',0)}s</span> PEAK <span class='peak-val'>{peak:.2f}% PEAK</span> ROOM {tr.get('room',0):.1f}%</b><br>ENTRY ${entry:.6f} -> NOW <span class='price-now' style='color:#ffcc00'>${tr.get('price',0):.6f}</span> H1 +{tr.get('h1',0):.1f}%<br><span style='font-size:14px;font-weight:900' class='gross-val' style='color:{col}'>{pct_gross:.3f}% GROSS</span> <span style='font-size:14px;font-weight:900' class='net-val' style='color:{col}'>{pct_net:.3f}% NET ${net_usd:+.3f} NET REAL</span> <span class='live'></span> TICK GRAPH<br><canvas class='spark tick-graph' width='300' height='36'></canvas><br><span style='font-size:10px;color:#888'>GRAPH CLOSE: TP {TP_GROSS}% | TRAIL PEAK -0.14% DROP | SL {SL_GROSS}% | AGE ticks live 1s | PRICE ticks live 1s from Binance graph</span></div>"
+        html += f"<div class='it' style='border-color:{col}' data-symbol='{tr['symbol']}' data-entry='{entry}' data-ts='{ts}' data-peak='{peak}'><b style='color:{col}'>{tr['symbol']} AGE <span class='age-val'>{tr.get('age',0)}s</span> PEAK <span class='peak-val'>{peak:.2f}% PEAK</span> ROOM {tr.get('room',0):.1f}%</b><br>ENTRY ${entry:.6f} -> NOW <span class='price-now' style='color:#ffcc00'>${tr.get('price',0):.6f}</span><br><span style='font-size:14px;font-weight:900' class='gross-val' style='color:{col}'>{pct_gross:.3f}% GROSS</span> <span style='font-size:14px;font-weight:900' class='net-val' style='color:{col}'>{pct_net:.3f}% NET ${net_usd:+.3f} NET REAL</span> <span class='live'></span> TICK GRAPH<br><canvas class='spark tick-graph' width='300' height='36'></canvas><br><span style='font-size:10px;color:#888'>GRAPH CLOSE: TP {TP_GROSS}% | TRAIL -0.14% DROP | SL {SL_GROSS}% | AGE ticks 1s | PRICE ticks 1s Binance graph</span></div>"
     html += "</div>"
     html += "<div id='closedbox-inner'>"
-    html += f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} {winrate}% - CAP ${cap:.2f} DAILY NET ${daily:+.2f} (GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f}) - LIVE TICK GRAPH CLOSE NOT SEC</div>"
+    html += f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} {winrate}% - CAP ${cap:.2f} DAILY NET ${daily:+.2f} - LIVE TICK GRAPH</div>"
     for cl in closed[:12]:
         net=cl.get("net",0)
         gross=cl.get("gross",0)
@@ -471,7 +435,7 @@ setInterval(()=>{{
         pct_gross=cl.get("pct_gross",0)
         pct_net=cl.get("pct_net",0)
         c="#0f8" if net>=0.40 else "#f44" if net<0 else "#ffcc00"
-        html += f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{c}'><b>{cl.get('symbol','')}</b> ${net:+.2f} NET (${gross:+.2f} GROSS - ${fee:.2f} FEE) {cl.get('reason','')} {pct_gross:+.2f}% GROSS {pct_net:+.2f}% NET AGE {cl.get('age',0)}s GRAPH</div>"
+        html += f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{c}'><b>{cl.get('symbol','')}</b> ${net:+.2f} NET (${gross:+.2f} GROSS - ${fee:.2f} FEE) {cl.get('reason','')} {pct_gross:+.2f}% GROSS {pct_net:+.2f}% NET AGE {cl.get('age',0)}s</div>"
     html += "</div></div></div></body></html>"
     return html
 
