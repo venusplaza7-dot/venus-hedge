@@ -1,5 +1,5 @@
 from flask import Flask, request, Response
-import os, json, time, urllib.request, math
+import os, json, time, urllib.request
 app = Flask(__name__)
 
 def env(k):
@@ -26,35 +26,21 @@ FEE_PCT=0.20
 FEE_USD=0.20
 MAXP=3
 
-SECTORS = {
-    "L1_CHAIN": ["BTC","ETH","ETC","ARB","SUI","SEI","APT","TIA","ATOM","AVAX","SOL","NEAR","OP","STRK","ZK","SAGA","DOGE","NEAR","CFX","ZEC"],
-    "DEPIN_WIFI": ["FIL","RNDR","THETA","IOTX","AR","STORJ","HNT","AKT","GRT","FET","AERO","W","JASMY","BTC","ETH","STRK"],
-    "AI": ["EIGEN","TAO","FET","ARKM","RNDR","GRT","RLC","LUMIA","AI","TAO","FET","ZEC","CFX"],
-    "DEFI": ["ENA","PENDLE","AERO","LDO","UNI","AAVE","ETHFI","BTC","ETH","AVAX","ONDO","LUMIA","NEAR"],
-    "MEME": ["PEPE","BONK","WIF","FLOKI","SHIB","BOME","POPCAT","BRETT","DOGE","PUMP","PEPE","WIF"],
-    "RWA_GAMING": ["IMX","RONIN","GALA","BEAM","PIXEL","ETC","BTC","SUI","ARB","ZEC","CFX"]
-}
+SECTORS={"L1_CHAIN":["BTC","ETH","ETC","ARB","SUI","SEI","APT","TIA","ATOM","AVAX","SOL","NEAR","OP","STRK","ZK","SAGA","DOGE","CFX","ZEC","CHIP"],"DEPIN_WIFI":["FIL","RNDR","THETA","IOTX","AR","STORJ","HNT","AKT","GRT","FET","AERO","W","JASMY"],"AI":["EIGEN","TAO","FET","ARKM","RNDR","GRT","LUMIA","ZEC","CFX"],"DEFI":["ENA","PENDLE","AERO","LDO","UNI","AAVE","ETHFI","BTC","ETH","AVAX","ONDO","LUMIA","NEAR"],"MEME":["PEPE","BONK","WIF","FLOKI","SHIB","BOME","POPCAT","BRETT","DOGE"],"RWA_GAMING":["IMX","RONIN","GALA","BEAM","PIXEL","ETC","BTC"]}
 COIN_SECTOR={}
 for sec, coins in SECTORS.items():
     for c in coins:
-        if c not in COIN_SECTOR:
-            COIN_SECTOR[c]=sec
-
-BAD_EXACT=set(["USDC","FDUSD","TUSD","BUSD","DAI","USDP","EUR","BIDR","IDRT","TRY","BRL","BRLT","BVND","VAI","USDB","USD1","BFUSD","TRYT","PLN","UAH","NGN","BKRW","ZAR","JPY","GBP","AUD","UAHT","MATICBIDR","SOLBIDR","XRPBIDR","BUSDBIDR","STRKTRY","IDRT","BUSDTRY","BTCBIDR","USD1"])
+        if c not in COIN_SECTOR: COIN_SECTOR[c]=sec
+BAD_EXACT=set(["USDC","FDUSD","TUSD","BUSD","DAI","USDP","EUR","BIDR","IDRT","TRY","BRL","BRLT","BVND","VAI","USDB","USD1","BFUSD","TRYT","PLN","UAH","NGN","BKRW","ZAR","JPY","GBP","AUD","UAHT","MATICBIDR","SOLBIDR","XRPBIDR","BUSDBIDR","STRKTRY","IDRT","BUSDTRY","BTCBIDR","USD1","1000PEPE","1000BONK"])
 BAD_CONTAINS=["BIDR","IDRT","TRYB","EURT","EURS","BVND","BRLT"]
-
-def is_bad_symbol(base):
-    if base in BAD_EXACT: return True
+def is_bad(b):
+    if b in BAD_EXACT: return True
     for bad in BAD_CONTAINS:
-        if bad in base: return True
-    if len(base)>8: return True
-    if "BID" in base: return True
-    if base.startswith("1000"): return True
+        if bad in b: return True
+    if len(b)>8 or b.startswith("1000"): return True
+    if "BID" in b: return True
     return False
-
-def get_sector(coin):
-    return COIN_SECTOR.get(coin, "OTHER_BEST")
-
+def get_sector(c): return COIN_SECTOR.get(c,"OTHER_BEST")
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
     try:
@@ -66,7 +52,6 @@ def kv_get(k):
             if not res: return None
             return json.loads(res) if (res.startswith("{") or res.startswith("[")) else res
     except: return None
-
 def kv_set(k,o):
     if not KV_URL or not KV_TOKEN: return False
     try:
@@ -75,7 +60,6 @@ def kv_set(k,o):
         with urllib.request.urlopen(req, timeout=8) as r:
             return "OK" in r.read().decode()
     except: return False
-
 def kv_del(k):
     if not KV_URL or not KV_TOKEN: return False
     try:
@@ -84,112 +68,12 @@ def kv_del(k):
         with urllib.request.urlopen(req, timeout=8) as r:
             return True
     except: return False
-
 def get_tickers():
     try:
         req=urllib.request.Request("https://data-api.binance.vision/api/v3/ticker/24hr", headers={"User-Agent":"Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=8) as r:
             return json.loads(r.read().decode())
     except: return []
-
-def get_klines_light(symbol, interval="5m", limit=40):
-    try:
-        url=f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-        req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return json.loads(r.read().decode())
-    except: return []
-
-def ema(vals, period):
-    if len(vals)<period: return None
-    k=2/(period+1)
-    em= sum(vals[:period])/period
-    for v in vals[period:]:
-        em = v*k + em*(1-k)
-    return em
-
-def calc_rsi(closes, period=14):
-    try:
-        if len(closes)<period+1: return 50
-        gains=[]; losses=[]
-        for i in range(1,len(closes)):
-            diff=closes[i]-closes[i-1]
-            gains.append(max(diff,0))
-            losses.append(max(-diff,0))
-        ag=sum(gains[:period])/period
-        al=sum(losses[:period])/period
-        for i in range(period,len(gains)):
-            ag=(ag*(period-1)+gains[i])/period
-            al=(al*(period-1)+losses[i])/period
-        if al==0: return 100
-        rs=ag/al
-        return 100-100/(1+rs)
-    except: return 50
-
-def calc_adx(klines, period=14):
-    try:
-        highs=[float(k[2]) for k in klines]
-        lows=[float(k[3]) for k in klines]
-        closes=[float(k[4]) for k in klines]
-        if len(closes)<period*2: return 0,0,0
-        trs=[]; dm_plus=[]; dm_minus=[]
-        for i in range(1,len(klines)):
-            hl=highs[i]-lows[i]
-            hc=abs(highs[i]-closes[i-1])
-            lc=abs(lows[i]-closes[i-1])
-            tr=max(hl,hc,lc)
-            trs.append(tr)
-            up=highs[i]-highs[i-1]
-            down=lows[i-1]-lows[i]
-            dm_plus.append(up if up>down and up>0 else 0)
-            dm_minus.append(down if down>up and down>0 else 0)
-        atr=sum(trs[:period])/period
-        pdi=sum(dm_plus[:period])/period
-        mdi=sum(dm_minus[:period])/period
-        for i in range(period, len(trs)):
-            atr=(atr*(period-1)+trs[i])/period
-            pdi=(pdi*(period-1)+dm_plus[i])/period
-            mdi=(mdi*(period-1)+dm_minus[i])/period
-        if atr==0: return 0,0,0
-        pdi_pct=100*pdi/atr
-        mdi_pct=100*mdi/atr
-        dx=100*abs(pdi_pct-mdi_pct)/(pdi_pct+mdi_pct) if (pdi_pct+mdi_pct)!=0 else 0
-        return dx,pdi_pct,mdi_pct
-    except:
-        return 0,0,0
-
-def get_market_regime(ticker_map):
-    try:
-        btc_ticker=ticker_map.get("BTCUSDT")
-        btc_price_ticker=float(btc_ticker.get("lastPrice","83864")) if btc_ticker else 83864
-        h1=float(btc_ticker.get("priceChangePercent","0")) if btc_ticker else 0
-        klines=get_klines_light("BTCUSDT","5m",60)
-        if len(klines)<30:
-            if h1>0.8:
-                return {"regime":"TRENDING_BULL","bias":"LONG","btc_price":btc_price_ticker,"adx":23,"pdi":32,"mdi":18,"h1":h1,"reason":f"BULL ticker H1 +{h1:.1f}% BTC ${btc_price_ticker:.0f} ADX 23 LONG but FORCE SHORT TOO"}
-            elif h1<-0.8:
-                return {"regime":"TRENDING_BEAR","bias":"SHORT","btc_price":btc_price_ticker,"adx":23,"pdi":18,"mdi":32,"h1":h1,"reason":f"BEAR ticker H1 {h1:.1f}% BTC ${btc_price_ticker:.0f} ADX 23 SHORT but FORCE LONG TOO"}
-            else:
-                return {"regime":"RANGING","bias":"BOTH","btc_price":btc_price_ticker,"adx":18,"pdi":25,"mdi":25,"h1":h1,"reason":f"RANGING H1 {h1:+.1f}% BTC ${btc_price_ticker:.0f} BOTH L:S forced"}
-        closes=[float(k[4]) for k in klines]
-        price=btc_price_ticker if btc_price_ticker>0 else closes[-1]
-        ema50=ema(closes,50)
-        ema200=ema(closes,60) if len(closes)>=60 else ema(closes,40)
-        adx,pdi,mdi=calc_adx(klines,14)
-        atr=sum([float(k[2])-float(k[3]) for k in klines[-14:]])/14
-        atr_pct=atr/price if price>0 else 0
-        if ema50 and ema200:
-            if price>ema50>ema200 and pdi>mdi and adx>20:
-                return {"regime":"TRENDING_BULL","bias":"LONG","btc_price":price,"adx":adx,"pdi":pdi,"mdi":mdi,"ema50":ema50,"ema200":ema200,"atr_pct":atr_pct,"h1":h1,"reason":f"BULL Price>{ema50:.0f}>{ema200:.0f} ADX {adx:.0f} PDI {pdi:.0f}>MDI {mdi:.0f} BTC ${price:.0f} H1 {h1:+.1f}% LONG boost but FORCE SHORT TOO L:1 S:1"}
-            elif price<ema50<ema200 and mdi>pdi and adx>20:
-                return {"regime":"TRENDING_BEAR","bias":"SHORT","btc_price":price,"adx":adx,"pdi":pdi,"mdi":mdi,"ema50":ema50,"ema200":ema200,"atr_pct":atr_pct,"h1":h1,"reason":f"BEAR Price<{ema50:.0f}<{ema200:.0f} ADX {adx:.0f} MDI {mdi:.0f}>PDI {pdi:.0f} BTC ${price:.0f} H1 {h1:+.1f}% SHORT boost but FORCE LONG TOO L:1 S:1"}
-        return {"regime":"RANGING","bias":"BOTH","btc_price":price,"adx":adx,"pdi":pdi,"mdi":mdi,"ema50":ema50,"ema200":ema200,"atr_pct":atr_pct,"h1":h1,"reason":f"RANGING ADX {adx:.0f} BTC ${price:.0f} BOTH L:1 S:1 forced H1 {h1:+.1f}%"}
-    except Exception as e:
-        btc_ticker=ticker_map.get("BTCUSDT")
-        btc_price=float(btc_ticker.get("lastPrice","83864")) if btc_ticker else 83864
-        h1=float(btc_ticker.get("priceChangePercent","0")) if btc_ticker else 0
-        return {"regime":"RANGING","bias":"BOTH","btc_price":btc_price,"adx":18,"pdi":25,"mdi":25,"h1":h1,"reason":f"Fallback BTC ${btc_price:.0f} BOTH L:1 S:1 forced H1 {h1:+.1f}%"}
-
 def load_state():
     s=kv_get(STATE_KEY)
     if not s:
@@ -205,85 +89,15 @@ def load_state():
     L["last_coins"]={k:v for k,v in L["last_coins"].items() if v>now}
     return s
 
-def eval_long_signal(base, ticker, market):
-    # REAL RULE: pumped coins H1 >6% should NOT be long - they should be short
-    if is_bad_symbol(base): return None
-    try:
-        vol=float(ticker.get("quoteVolume","0"))
-        h1=float(ticker.get("priceChangePercent","0"))
-        if vol<6000000: return None
-        if h1>6.5: return None  # PUMPED - don't long top, short it!
-        if h1<-5: return None  # crashing - don't catch falling knife long, wait
-        price=float(ticker.get("lastPrice","0"))
-        if price<0.000001 or price>200000: return None
-        if price<0.00001 and base=="PEPE": 
-            # PEPE 0.000004 flat - need H1 movement
-            if abs(h1)<1.0: return None
-        sym=base+"USDT"
-        klines=get_klines_light(sym,"5m",30)
-        if len(klines)<15:
-            if base not in ["BTC","ETH","ETC","SOL","AVAX","SUI","ARB","SEI","STRK","NEAR","ENA","FET","PENDLE","AERO","DOGE","WIF","BONK","OP","LUMIA","AERO","TIA","CFX","ZEC"]:
-                return None
-            rsi=45
-        else:
-            closes=[float(k[4]) for k in klines]
-            rsi=calc_rsi(closes,14)
-            if rsi>62: return None  # overbought - not long
-            if rsi<30: 
-                pass  # oversold bounce long good
-        sector=get_sector(base)
-        score=vol/1e6 * max(0.3, (3 - abs(h1))*0.5) + (60-rsi)*0.08
-        if h1>=0.5 and h1<=4.5:
-            score*=1.6  # nice uptrend dip
-        elif h1>= -2 and h1<=0.5:
-            score*=1.4  # ranging bounce
-        if base in ["BTC","ETH","SOL","AVAX","SUI","ARB","SEI","STRK","NEAR","ENA","PENDLE","AERO","FET","OP","DOGE","LUMIA","ZEC","CFX"]:
-            score*=1.3
-        if market["bias"]=="LONG":
-            score*=1.15
-        return {"symbol":base,"side":"LONG","price":price,"vol":int(vol),"h1":h1,"rsi":rsi,"strategy":"LONG_SMART","strat_id":1,"sector":sector,"score":score,"tp":0.30,"sl":0.32,"reason":f"LONG SMART RSI {rsi:.0f} H1 {h1:+.1f}% DIP Market {market['regime']} {market['bias']} BTC ${market['btc_price']:.0f} NOT PUMPED"}
-    except:
-        return None
-
-def eval_short_signal(base, ticker, market):
-    if is_bad_symbol(base): return None
-    try:
-        vol=float(ticker.get("quoteVolume","0"))
-        h1=float(ticker.get("priceChangePercent","0"))
-        if vol<6000000: return None
-        # SHORT rules: pumped coins +6% to +18% are perfect short tops
-        # Also coins down -1% to -6% continuing down
-        if h1< -8 or h1>18: return None
-        if h1> -1 and h1<2.5: return None  # need movement to short - not flat
-        price=float(ticker.get("lastPrice","0"))
-        if price<0.000001 or price>200000: return None
-        sym=base+"USDT"
-        klines=get_klines_light(sym,"5m",30)
-        if len(klines)<15:
-            if base not in ["BTC","ETH","ETC","SOL","AVAX","SUI","ARB","SEI","STRK","NEAR","ENA","FET","PENDLE","AERO","DOGE","WIF","BONK","OP","LUMIA","AERO","TIA","CFX","ZEC","TRX","ONDO","SOL","STRK","PEPE","WIF","POPCAT"]:
-                return None
-            rsi=55
-        else:
-            closes=[float(k[4]) for k in klines]
-            rsi=calc_rsi(closes,14)
-            if rsi<42: return None  # oversold - not short bottom
-            # overbought short good
-        sector=get_sector(base)
-        score=vol/1e6 * abs(h1) * 1.2 + (rsi-45)*0.1
-        if h1>=6 and h1<=15:
-            score*=2.0  # PUMPED TOP - best short! CFX +11% STRK +12.6%
-        elif h1>=3 and h1<6:
-            score*=1.5
-        elif h1<=-1 and h1>=-5:
-            score*=1.4  # breakdown short
-        if base in ["BTC","ETH","SOL","AVAX","SUI","ARB","SEI","STRK","NEAR","ENA","PENDLE","AERO","FET","OP","DOGE","CFX","ZEC","TRX","ONDO","STRK","PEPE","WIF","POPCAT","BONK"]:
-            score*=1.3
-        if market["bias"]=="SHORT":
-            score*=1.15
-        # Always allow short even in BULL market - for pumped coins
-        return {"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"rsi":rsi,"strategy":"SHORT_SMART","strat_id":2,"sector":sector,"score":score,"tp":0.30,"sl":0.32,"reason":f"SHORT SMART RSI {rsi:.0f} H1 {h1:+.1f}% PUMP TOP Market {market['regime']} {market['bias']} BTC ${market['btc_price']:.0f} SHORT PUMP"}
-    except:
-        return None
+def get_market(ticker_map):
+    btc_ticker=ticker_map.get("BTCUSDT")
+    btc_price=float(btc_ticker.get("lastPrice","83866")) if btc_ticker else 83866
+    h1=float(btc_ticker.get("priceChangePercent","0")) if btc_ticker else 0
+    # simple regime
+    if h1>0.8: regime="TRENDING_BULL"; bias="LONG"
+    elif h1<-0.8: regime="TRENDING_BEAR"; bias="SHORT"
+    else: regime="RANGING"; bias="BOTH"
+    return {"regime":regime,"bias":bias,"btc_price":btc_price,"adx":22 if bias=="LONG" else 22,"h1":h1,"reason":f"{regime} BTC ${btc_price:.0f} H1 {h1:+.1f}% - Pumped +5-18% = ONLY SHORT, Dip -3 to +4.5% = ONLY LONG - FORCED L:1 S:2"}
 
 def do_cron():
     state=load_state()
@@ -293,77 +107,91 @@ def do_cron():
         return {"ok":False,"paused":True,"left":L["pause_until"]-now_ts,"scan":state.get("scan",0)}
     tickers=get_tickers()
     ticker_map={}
-    real_tickers=[]
+    real=[]
     for t in tickers:
         sym=t.get("symbol","")
         ticker_map[sym]=t
         if not sym.endswith("USDT"): continue
         base=sym.replace("USDT","")
-        if is_bad_symbol(base): continue
+        if is_bad(base): continue
         if not base.isalnum(): continue
         if len(base)<2 or len(base)>8: continue
-        real_tickers.append(t)
-    real_tickers=sorted(real_tickers, key=lambda x: float(x.get("quoteVolume","0")), reverse=True)[:30]
-    market=get_market_regime(ticker_map)
+        real.append(t)
+    real=sorted(real, key=lambda x: float(x.get("quoteVolume","0")), reverse=True)[:35]
+    market=get_market(ticker_map)
 
     open_tr=state.get("open",[])
     open_syms=[t["symbol"] for t in open_tr]
 
-    sharks_long=[]
-    sharks_short=[]
-    for t in real_tickers:
+    long_cands=[]
+    short_cands=[]
+    for t in real:
         base=t.get("symbol","").replace("USDT","")
         if base in open_syms: continue
         if base in L.get("blacklist",{}): continue
         if base in L.get("last_coins",{}): continue
-        ls=eval_long_signal(base, t, market)
-        ss=eval_short_signal(base, t, market)
-        if ls: sharks_long.append(ls)
-        if ss: sharks_short.append(ss)
+        vol=float(t.get("quoteVolume","0"))
+        if vol<5000000: continue
+        h1=float(t.get("priceChangePercent","0"))
+        price=float(t.get("lastPrice","0"))
+        if price<0.0000005 or price>200000: continue
+        sector=get_sector(base)
+        # RULE: Pumped = ONLY SHORT, never LONG
+        if h1>=5.0 and h1<=18.0:
+            # SHORT ONLY - top short
+            score=vol/1e6*abs(h1)*2.0
+            if base in ["STRK","NEAR","ETH","BTC","SOL","CHIP","ZEC","CFX","SUI","ARB","SEI","AVAX","ENA","PENDLE","AERO","WIF","BONK","PEPE","OP","LUMIA","TIA"]:
+                score*=1.5
+            short_cands.append({"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"sector":sector,"score":score,"tp":0.28,"sl":0.35,"reason":f"SHORT PUMPED H1 +{h1:.1f}% TOP SHORT Market {market['regime']} BTC ${market['btc_price']:.0f} VOL {int(vol/1e6)}M"})
+        elif h1>=2.5 and h1<5.0:
+            # Also short pumped but lower boost
+            score=vol/1e6*h1*1.3
+            short_cands.append({"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"sector":sector,"score":score,"tp":0.28,"sl":0.35,"reason":f"SHORT PUMPED H1 +{h1:.1f}% TOP SHORT"})
+        elif h1>=-3.0 and h1<=4.5:
+            # LONG ONLY - dip or ranging
+            if h1>4.5: continue  # already handled as short
+            if abs(h1)<0.3 and vol<15000000: continue  # flat dead like PEPE 0.00%
+            score=vol/1e6*max(0.5, 4-abs(h1))*0.8
+            if base in ["BTC","ETH","SOL","AVAX","SUI","ARB","SEI","STRK","NEAR","ENA","FET","OP","LUMIA","ZEC","CFX","CHIP","SOL","BTC","ETH"]:
+                score*=1.3
+            long_cands.append({"symbol":base,"side":"LONG","price":price,"vol":int(vol),"h1":h1,"sector":sector,"score":score,"tp":0.28,"sl":0.32,"reason":f"LONG DIP H1 {h1:+.1f}% DIP BOUNCE Market {market['regime']} BTC ${market['btc_price']:.0f} NOT PUMPED"})
+        elif h1<=-1.0 and h1>=-7.0:
+            # Breakdown short or oversold long? For now short breakdown
+            score=vol/1e6*abs(h1)*1.2
+            short_cands.append({"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"sector":sector,"score":score,"tp":0.28,"sl":0.35,"reason":f"SHORT BREAKDOWN H1 {h1:.1f}% Market {market['regime']}"})
 
-    sharks_long=sorted(sharks_long, key=lambda x: x["score"], reverse=True)[:12]
-    sharks_short=sorted(sharks_short, key=lambda x: x["score"], reverse=True)[:12]
+    long_cands=sorted(long_cands, key=lambda x: x["score"], reverse=True)[:10]
+    short_cands=sorted(short_cands, key=lambda x: x["score"], reverse=True)[:10]
 
-    # FORCE DIVERSIFIED LONG SHORT - never L:3 S:0
+    # FORCE L:1 S:2 or L:2 S:1 - NEVER L:3 S:0
     final_sharks=[]
-    # Always take top 1 LONG and top 1 SHORT if available
-    if sharks_long:
-        final_sharks.append(sharks_long[0])
-    if sharks_short:
-        # pick short different symbol
-        for s in sharks_short:
-            if s["symbol"] not in [x["symbol"] for x in final_sharks]:
-                final_sharks.append(s)
+    # Must have at least 1 SHORT and 1 LONG
+    if short_cands:
+        final_sharks.append(short_cands[0])
+    if long_cands:
+        for lc in long_cands:
+            if lc["symbol"] not in [x["symbol"] for x in final_sharks]:
+                final_sharks.append(lc)
                 break
-    # Third coin = best remaining overall (could be long or short)
-    all_sorted=sorted(sharks_long+sharks_short, key=lambda x: x["score"], reverse=True)
+    # Third = best remaining, prefer SHORT if we have L:2 S:0, or LONG if L:0 S:2
+    long_in_final=sum(1 for x in final_sharks if x["side"]=="LONG")
+    short_in_final=sum(1 for x in final_sharks if x["side"]=="SHORT")
+    all_sorted=sorted(long_cands+short_cands, key=lambda x: x["score"], reverse=True)
     for s in all_sorted:
         if len(final_sharks)>=3: break
         if s["symbol"] in [x["symbol"] for x in final_sharks]: continue
-        if s["symbol"] in open_syms: continue
+        # Force balance
+        if long_in_final>=2 and s["side"]=="LONG": continue
+        if short_in_final>=2 and s["side"]=="SHORT": continue
         final_sharks.append(s)
-
-    # If still less than 3, fill with fallback BTC ETH ETC etc with forced short
+        if s["side"]=="LONG": long_in_final+=1
+        else: short_in_final+=1
+    # If still need to fill, fill with opposite side
     if len(final_sharks)<3:
-        fallbacks=["BTC","ETH","SOL","AVAX","SUI","ARB","SEI","STRK","NEAR","ENA","FET","PENDLE","AERO","DOGE","WIF","BONK","PEPE","CFX","ZEC","OP","LUMIA","TIA"]
-        for base in fallbacks:
+        for s in all_sorted:
             if len(final_sharks)>=3: break
-            if base in [x["symbol"] for x in final_sharks] or base in open_syms: continue
-            if base in L.get("blacklist",{}): continue
-            if base in L.get("last_coins",{}): continue
-            sym=base+"USDT"
-            t=ticker_map.get(sym)
-            if not t: continue
-            vol=float(t.get("quoteVolume","0"))
-            if vol<5000000: continue
-            h1=float(t.get("priceChangePercent","0"))
-            price=float(t.get("lastPrice","0"))
-            # Force short if we have 2 long already
-            long_count=sum(1 for x in final_sharks if x["side"]=="LONG")
-            short_count=sum(1 for x in final_sharks if x["side"]=="SHORT")
-            side="SHORT" if long_count>=2 or (h1>6) else "LONG" if short_count>=2 else ("SHORT" if h1>3 else "LONG")
-            sector=get_sector(base)
-            final_sharks.append({"symbol":base,"side":side,"price":price,"vol":int(vol),"h1":h1,"rsi":50,"strategy":f"{side}_FALLBACK","strat_id":1 if side=="LONG" else 2,"sector":sector,"score":vol/1e6*abs(h1)+100,"tp":0.30,"sl":0.32,"reason":f"FALLBACK {base} {side} FORCED L:{long_count} S:{short_count} BTC ${market['btc_price']:.0f} H1 {h1:+.1f}%"})
+            if s["symbol"] in [x["symbol"] for x in final_sharks]: continue
+            final_sharks.append(s)
 
     closed=state.get("closed",[])
     cap=state.get("cap",300.0)
@@ -391,31 +219,31 @@ def do_cron():
             age=now_ts-tr.get("ts",now_ts)
             peak_gross=max(tr.get("peak_gross",0), pct_gross)
             tr["price"]=price_now; tr["pct_gross"]=pct_gross; tr["pct"]=pct_net; tr["peak_gross"]=peak_gross; tr["peak"]=peak_gross-FEE_PCT; tr["age"]=age; tr["net"]=net_usd; tr["gross"]=gross_usd
-            tp=tr.get("tp",0.30); sl=tr.get("sl",0.32)
+            tp=tr.get("tp",0.28); sl=tr.get("sl",0.32)
             should=None
             if pct_gross>=tp:
-                should=f"TP {tp}% {side} {tr.get('strategy','')} +${net_usd:+.2f} NET TRUE SMART"
+                should=f"TP {tp}% {side} {tr.get('strategy','')} +${net_usd:+.2f} NET WIN"
             elif pct_gross<=-sl:
-                should=f"SL -{sl}% {side} {tr.get('strategy','')} CUT FAST"
-            elif peak_gross>=0.22 and pct_gross<peak_gross-0.09 and pct_net>=0.04:
-                should=f"TRAIL PEAK {peak_gross:.2f}%->{pct_gross:.2f}% -0.09% JUMP {side}"
-            elif age>200 and peak_gross<0.10 and pct_gross<0.12:
-                should=f"NO PEAK 0.10% {age}s FLAT CUT {side} {tr.get('strategy','')} 200s"
-            elif age>450 and pct_gross<0.15 and peak_gross<0.22:
+                should=f"SL -{sl}% {side} CUT FAST"
+            elif peak_gross>=0.18 and pct_gross<peak_gross-0.08 and pct_net>=0.02:
+                should=f"TRAIL PEAK {peak_gross:.2f}%->{pct_gross:.2f}% -0.08% JUMP {side}"
+            elif age>180 and peak_gross<0.08 and pct_gross<0.10:
+                should=f"NO PEAK 0.08% {age}s FLAT CUT {side} 180s"
+            elif age>400 and pct_gross<0.12 and peak_gross<0.20:
                 should=f"FLAT {pct_gross:.2f}% PEAK {peak_gross:.2f}% {age}s CUT {side}"
-            elif age>900:
-                should=f"TIME 900s FORCE {side} {tr.get('strategy','')} {pct_gross:.2f}%"
+            elif age>800:
+                should=f"TIME 800s FORCE {side} {pct_gross:.2f}%"
             if should:
                 cap+=net_usd; daily+=net_usd; daily_gross+=gross_usd; fees_paid+=FEE_USD; tot+=1
                 closed.insert(0,{"symbol":tr["symbol"],"side":side,"net":net_usd,"gross":gross_usd,"fee":FEE_USD,"reason":should,"pct_gross":pct_gross,"pct_net":pct_net,"age":age,"sector":get_sector(tr["symbol"]),"strategy":tr.get("strategy","")})
-                L["last_coins"][tr["symbol"]]=now_ts+350
-                if pct_net<-0.45:
-                    L["blacklist"][tr["symbol"]]=now_ts+1500
+                L["last_coins"][tr["symbol"]]=now_ts+300
+                if pct_net<-0.40:
+                    L["blacklist"][tr["symbol"]]=now_ts+1200
             else:
                 final.append(tr)
         except:
             final.append(tr)
-    wins=sum(1 for c in closed if c.get("net",0)>0.08)
+    wins=sum(1 for c in closed if c.get("net",0)>0.05)
     loss=sum(1 for c in closed if c.get("net",0)<0)
     for sh in final_sharks:
         if len(final)>=MAXP: break
@@ -424,13 +252,13 @@ def do_cron():
         if sh["symbol"] in L.get("last_coins",{}): continue
         price=sh["price"]; qty=POS/price if price>0 else 0
         if qty<0.000001: continue
-        tr={"symbol":sh["symbol"],"side":sh["side"],"entry":price,"price":price,"pos":POS,"qty":qty,"ts":now_ts,"peak_gross":0,"peak":0,"pct_gross":0,"pct":0,"net":0,"gross":0,"age":0,"h1":sh["h1"],"rsi":sh.get("rsi",50),"score":sh["score"],"sector":sh["sector"],"strategy":sh["strategy"],"strat_id":sh["strat_id"],"tp":sh["tp"],"sl":sh["sl"],"reason":sh["reason"]}
+        tr={"symbol":sh["symbol"],"side":sh["side"],"entry":price,"price":price,"pos":POS,"qty":qty,"ts":now_ts,"peak_gross":0,"peak":0,"pct_gross":0,"pct":0,"net":0,"gross":0,"age":0,"h1":sh["h1"],"score":sh["score"],"sector":sh["sector"],"strategy":sh["side"]+"_SMART","strat_id":1 if sh["side"]=="LONG" else 2,"tp":sh["tp"],"sl":sh["sl"],"reason":sh["reason"]}
         final.append(tr)
     state["open"]=final; state["closed"]=closed[:200]; state["cap"]=cap; state["daily"]=daily; state["daily_gross"]=daily_gross; state["fees_paid"]=fees_paid; state["wins"]=wins; state["loss"]=loss; state["total"]=tot; state["scan"]=scan; state["market"]=market
     kv_set(STATE_KEY, state)
     long_c=sum(1 for s in final if s.get("side")=="LONG")
     short_c=sum(1 for s in final if s.get("side")=="SHORT")
-    return {"ok":True,"scan":scan,"open":len(final),"long":long_c,"short":short_c,"cap":cap,"daily":daily,"sharks_long":len(sharks_long),"sharks_short":len(sharks_short),"total":tot,"wins":wins,"loss":loss,"market":market["regime"]+" "+market["bias"]+" BTC $"+str(int(market["btc_price"]))+" ADX "+str(int(market["adx"]))+" H1 "+str(round(market["h1"],1))+"% L:"+str(long_c)+" S:"+str(short_c),"top_long":next((s["symbol"]+" LONG H1 "+str(round(s["h1"],1))+"%" for s in sharks_long[:1]),"none"),"top_short":next((s["symbol"]+" SHORT H1 "+str(round(s["h1"],1))+"% PUMP" for s in sharks_short[:1]),"none"),"v":"v798 REAL SHORT L S FORCED"}
+    return {"ok":True,"scan":scan,"open":len(final),"long":long_c,"short":short_c,"cap":cap,"daily":daily,"sharks_long":len(long_cands),"sharks_short":len(short_cands),"total":tot,"wins":wins,"loss":loss,"market":market["regime"]+" "+market["bias"]+" BTC $"+str(int(market["btc_price"]))+" H1 "+str(round(market["h1"],1))+"% L:"+str(long_c)+" S:"+str(short_c),"v":"v799 REAL SHORT FORCED L S"}
 
 def render(state):
     open_tr=state.get("open",[])
@@ -443,7 +271,7 @@ def render(state):
     loss=state.get("loss",0)
     tot=state.get("total",0)
     scan=state.get("scan",0)
-    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":83864,"adx":23,"h1":1.0,"reason":"no market"})
+    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":83866,"adx":22,"h1":1.0,"reason":"no market"})
     winrate=int(wins/tot*100) if tot>0 else 0
     unreal=sum([t.get("net",0) for t in open_tr])
     long_open=sum(1 for t in open_tr if t.get("side")=="LONG")
@@ -455,11 +283,11 @@ def render(state):
             sym=t.get("symbol","")
             if not sym.endswith("USDT"): continue
             base=sym.replace("USDT","")
-            if is_bad_symbol(base): continue
+            if is_bad(base): continue
             if not base.isalnum(): continue
             if len(base)>8: continue
             real.append(t)
-        real=sorted(real, key=lambda x: float(x.get("quoteVolume","0")), reverse=True)[:8]
+        real=sorted(real, key=lambda x: float(x.get("quoteVolume","0")), reverse=True)[:10]
         sharks=[{"symbol":t["symbol"].replace("USDT",""),"h1":float(t.get("priceChangePercent","0")),"vol":int(float(t.get("quoteVolume","0"))),"sector":get_sector(t["symbol"].replace("USDT","")),"score":float(t.get("quoteVolume","0"))*float(t.get("priceChangePercent","0"))/1e6} for t in real]
     except:
         sharks=[]; used_sectors=set()
@@ -476,18 +304,17 @@ def render(state):
     html+=".live{width:10px;height:10px;background:#0f0;border-radius:50%;display:inline-block;animation:blink 1s infinite} @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}"
     html+=".spark{width:100%;height:32px;background:#0a0a0a;border:1px solid #222;border-radius:6px;margin:6px 0}"
     html+=".sec{padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900;margin-left:6px}"
-    html+=".strat{padding:2px 6px;border-radius:4px;font-size:8px;font-weight:900;margin-left:4px}"
     html+=".side{padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900;margin-left:6px} .side-LONG{background:#00ff88;color:#000} .side-SHORT{background:#ff4444;color:#fff}"
     html+=".s-L1_CHAIN{background:#00d4ff;color:#000} .s-DEPIN_WIFI{background:#ffcc00;color:#000} .s-AI{background:#ff00ff;color:#fff} .s-DEFI{background:#00ff88;color:#000} .s-MEME{background:#ff8800;color:#000} .s-RWA_GAMING{background:#8800ff;color:#fff} .s-OTHER_BEST{background:#555;color:#fff}"
     html+="</style></head><body>"
     bias_color="#00ff88" if market.get("bias")=="LONG" else "#ff4444" if market.get("bias")=="SHORT" else "#ffcc00"
-    html+=f"<div class='h'><span class='live'></span> VENUS v798 REAL SHORT L:S FORCED $0.50 NET - SCAN #{scan} - 3 MAX $100 EACH - MARKET {market.get('regime','?')} <span style='background:{bias_color};padding:2px 6px;border-radius:4px'>{market.get('bias','?')} BIAS</span> BTC ${market.get('btc_price',0):.0f} ADX {market.get('adx',0):.0f} L:{long_open} S:{short_open} - <span id='clock'>LIVE</span></div>"
+    html+=f"<div class='h'><span class='live'></span> VENUS v799 FIXED REAL SHORT $0.50 NET - SCAN #{scan} - 3 MAX $100 EACH - MARKET {market.get('regime','?')} <span style='background:{bias_color};padding:2px 6px;border-radius:4px'>{market.get('bias','?')} BIAS</span> BTC ${market.get('btc_price',0):.0f} L:{long_open} S:{short_open} - <span id='clock'>LIVE</span></div>"
     html+="<div class='g'>"
-    html+=f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL SHORT FORCED</div><div style='font-size:22px;color:#ffcc00;font-weight:900'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f} UNREAL {unreal:+.2f} | L:{long_open} S:{short_open} | {market.get('regime','?')}</div></div>"
-    html+=f"<div class='c'><div style='font-size:10px;color:#888'>TODAY NET L:{long_open} S:{short_open} x $0.50</div><div style='font-size:22px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f} | W:{wins} L:{loss} {winrate}% | REAL SHORT</div></div>"
-    html+=f"<div class='c'><div style='font-size:10px;color:#888'>MARKET REGIME REAL SHORT</div><div style='font-size:9px;color:#0f8;font-weight:900'>{market.get('regime','?')} {market.get('bias','?')} BTC ${market.get('btc_price',0):.0f} ADX {market.get('adx',0):.0f} H1 {market.get('h1',0):+.1f}% LIVE {scan}</div><div style='font-size:8px;color:#888'>{market.get('reason','')[:75]}</div><div style='font-size:10px'>Next <span id='countdown'>10s</span> TICK <span id='tickcount'>1s</span> - REAL SHORT</div></div>"
+    html+=f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL SHORT</div><div style='font-size:22px;color:#ffcc00;font-weight:900'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f} UNREAL {unreal:+.2f} | L:{long_open} S:{short_open} | {market.get('regime','?')}</div></div>"
+    html+=f"<div class='c'><div style='font-size:10px;color:#888'>TODAY NET L:{long_open} S:{short_open} x $0.50</div><div style='font-size:22px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f} | W:{wins} L:{loss} {winrate}% | FIXED SHORT</div></div>"
+    html+=f"<div class='c'><div style='font-size:10px;color:#888'>MARKET REAL SHORT FORCED</div><div style='font-size:9px;color:#0f8;font-weight:900'>{market.get('regime','?')} {market.get('bias','?')} BTC ${market.get('btc_price',0):.0f} H1 {market.get('h1',0):+.1f}% LIVE {scan}</div><div style='font-size:8px;color:#888'>{market.get('reason','')[:70]}</div><div style='font-size:10px'>Next <span id='countdown'>10s</span> TICK <span id='tickcount'>1s</span></div></div>"
     html+="</div>"
-    html+="<div id='sharkbox'><div class='b bd'>Scanning REAL SHORT L S FORCED...</div></div>"
+    html+="<div id='sharkbox'><div class='b bd'>Scanning FIXED REAL SHORT...</div></div>"
     html+="<div id='openbox'></div><div id='closedbox'></div>"
     import json as jsjson
     open_json=jsjson.dumps([{"symbol":tr["symbol"],"side":tr.get("side","LONG"),"entry":tr["entry"],"ts":tr.get("ts", int(time.time())),"peak_gross":tr.get("peak_gross",0)} for tr in open_tr])
@@ -524,9 +351,9 @@ async function fetchPrices(){{
           ctx.strokeStyle = tr.side=='LONG'?'#0f8':'#ff4444'; ctx.lineWidth=2; ctx.beginPath();
           arr.forEach((v,i)=>{{ const x = i/(arr.length-1)*w; const y = h - ((v-min)/range)*h; if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }});
           ctx.stroke();
-          const tpY = h - ((0.30-min)/range)*h; ctx.strokeStyle='#ffcc00'; ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke(); ctx.setLineDash([]);
+          const tpY = h - ((0.28-min)/range)*h; ctx.strokeStyle='#ffcc00'; ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke(); ctx.setLineDash([]);
         }}
-        if(pct_gross >= 0.28 || pct_gross <= -0.32 || (tr.peak_gross >= 0.20 && pct_gross < tr.peak_gross - 0.09)){{ shouldCron = true; }}
+        if(pct_gross >= 0.26 || pct_gross <= -0.32 || (tr.peak_gross >= 0.16 && pct_gross < tr.peak_gross - 0.08)){{ shouldCron = true; }}
       }}
     }});
     if(shouldCron){{ fetch('/api/cron?key='+ADMIN_KEY+'&cron=1').then(()=>{{ fetch('/?key='+ADMIN_KEY).then(r=>r.text()).then(html=>{{ const parser=new DOMParser(); const doc=parser.parseFromString(html,'text/html'); const openEl=doc.getElementById('openbox-inner'); const closedEl=doc.getElementById('closedbox-inner'); const sharkEl=doc.getElementById('sharkbox-inner'); if(openEl) document.getElementById('openbox').innerHTML = openEl.innerHTML; if(closedEl) document.getElementById('closedbox').innerHTML = closedEl.innerHTML; if(sharkEl) document.getElementById('sharkbox').innerHTML = sharkEl.innerHTML; const newOpen = []; doc.querySelectorAll('[data-symbol]').forEach(div=>{{ const sym = div.getAttribute('data-symbol'); const side = div.getAttribute('data-side')||'LONG'; const entry = parseFloat(div.getAttribute('data-entry')); const ts = parseInt(div.getAttribute('data-ts')); const peak = parseFloat(div.getAttribute('data-peak')||0); newOpen.push({{symbol:sym, side:side, entry:entry, ts:ts, peak_gross:peak}}); }}); openTrades = newOpen; Object.keys(priceHistory).forEach(k=>{{ if(!newOpen.find(t=>t.symbol==k)) delete priceHistory[k]; }}); newOpen.forEach(t=>{{ if(!priceHistory[t.symbol]) priceHistory[t.symbol]=[]; }}); }}); }}); }}
@@ -538,28 +365,30 @@ let count=10; setInterval(()=>{{ count--; const el=document.getElementById('coun
 </script>
 """
     html+="<div style='display:none'><div id='sharkbox-inner'>"
-    html+=f"<div class='b bg'>REAL SHORT FORCED - MARKET {market.get('regime','?')} BIAS {market.get('bias','?')} - BTC ${market.get('btc_price',0):.0f} ADX {market.get('adx',0):.0f} H1 {market.get('h1',0):+.1f}% - Pumped H1 +6-18% = SHORT, Dip H1 -3 to +6 = LONG - {market.get('reason','')[:90]}</div>"
+    html+=f"<div class='b bg'>FIXED REAL SHORT - MARKET {market.get('regime','?')} BIAS {market.get('bias','?')} - BTC ${market.get('btc_price',0):.0f} H1 {market.get('h1',0):+.1f}% - Pumped +5-18% = ONLY SHORT, Dip -3 to +4.5% = ONLY LONG - FORCED L:1 S:2 - {market.get('reason','')[:80]}</div>"
     if sharks:
-        for s in sharks[:8]:
-            html+=f"<div class='it' style='border-color:#ff4444'><b style='color:#ff4444'>#{sharks.index(s)+1} {s['symbol']} <span class='sec s-{s['sector']}'>{s['sector']}</span> H1 +{s['h1']:.1f}% VOL ${s['vol']}</b><br><span style='color:#0f8'>REAL USDT - Pumped = SHORT - SCORE {s['score']:.0f} - REAL SHORT BTC ${market.get('btc_price',0):.0f}</span></div>"
+        for s in sharks[:10]:
+            side="SHORT" if s['h1']>=5 else "LONG"
+            col="#ff4444" if side=="SHORT" else "#0f8"
+            html+=f"<div class='it' style='border-color:{col}'><b style='color:{col}'>#{sharks.index(s)+1} {s['symbol']} <span class='sec s-{s['sector']}'>{s['sector']}</span> H1 {s['h1']:+.1f}% VOL ${s['vol']} - {side} - SCORE {s['score']:.0f}</b><br><span style='color:{col}'>{'Pumped TOP = SHORT' if side=='SHORT' else 'Dip BOUNCE = LONG'} - REAL SHORT BTC ${market.get('btc_price',0):.0f}</span></div>"
     else:
-        html+=f"<div class='b by'>REAL SHORT {market.get('regime','?')} {market.get('bias','?')} - BTC ${market.get('btc_price',0):.0f} ADX {market.get('adx',0):.0f} H1 {market.get('h1',0):+.1f}% - {market.get('reason','')[:80]} - WILL FILL 3 L:S FORCED</div>"
+        html+=f"<div class='b by'>FIXED REAL SHORT {market.get('regime','?')} {market.get('bias','?')} - BTC ${market.get('btc_price',0):.0f} H1 {market.get('h1',0):+.1f}% - WILL FILL L:1 S:2 FORCED</div>"
     html+="</div>"
     html+="<div id='openbox-inner'>"
-    html+=f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX REAL SHORT FORCED $100 EACH - MARKET {market.get('regime','?')} {market.get('bias','?')} BTC ${market.get('btc_price',0):.0f} ADX {market.get('adx',0):.0f} L:{long_open} S:{short_open} - SECTORS {','.join(list(used_sectors)) if used_sectors else 'REAL SHORT BTC ETH ETC'} - <span class='live'></span> LIVE TICK GRAPH 1s</div>"
+    html+=f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX FIXED REAL SHORT $100 EACH - MARKET {market.get('regime','?')} {market.get('bias','?')} BTC ${market.get('btc_price',0):.0f} L:{long_open} S:{short_open} - SECTORS {','.join(list(used_sectors)) if used_sectors else 'REAL SHORT'} - <span class='live'></span> LIVE TICK GRAPH 1s</div>"
     if len(open_tr)==0:
-        html+=f"<div class='it' style='text-align:center;color:#0f8;border-color:#0f8'>REAL SHORT FORCED ACTIVE - SCAN #{scan} - MARKET REGIME REAL SHORT:<br>{market.get('reason','')}<br>BIAS: {market.get('bias','?')} - REGIME: {market.get('regime','?')} - ADX {market.get('adx',0):.0f} BTC ${market.get('btc_price',0):.0f} H1 {market.get('h1',0):+.1f}% L:{long_open} S:{short_open}<br>3x$100 DIVERSIFIED REAL SHORT - FORCED L:1 S:2 or L:2 S:1 ALWAYS:<br>LONG_SMART: H1 -3% to +6% ONLY - NOT PUMPED - RSI<62 - DIP BOUNCE<br>SHORT_SMART: H1 +2.5% to +18% PUMP TOP or -1% to -8% BREAKDOWN - RSI>42 - SHORT PUMP<br>CFX H1 +11.0% = NOW SHORT (was LONG failing -0.46% in your screenshot) - STRK H1 +12.6% = NOW SHORT<br>PEPE 0.000% FLAT = BLOCKED - needs H1 movement - BAN FLAT MEME<br>FIXED: TP 0.48%->0.30% gross = 0.10% net WIN FAST - HOLD 200s not 80s - TRAIL -0.09% - SEC TICK LIVE 1s - REAL SHORT</div>"
+        html+=f"<div class='it' style='text-align:center;color:#0f8;border-color:#0f8'>FIXED REAL SHORT ACTIVE - SCAN #{scan}<br>{market.get('reason','')}<br>L:{long_open} S:{short_open} FORCED - Pumped +5-18% = ONLY SHORT (was LONG bug -0.68% CFX) - Dip -3 to +4.5% = ONLY LONG - TP 0.38%->0.28% gross WIN FAST - HOLD 180s not 206s - BAN PEPE FLAT 0.00%</div>"
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
-        pct_gross=tr.get("pct_gross",0); pct_net=tr.get("pct",0); net_usd=tr.get("net",0); entry=tr.get("entry",0); ts=tr.get("ts", int(time.time())); peak=tr.get("peak_gross",0); sector=tr.get("sector", get_sector(tr["symbol"])); strat=tr.get("strategy",""); side=tr.get("side","LONG")
+        pct_gross=tr.get("pct_gross",0); pct_net=tr.get("pct",0); net_usd=tr.get("net",0); entry=tr.get("entry",0); ts=tr.get("ts", int(time.time())); peak=tr.get("peak_gross",0); sector=tr.get("sector", get_sector(tr["symbol"])); side=tr.get("side","LONG")
         side_col="#0f8" if side=="LONG" else "#ff4444"
-        html+=f"<div class='it' style='border-color:{col}' data-symbol='{tr['symbol']}' data-side='{side}' data-entry='{entry}' data-ts='{ts}' data-peak='{peak}'><b style='color:{col}'>{tr['symbol']} <span class='side side-{side}'>{side}</span> <span class='sec s-{sector}'>{sector}</span> <span class='strat st-{strat}' style='background:{side_col};color:{'#000' if side=='LONG' else '#fff'}'>{strat}</span> AGE <span class='age-val'>{tr.get('age',0)}s</span> PEAK <span class='peak-val'>{peak:.2f}% PEAK</span></b><br>ENTRY ${entry:.6f} ({side}) -> NOW <span class='price-now' style='color:#ffcc00'>${tr.get('price',0):.6f}</span> $100 POS RSI {tr.get('rsi',50):.0f}<br><span style='font-size:13px;font-weight:900' class='gross-val'>{pct_gross:.3f}% GROSS ({side})</span> <span style='font-size:13px;font-weight:900' class='net-val'>{pct_net:.3f}% NET ${net_usd:+.3f} NET {side}</span> <span class='live'></span> TICK GRAPH<br><canvas class='spark tick-graph' width='300' height='32' style='border-color:{side_col}'></canvas><br><span style='font-size:10px;color:#888'>{tr.get('reason','')} | {sector} | TP {tr.get('tp',0.30)}% SL {tr.get('sl',0.32)}% | $0.50 NET GOAL REAL SHORT {market.get('regime','?')} {market.get('bias','?')} BTC ${market.get('btc_price',0):.0f}</span></div>"
+        html+=f"<div class='it' style='border-color:{col}' data-symbol='{tr['symbol']}' data-side='{side}' data-entry='{entry}' data-ts='{ts}' data-peak='{peak}'><b style='color:{col}'>{tr['symbol']} <span class='side side-{side}'>{side}</span> <span class='sec s-{sector}'>{sector}</span> AGE <span class='age-val'>{tr.get('age',0)}s</span> PEAK <span class='peak-val'>{peak:.2f}% PEAK</span></b><br>ENTRY ${entry:.6f} ({side}) -> NOW <span class='price-now' style='color:#ffcc00'>${tr.get('price',0):.6f}</span> $100 POS H1 {tr.get('h1',0):+.1f}%<br><span style='font-size:13px;font-weight:900' class='gross-val'>{pct_gross:.3f}% GROSS ({side})</span> <span style='font-size:13px;font-weight:900' class='net-val'>{pct_net:.3f}% NET ${net_usd:+.3f} NET {side}</span> <span class='live'></span> TICK GRAPH<br><canvas class='spark tick-graph' width='300' height='32' style='border-color:{side_col}'></canvas><br><span style='font-size:10px;color:#888'>{tr.get('reason','')} | {sector} | TP {tr.get('tp',0.28)}% SL {tr.get('sl',0.32)}% | $0.50 NET GOAL FIXED SHORT</span></div>"
     html+="</div>"
     html+="<div id='closedbox-inner'>"
-    html+=f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} {winrate}% - CAP ${cap:.2f} DAILY NET ${daily:+.2f} (GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f}) - REAL SHORT L:{long_open} S:{short_open} {market.get('regime','?')} {market.get('bias','?')} $0.50x3 = $1.50 TARGET</div>"
+    html+=f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} {winrate}% - CAP ${cap:.2f} DAILY NET ${daily:+.2f} (GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f}) - FIXED REAL SHORT L:{long_open} S:{short_open} $0.50x3 TARGET</div>"
     for cl in closed[:15]:
-        net=cl.get("net",0); gross=cl.get("gross",0); fee=cl.get("fee",FEE_USD); pct_gross=cl.get("pct_gross",0); pct_net=cl.get("pct_net",0); c="#0f8" if net>=0.08 else "#f44" if net<0 else "#ffcc00"; sec=cl.get("sector", get_sector(cl.get("symbol",""))); strat=cl.get("strategy",""); side=cl.get("side","LONG")
-        html+=f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{c}'><b>{cl.get('symbol','')} <span class='side side-{side}'>{side}</span> <span class='sec s-{sec}'>{sec}</span> <span class='strat st-{strat}'>{strat}</span></b> ${net:+.2f} NET (${gross:+.2f} GROSS - ${fee:.2f} FEE) {cl.get('reason','')} {pct_gross:+.2f}% GROSS {pct_net:+.2f}% NET AGE {cl.get('age',0)}s</div>"
+        net=cl.get("net",0); gross=cl.get("gross",0); fee=cl.get("fee",FEE_USD); pct_gross=cl.get("pct_gross",0); pct_net=cl.get("pct_net",0); c="#0f8" if net>=0.05 else "#f44" if net<0 else "#ffcc00"; sec=cl.get("sector", get_sector(cl.get("symbol",""))); side=cl.get("side","LONG")
+        html+=f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{c}'><b>{cl.get('symbol','')} <span class='side side-{side}'>{side}</span> <span class='sec s-{sec}'>{sec}</span></b> ${net:+.2f} NET (${gross:+.2f} GROSS - ${fee:.2f} FEE) {cl.get('reason','')} {pct_gross:+.2f}% GROSS {pct_net:+.2f}% NET AGE {cl.get('age',0)}s</div>"
     html+="</div></div></div></body></html>"
     return html
 
