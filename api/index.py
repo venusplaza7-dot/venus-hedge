@@ -29,8 +29,7 @@ BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRE
 REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "true"
 POS_SIZE=env(["POS_SIZE"]) or "100"
 STATE_KEY="VENUS_V755_MERGED_HISTORY_100_REAL"
-OLD_KEYS=["VENUS_V752_RESTORED_SMART_100_REAL","VENUS_V750_LEARNING_AI_100_REAL","VENUS_V754_PROFITABLE_LEARNING_100_REAL","VENUS_V747_LOTSIZE_FIXED_100_REAL","VENUS_V748_LEARNING_AI_100_REAL","VENUS_V751_SMART_LEARNING_100_REAL","VENUS_V750_LEARN_100_REAL"]
-OLD_KEYS=["VENUS_V750_LEARNING_AI_100_REAL","VENUS_V747_LOTSIZE_FIXED_100_REAL","VENUS_V748_LEARNING_AI_100_REAL","VENUS_V751_SMART_LEARNING_100_REAL","VENUS_V750_LEARN_100_REAL","VENUS_V752_RESTORED_SMART_100_REAL"]
+OLD_KEYS=["VENUS_V752_RESTORED_SMART_100_REAL","VENUS_V755_MERGED_HISTORY_100_REAL","VENUS_V750_LEARNING_AI_100_REAL","VENUS_V747_LOTSIZE_FIXED_100_REAL","VENUS_V748_LEARNING_AI_100_REAL","VENUS_V751_SMART_LEARNING_100_REAL","VENUS_V750_LEARN_100_REAL","VENUS_V752_RESTORED_SMART_100_REAL"]
 
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
@@ -104,67 +103,49 @@ def round_qty(qty, step):
     return int(floored)
 
 
-def load_state():
+def merge_keep_track():
+    # This will run once to merge old v752 data if needed - keep track
     s=kv_get(STATE_KEY)
-    # Try to merge all old keys if new empty or small
-    if not s or s.get("total",0) < 10:
-        all_states=[]
+    if s and s.get("total",0)>=200:
+        return s
+    # Try old v752 key
+    old=kv_get("VENUS_V752_RESTORED_SMART_100_REAL")
+    if old and s:
+        # Keep bigger closed list
+        if old.get("total",0) > s.get("total",0):
+            # Merge learn
+            for sym,data in old.get("learn",{}).get("coins",{}).items():
+                if sym not in s["learn"]["coins"]:
+                    s["learn"]["coins"][sym]=data
+            s["closed"]=old.get("closed",[])[:100] + s.get("closed",[])[:20]
+            s["total"]=len(s["closed"])
+            s["wins"]=sum(1 for c in s["closed"] if c["net"]>0)
+            s["loss"]=s["total"]-s["wins"]
+            kv_set(STATE_KEY, s)
+    return s
+
+def load_state():
+
+    s=kv_get(STATE_KEY)
+    # Keep track merge
+    if s and s.get("total",0)>0:
+        pass
+    else:
+        s=merge_keep_track() if "merge_keep_track" in globals() else s
+    if not s:
         for ok in OLD_KEYS:
-            os_state=kv_get(ok)
-            if os_state and isinstance(os_state, dict):
-                all_states.append((ok, os_state))
-        if all_states:
-            # Find biggest state by total trades
-            all_states_sorted=sorted(all_states, key=lambda x: x[1].get("total",0), reverse=True)
-            biggest_key, biggest = all_states_sorted[0]
-            if not s:
-                s=biggest
-                print(f"Restored from {biggest_key} total={biggest.get('total')}")
-            else:
-                # Merge closed histories
-                merged_closed = s.get("closed",[])[:]
-                existing_syms=set()
-                for c in merged_closed:
-                    existing_syms.add((c.get("symbol"), c.get("age"), c.get("net")))
-                for _, st in all_states:
-                    for cl in st.get("closed",[])[:]:
-                        key=(cl.get("symbol"), cl.get("age"), cl.get("net"))
-                        if key not in existing_syms:
-                            merged_closed.append(cl)
-                            existing_syms.add(key)
-                # Sort by time? Keep latest 100
-                merged_closed = merged_closed[:200]
-                s["closed"]=merged_closed
-                s["wins"]=sum(1 for c in merged_closed if c["net"]>0)
-                s["loss"]=sum(1 for c in merged_closed if c["net"]<=0)
-                s["total"]=len(merged_closed)
-                s["daily"]=sum(c["net"] for c in merged_closed)
-                # Merge learn coins
-                for _, st in all_states:
-                    for sym, data in st.get("learn",{}).get("coins",{}).items():
-                        if sym not in s["learn"]["coins"]:
-                            s["learn"]["coins"][sym]=data
-                        else:
-                            # Merge pnl
-                            s["learn"]["coins"][sym]["w"]+=data.get("w",0)
-                            s["learn"]["coins"][sym]["l"]+=data.get("l",0)
-                            s["learn"]["coins"][sym]["pnl"]+=data.get("pnl",0.0)
-                # Keep cap from biggest profitable? But use latest cap if higher
-                max_cap = max([x[1].get("cap",300) for x in all_states]+[s.get("cap",300)])
-                # If v754 profitable 307 > v752 275, keep 307
-                if s.get("cap",0) < max_cap and max_cap < 350:
-                    s["cap"]=max_cap
-                # Save merged
-                kv_set(STATE_KEY, s)
-    if not s: s={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"real_orders":[],"learn":{"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0,"avg_win":0.0,"avg_loss":0.0}}
+            s=kv_get(ok)
+            if s and isinstance(s, dict) and s.get("cap",0)>0:
+                break
+    
+    if not s: s={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"real_orders":[],"learn":{"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0}}
     if s.get("cap",0)<100: s["cap"]=300.0
-    if "learn" not in s: s["learn"]={"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0,"avg_win":0.0,"avg_loss":0.0}
+    if "learn" not in s: s["learn"]={"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0}
     if "avg_win" not in s["learn"]: s["learn"]["avg_win"]=0.0
     if "avg_loss" not in s["learn"]: s["learn"]["avg_loss"]=0.0
     now=int(time.time())
     s["learn"]["blacklist"]={k:v for k,v in s["learn"].get("blacklist",{}).items() if v>now}
     return s
-
 
 def learn_from_trade(state, symbol, net, reason):
     L=state["learn"]
@@ -362,7 +343,7 @@ def render(state):
     bad = sorted([(k,v) for k,v in learn.get("coins",{}).items() if v.get("pnl",0)<0], key=lambda x: x[1]["pnl"])[:2]
     if bad: learn_txt+= " | BAD: " + ", ".join([f"{k} {v['w']}W{v['l']}L ${v['pnl']:+.1f}" for k,v in bad])
     html=f"""<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{background:#000;color:#0f8;font-family:monospace;font-size:11px;margin:0;padding:4px}} .foot{{border:1px solid #333;padding:6px;margin:4px 0;background:#0a0a0a}} .bigrow{{display:flex;gap:4px}} .bigbox{{flex:1;border:1px solid #333;padding:6px;text-align:center;background:#111}} .yellowbar{{background:#ffcc00;color:#000;padding:6px;font-weight:bold;margin:4px 0;font-size:10px}}</style></head><body>
-<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v755 MERGED HISTORY $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - {"LEARNING" if learn else ""}</div>
+<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v756 SMART KEEP TRACK $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - {"LEARNING" if learn else ""}</div>
 <div class="bigrow"><div class="bigbox"><div style="font-size:10px;color:#aaa">CAP $300 REAL</div><div style="font-size:26px;font-weight:bold;color:#ffcc00">${cap:.2f}</div><div style="font-size:10px;color:#aaa">WITH OPEN {cap+unreal:.2f}</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">TODAY / $50</div><div style="font-size:26px;font-weight:bold;color:{'#0f8' if daily>=0 else '#f44'}">${daily:+.2f}</div><div style="font-size:10px;color:#aaa">{daily_pct}% OF $50 TARGET</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">WIN {winrate}%</div><div style="font-size:18px;font-weight:bold;color:#0f8">W:{wins} L:{loss}<br>T:{tot}</div><div style="font-size:10px;color:#aaa">3 MAX PUMP+WHALE LEARN</div></div></div>
 <div style="padding:6px;background:#111;border:1px solid #0ff;margin:4px"><div style="color:#0ff;font-size:10px">{learn_txt}</div></div>
 <div class="yellowbar">PUMP+WHALE HUNTER {len(pumps)} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'% '+pumps[0].get('tier','') if pumps else 'NO PUMPS'} - TODAY $300 REAL HUNT LEARN</div>"""
@@ -379,7 +360,7 @@ def render(state):
     html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING}</div>"""
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v755 MERGED HISTORY $300 REAL - TP 2.0% SL 0.6% - KEEPS OLD 224 TRADES - 3x$100 - LEARN FROM MISTAKES - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a></div></body></html>"""
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v756 SMART TRACK $300 REAL - SCAN 462 KEPT - TP 2.0% SL 0.6% - 3x$100 - LEARN FROM MISTAKES - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a></div></body></html>"""
     return html
 
 @app.route('/', defaults={'path': ''})
