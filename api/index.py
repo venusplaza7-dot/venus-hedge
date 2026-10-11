@@ -28,7 +28,8 @@ BINANCE_KEY=env(["BINANCE_API_KEY","BINANCE_API_KEY_TESTNET"])
 BINANCE_SECRET=env(["BINANCE_API_SECRET","BINANCE_SECRET_KEY","BINANCE_API_SECRET_TESTNET","BINANCE_API_SECRET_KEY"])
 REAL_TRADING=env(["BINANCE_REAL_TRADING"]) or "true"
 POS_SIZE=env(["POS_SIZE"]) or "100"
-STATE_KEY="VENUS_V750_LEARN_100_REAL"
+STATE_KEY="VENUS_V754_PROFITABLE_LEARNING_100_REAL"
+OLD_KEYS=["VENUS_V750_LEARNING_AI_100_REAL","VENUS_V747_LOTSIZE_FIXED_100_REAL","VENUS_V748_LEARNING_AI_100_REAL","VENUS_V751_SMART_LEARNING_100_REAL","VENUS_V750_LEARN_100_REAL","VENUS_V752_RESTORED_SMART_100_REAL"]
 
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
@@ -112,6 +113,8 @@ def load_state():
     if not s: s={"cap":300.0,"daily":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"real_orders":[],"learn":{"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0}}
     if s.get("cap",0)<100: s["cap"]=300.0
     if "learn" not in s: s["learn"]={"coins":{},"blacklist":{},"tp_adj":1.0,"sl_adj":1.0,"avoid_pump":0}
+    if "avg_win" not in s["learn"]: s["learn"]["avg_win"]=0.0
+    if "avg_loss" not in s["learn"]: s["learn"]["avg_loss"]=0.0
     now=int(time.time())
     s["learn"]["blacklist"]={k:v for k,v in s["learn"].get("blacklist",{}).items() if v>now}
     return s
@@ -147,6 +150,33 @@ def learn_from_trade(state, symbol, net, reason):
             L["sl_adj"]=1.0
             L["tp_adj"]=1.0
             L["avoid_pump"]=0
+
+
+def get_profitable_levels(state):
+    L=state.get("learn",{})
+    # Base profitable levels: TP 2.0% SL 0.6% = R:R 3.33
+    base_tp=2.0
+    base_sl=0.6
+    # Adjust based on recent performance
+    closed=state.get("closed",[])[:20]
+    if closed:
+        wins=[c for c in closed if c["net"]>0]
+        losses=[c for c in closed if c["net"]<=0]
+        if wins and losses:
+            avg_win=sum(c["net"] for c in wins)/len(wins)
+            avg_loss=abs(sum(c["net"] for c in losses)/len(losses))
+            if avg_loss>0 and avg_win/avg_loss < 1.5:
+                # Losing R:R, increase TP, tighten SL
+                base_tp=2.5
+                base_sl=0.5
+            elif avg_win>1.2:
+                # Winning big, let runners run
+                base_tp=3.0
+                base_sl=0.6
+    # Adaptive from learn
+    L_tp=L.get("tp_adj",1.0)
+    L_sl=L.get("sl_adj",1.0)
+    return base_tp*L_tp, base_sl*L_sl
 
 def is_blacklisted(state, symbol):
     return symbol in state["learn"].get("blacklist",{}) and state["learn"]["blacklist"][symbol]>int(time.time())
@@ -285,7 +315,7 @@ def render(state):
     bad = sorted([(k,v) for k,v in learn.get("coins",{}).items() if v.get("pnl",0)<0], key=lambda x: x[1]["pnl"])[:2]
     if bad: learn_txt+= " | BAD: " + ", ".join([f"{k} {v['w']}W{v['l']}L ${v['pnl']:+.1f}" for k,v in bad])
     html=f"""<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{background:#000;color:#0f8;font-family:monospace;font-size:11px;margin:0;padding:4px}} .foot{{border:1px solid #333;padding:6px;margin:4px 0;background:#0a0a0a}} .bigrow{{display:flex;gap:4px}} .bigbox{{flex:1;border:1px solid #333;padding:6px;text-align:center;background:#111}} .yellowbar{{background:#ffcc00;color:#000;padding:6px;font-weight:bold;margin:4px 0;font-size:10px}}</style></head><body>
-<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v752 RESTORED SMART LEARNING $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - {"LEARNING" if learn else ""}</div>
+<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v754 PROFITABLE LEARNING $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - {"LEARNING" if learn else ""}</div>
 <div class="bigrow"><div class="bigbox"><div style="font-size:10px;color:#aaa">CAP $300 REAL</div><div style="font-size:26px;font-weight:bold;color:#ffcc00">${cap:.2f}</div><div style="font-size:10px;color:#aaa">WITH OPEN {cap+unreal:.2f}</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">TODAY / $50</div><div style="font-size:26px;font-weight:bold;color:{'#0f8' if daily>=0 else '#f44'}">${daily:+.2f}</div><div style="font-size:10px;color:#aaa">{daily_pct}% OF $50 TARGET</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">WIN {winrate}%</div><div style="font-size:18px;font-weight:bold;color:#0f8">W:{wins} L:{loss}<br>T:{tot}</div><div style="font-size:10px;color:#aaa">3 MAX PUMP+WHALE LEARN</div></div></div>
 <div style="padding:6px;background:#111;border:1px solid #0ff;margin:4px"><div style="color:#0ff;font-size:10px">{learn_txt}</div></div>
 <div class="yellowbar">PUMP+WHALE HUNTER {len(pumps)} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'% '+pumps[0].get('tier','') if pumps else 'NO PUMPS'} - TODAY $300 REAL HUNT LEARN</div>"""
@@ -302,7 +332,7 @@ def render(state):
     html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING}</div>"""
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v752 RESTORED SMART LEARNING $300 REAL - 3x$100 - LEARN FROM MISTAKES - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a></div></body></html>"""
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v754 PROFITABLE $300 REAL - TP 2.0% SL 0.6% R:R 3.33 - 3x$100 - LEARN FROM MISTAKES - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a></div></body></html>"""
     return html
 
 @app.route('/', defaults={'path': ''})
