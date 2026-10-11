@@ -177,14 +177,13 @@ def learn_from_trade_orig(state, symbol, net, reason):
     if net < -2.0:
         L.setdefault("blacklist",{})[symbol]=int(time.time())+86400
     closed=state.get("closed",[])[:6]
-    if len(closed)>=5:
-        recent_w = sum(1 for x in closed[:5] if x["net"]>0)
-        if recent_w<=1:
-            L["avoid_pump"]=1
-            L["sl_adj"]=0.7
-            L["tp_adj"]=0.8
-        elif recent_w>=4:
-            L["avoid_pump"]=0
+    # ULTRA PROFITABLE: DISABLE bad adaptive that makes TP smaller when losing
+    # Keep TP 2.5% SL 0.5% always for R:R 5:1
+    L["sl_adj"]=1.0
+    L["tp_adj"]=1.0
+    L["avoid_pump"]=0
+    # Fix TP/SL fixed
+    
             L["sl_adj"]=1.0
             L["tp_adj"]=1.3
         else:
@@ -220,6 +219,12 @@ def get_profitable_levels(state):
     return base_tp*L_tp, base_sl*L_sl
 
 def is_blacklisted(state, symbol):
+    if symbol=="MBL":
+        # Always blacklist MBL for 7 days if it lost > $5
+        coins=state.get("learn",{}).get("coins",{}).get("MBL",{})
+        if coins.get("pnl",0) < -5:
+            return True
+
     return symbol in state["learn"].get("blacklist",{}) and state["learn"]["blacklist"][symbol]>int(time.time())
 
 def get_adaptive(state):
@@ -356,13 +361,14 @@ def render(state):
     bad = sorted([(k,v) for k,v in learn.get("coins",{}).items() if v.get("pnl",0)<0], key=lambda x: x[1]["pnl"])[:2]
     if bad: learn_txt+= " | BAD: " + ", ".join([f"{k} {v['w']}W{v['l']}L ${v['pnl']:+.1f}" for k,v in bad])
     html=f"""<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{background:#000;color:#0f8;font-family:monospace;font-size:11px;margin:0;padding:4px}} .foot{{border:1px solid #333;padding:6px;margin:4px 0;background:#0a0a0a}} .bigrow{{display:flex;gap:4px}} .bigbox{{flex:1;border:1px solid #333;padding:6px;text-align:center;background:#111}} .yellowbar{{background:#ffcc00;color:#000;padding:6px;font-weight:bold;margin:4px 0;font-size:10px}}</style></head><body>
-<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v757 ULTRA PROFITABLE KEEP TRACK $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - {"LEARNING" if learn else ""}</div>
+<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v758 ULTRA FIXED PROFITABLE $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - {"LEARNING" if learn else ""}</div>
 <div class="bigrow"><div class="bigbox"><div style="font-size:10px;color:#aaa">CAP $300 REAL</div><div style="font-size:26px;font-weight:bold;color:#ffcc00">${cap:.2f}</div><div style="font-size:10px;color:#aaa">WITH OPEN {cap+unreal:.2f}</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">TODAY / $50</div><div style="font-size:26px;font-weight:bold;color:{'#0f8' if daily>=0 else '#f44'}">${daily:+.2f}</div><div style="font-size:10px;color:#aaa">{daily_pct}% OF $50 TARGET</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">WIN {winrate}%</div><div style="font-size:18px;font-weight:bold;color:#0f8">W:{wins} L:{loss}<br>T:{tot}</div><div style="font-size:10px;color:#aaa">3 MAX PUMP+WHALE LEARN</div></div></div>
 <div style="padding:6px;background:#111;border:1px solid #0ff;margin:4px"><div style="color:#0ff;font-size:10px">{learn_txt}</div></div>
 <div class="yellowbar">PUMP+WHALE HUNTER {len(pumps)} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'% '+pumps[0].get('tier','') if pumps else 'NO PUMPS'} - TODAY $300 REAL HUNT LEARN</div>"""
     # Filter scam low-price
     pumps=[p for p in pumps if p.get('price',1) >= 0.005]
-    pumps=[p for p in pumps if p.get('price',1) >= 0.005]
+    # Filter MBL scam
+    pumps=[p for p in pumps if p.get('price',1) >= 0.01 and p.get('symbol','') not in ["MBL"]]
     for fp in pumps[:10]:
         html+=f"""<div class="foot" style="border-color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'}"><span style="color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'};font-weight:bold">{fp.get('tier','PUMP')} #{fp['id']} {fp['symbol']} H1 +{fp['h1']:.1f}% {fp['type']}</span><br><span style="color:#0f8">VOL ${fp['vol']} PRICE ${fp['price']:.6f} SCORE {fp['score']:.1f}</span><br><span style="color:#ffcc00">POS ${POS_SIZE} TP {tp_a:.1f}% | SL {sl_a:.1f}%</span></div>"""
     html+=f"""<div class="yellowbar">OPEN {len(open_tr)}/3 MAX $300 REAL - LEARN AI - TP {tp_a:.1f}% | SL {sl_a:.1f}% | POS ${POS_SIZE}</div>"""
@@ -376,7 +382,7 @@ def render(state):
     html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING}</div>"""
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v757 ULTRA PROFIT $300 REAL - KEEPS 473 - TP 2.5% SL 0.5% AVOIDS MBL - 3x$100 - LEARN FROM MISTAKES - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a></div></body></html>"""
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v758 ULTRA FIXED PROFIT $300 REAL - KEEPS 480 - TP 2.5% SL 0.5% FIXES AVOID PUMP BUG - 3x$100 - LEARN FROM MISTAKES - KV:{'OK' if KV_URL else 'MISS'} SCAN #{scan} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#0f8">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50</a></div></body></html>"""
     return html
 
 @app.route('/', defaults={'path': ''})
