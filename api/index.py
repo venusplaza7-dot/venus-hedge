@@ -1,5 +1,5 @@
 from flask import Flask, request, Response
-import os, json, time, urllib.request, urllib.parse, hmac, hashlib, math
+import os, json, time, urllib.request
 app = Flask(__name__)
 
 def env(k):
@@ -150,8 +150,8 @@ def do_cron():
             tr["net"]=POS*pct/100
 
             should=None
-            if pct>=TP: should=f"SHARK TP {TP}% +{pct:.2f}%"
-            elif pct<=-SL: should=f"SHARK SL -{SL}% {pct:.1f}%"
+            if pct>=TP: should=f"SHARK TP {TP}% +{pct:.2f}% JUMP"
+            elif pct<=-SL: should=f"SHARK SL -{SL}% {pct:.1f}% JUMP"
             elif peak>=0.7 and pct<peak-0.18 and pct>0.35: should=f"TRAIL +{peak:.1f}->{pct:.1f}%"
             elif age>400 and pct>0.35: should=f"TIME 400s {pct:.1f}% NEXT"
             elif age>1200: should=f"TIME 1200s FORCE {pct:.1f}% NEXT"
@@ -190,7 +190,7 @@ def do_cron():
     state["total"]=tot
     state["scan"]=scan
     kv_set(STATE_KEY, state)
-    return {"ok":True,"scan":scan,"open":len(final),"cap":cap,"daily":daily,"sharks":len(sharks)}
+    return {"ok":True,"scan":scan,"open":len(final),"cap":cap,"daily":daily,"sharks":len(sharks),"total":tot,"wins":wins,"loss":loss}
 
 def render(state):
     open_tr=state.get("open",[])
@@ -205,6 +205,102 @@ def render(state):
     winrate=int(wins/tot*100) if tot>0 else 0
     unreal=sum([t.get("net",0) for t in open_tr])
 
+    html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
+    html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:12px;margin:0;padding:8px}"
+    html += ".h{background:#ffcc00;color:#000;padding:12px;text-align:center;font-weight:900;font-size:14px;position:sticky;top:0;z-index:10}"
+    html += ".g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}"
+    html += ".c{background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;border-radius:8px}"
+    html += ".b{padding:8px;margin:8px 0;border-radius:6px;font-weight:700;font-size:11px}"
+    html += ".by{background:#ffcc00;color:#000} .bb{background:#00d4ff;color:#000} .bd{background:#222;color:#888}"
+    html += ".it{background:#111;border:1px solid #333;padding:10px;margin:6px 0;border-radius:8px}"
+    html += ".live{width:10px;height:10px;background:#0f0;border-radius:50%;display:inline-block;animation:blink 1s infinite} @keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}"
+    html += "</style></head><body>"
+    html += f"<div class='h'><span class='live'></span> VENUS v779 LIVE AUTO SHARK - SCAN #{scan} - {MAXP} MAX - TP {TP}% - <span id='clock'>LIVE</span></div>"
+    html += "<div class='g'>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>CAP $300 REAL</div><div style='font-size:24px;color:#ffcc00;font-weight:900' id='cap'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN <span id='withopen'>{cap+unreal:.2f}</span> <span style='color:#0f0' id='unreal'>{unreal:+.2f}</span></div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>TODAY LIVE</div><div style='font-size:24px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900' id='daily'>${daily:+.2f}</div><div style='font-size:10px'>W:<span id='wins'>{wins}</span> L:<span id='loss'>{loss}</span> T:<span id='total'>{tot}</span> <span id='winrate'>{winrate}%</span></div></div>"
+    html += f"<div class='c'><div style='font-size:10px;color:#888'>AUTO SCAN</div><div style='font-size:14px;color:#0f8;font-weight:900'>LIVE <span id='scan'>{scan}</span></div><div style='font-size:10px'>Next scan <span id='countdown'>10s</span> - Auto TP {TP}%</div></div>"
+    html += "</div>"
+    html += "<div id='sharkbox'><div class='b bd'>Loading sharks...</div></div>"
+    html += "<div id='openbox'></div>"
+    html += "<div id='closedbox'></div>"
+    html += f"<div style='text-align:center;padding:12px'><a href='/api/cron?key={ADMIN_KEY}&cron=1' style='background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:900;border-radius:8px'>MANUAL CRON</a> "
+    html += f"<a href='/api/unpause?key={ADMIN_KEY}' style='background:#222;color:#aaa;padding:10px 14px;text-decoration:none;border-radius:8px;margin-left:6px'>UNPAUSE</a> "
+    html += f"<a href='/api/reset?key={ADMIN_KEY}' style='background:#333;color:#888;padding:10px 14px;text-decoration:none;border-radius:8px;margin-left:6px'>RESET $300</a></div>"
+
+    # LIVE JS - auto refreshes data without page reload
+    html += """
+<script>
+let scanNum = """ + str(scan) + """;
+function fmt(n){return n.toFixed(2)}
+
+async function loadLive(){
+  try{
+    // Fetch fresh state via cron endpoint (does scan + returns data)
+    const res = await fetch('/api/cron?key=""" + ADMIN_KEY + """&cron=1');
+    const data = await res.json();
+    if(data.cap!==undefined){
+      document.getElementById('cap').textContent = '$'+fmt(data.cap);
+      document.getElementById('daily').textContent = (data.daily>=0?'+':'')+'$'+fmt(data.daily);
+      document.getElementById('scan').textContent = data.scan;
+      scanNum = data.scan;
+    }
+    // Fetch page HTML for open/closed rendering without full reload
+    const pageRes = await fetch('/?key=""" + ADMIN_KEY + """&partial=1');
+    const html = await pageRes.text();
+    // Parse sharks and open from HTML
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html,'text/html');
+    const sharkEl = doc.getElementById('sharkbox-inner');
+    const openEl = doc.getElementById('openbox-inner');
+    const closedEl = doc.getElementById('closedbox-inner');
+    if(sharkEl) document.getElementById('sharkbox').innerHTML = sharkEl.innerHTML;
+    if(openEl) document.getElementById('openbox').innerHTML = openEl.innerHTML;
+    if(closedEl) document.getElementById('closedbox').innerHTML = closedEl.innerHTML;
+    
+    // Update live counters
+    if(data.wins!==undefined){
+      document.getElementById('wins').textContent = data.wins||0;
+      document.getElementById('loss').textContent = data.loss||0;
+      document.getElementById('total').textContent = data.total||0;
+    }
+  }catch(e){console.log('live err',e)}
+}
+
+async function loadPartial(){
+  try{
+    const pageRes = await fetch(window.location.href);
+    const html = await pageRes.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html,'text/html');
+    const sharkEl = doc.getElementById('sharkbox-inner');
+    const openEl = doc.getElementById('openbox-inner');
+    const closedEl = doc.getElementById('closedbox-inner');
+    if(sharkEl) document.getElementById('sharkbox').innerHTML = sharkEl.innerHTML;
+    if(openEl) document.getElementById('openbox').innerHTML = openEl.innerHTML;
+    if(closedEl) document.getElementById('closedbox').innerHTML = closedEl.innerHTML;
+  }catch(e){}
+}
+
+// Auto countdown and refresh every 10s
+let count=10;
+setInterval(()=>{
+  count--;
+  document.getElementById('countdown').textContent = count+'s';
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+  if(count<=0){
+    count=10;
+    loadLive();
+  }
+},1000);
+
+// Initial load after 2s
+setTimeout(loadPartial, 1000);
+</script>
+"""
+
+    # Hidden partials for JS to parse
+    # Sharks
     try:
         tickers=get_tickers()
         sharks=[]
@@ -215,48 +311,64 @@ def render(state):
         sharks=sorted(sharks, key=lambda x: x["score"], reverse=True)[:5]
     except:
         sharks=[]
-        tickers=[]
 
-    # SIMPLE HTML - no f-string brace issues
-    html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
-    html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:12px;margin:0;padding:8px}"
-    html += ".h{background:#ffcc00;color:#000;padding:12px;text-align:center;font-weight:900;font-size:14px}"
-    html += ".g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}"
-    html += ".c{background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;border-radius:8px}"
-    html += ".b{padding:8px;margin:8px 0;border-radius:6px;font-weight:700;font-size:11px}"
-    html += ".by{background:#ffcc00;color:#000} .bb{background:#00d4ff;color:#000} .bd{background:#222;color:#888}"
-    html += ".it{background:#111;border:1px solid #333;padding:10px;margin:6px 0;border-radius:8px}"
-    html += "</style></head><body>"
-    html += f"<div class='h'>VENUS v778 SHARK FOOTPRINT FIXED - SCAN #{scan} - {MAXP} MAX - TP {TP}% - ORIGINAL PLAN</div>"
-    html += "<div class='g'>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>CAP</div><div style='font-size:24px;color:#ffcc00;font-weight:900'>${cap:.2f}</div><div style='font-size:10px'>WITH OPEN {cap+unreal:.2f}</div></div>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>TODAY</div><div style='font-size:24px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f}</div><div style='font-size:10px'>STOP -15 PAUSE {int((learn.get('pause_until',0)-time.time())/60) if learn.get('pause_until',0)>time.time() else 0}m</div></div>"
-    html += f"<div class='c'><div style='font-size:10px;color:#888'>WIN {winrate}%</div><div style='font-size:18px;color:#0f8;font-weight:900'>W:{wins} L:{loss} T:{tot}</div><div style='font-size:10px'>SHARK TP {TP}% SL {SL}%</div></div>"
-    html += "</div>"
-
+    html += "<div style='display:none'><div id='sharkbox-inner'>"
     if sharks:
-        top = sharks[0]
-        html += f"<div class='b by'>SHARK HUNTER {len(sharks)} - TOP {top['symbol']} +{top['h1']:.1f}% SCORE {top['score']:.0f} VOL ${top['vol']} FROM_LOW {top['from_low']:.1f}% - EARLY 2.8-12% VOL>8M</div>"
+        top=sharks[0]
+        html += f"<div class='b by'>SHARK HUNTER {len(sharks)} - TOP {top['symbol']} +{top['h1']:.1f}% SCORE {top['score']:.0f} VOL ${top['vol']} - AUTO SCAN EVERY 10s</div>"
         for s in sharks[:4]:
-            html += f"<div class='it' style='border-color:#ffcc00'><b style='color:#ffcc00'>#{sharks.index(s)+1} {s['symbol']} H1 +{s['h1']:.1f}% SCORE {s['score']:.0f}</b><br><span style='color:#0f8'>VOL ${s['vol']} PRICE ${s['price']:.6f} FROM_LOW {s['from_low']:.1f}% NEAR_HIGH {s['near_high']:.1f}%</span><br>POS $100 TP {TP}% SL {SL}%</div>"
+            html += f"<div class='it' style='border-color:#ffcc00'><b style='color:#ffcc00'>#{sharks.index(s)+1} {s['symbol']} H1 +{s['h1']:.1f}% SCORE {s['score']:.0f}</b><br><span style='color:#0f8'>VOL ${s['vol']} PRICE ${s['price']:.6f} FROM_LOW {s['from_low']:.1f}%</span><br>POS $100 TP {TP}% SL {SL}%</div>"
     else:
-        html += "<div class='b bd'>SHARK HUNTER 0 - NO MOVING COINS 2.8-12% - MARKET DEAD - WAITING NEXT WAVE</div>"
-
-    html += f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX - SHARK TP {TP}% INSTANT JUMP NEXT - SL {SL}% - AGE 1200s FORCE</div>"
-    if not open_tr:
-        html += "<div class='it' style='text-align:center;color:#666'>NO OPEN - WAITING SHARK 2.8-12% - SCANNING ALL COINS CONTINUOUSLY</div>"
-    for tr in open_tr:
-        col = "#0f8" if tr.get("pct",0)>=0 else "#f44"
-        html += f"<div class='it' style='border-color:{col}'><b style='color:{col}'>{tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s PEAK {tr.get('peak',0):.1f}% SCORE {tr.get('score',0):.0f}</b><br>ENTRY ${tr['entry']:.6f} -> NOW ${tr['price']:.6f} H1 +{tr.get('h1',0):.1f}%<br><span style='color:{col};font-size:18px;font-weight:900'>{tr.get('pct',0):+.2f}% ${tr.get('net',0):+.2f} REAL</span><br><span style='font-size:10px;color:#888'>TP {TP}% SL {SL}% QTY {tr.get('qty',0):.1f}</span></div>"
-
-    html += f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} T:{tot} CAP ${cap:.2f} DAILY ${daily:+.2f}</div>"
-    for cl in closed[:15]:
-        c = "#0f8" if cl["net"]>0 else "#f44"
-        html += f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{c}'><b>{cl['symbol']}</b> ${cl['net']:+.2f} {cl['reason']} {cl['pct']:+.1f}% AGE {cl['age']}s</div>"
+        html += "<div class='b bd'>SHARK HUNTER 0 - NO MOVING COINS 2.8-12% - WAITING NEXT WAVE - AUTO SCANNING</div>"
     html += "</div>"
-    html += f"<div style='text-align:center;padding:12px'><a href='/api/cron?key={ADMIN_KEY}&cron=1' style='background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:900;border-radius:8px'>CRON v778 SHARK - CAP ${cap:.2f} - {len(sharks)} SHARKS</a> "
-    html += f"<a href='/api/unpause?key={ADMIN_KEY}' style='background:#222;color:#aaa;padding:10px 14px;text-decoration:none;border-radius:8px;margin-left:6px'>UNPAUSE</a> "
-    html += f"<a href='/api/reset?key={ADMIN_KEY}' style='background:#333;color:#888;padding:10px 14px;text-decoration:none;border-radius:8px;margin-left:6px'>RESET $300</a></div>"
+
+    html += "<div id='openbox-inner'>"
+    html += f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX - LIVE SEC MOVING - TP {TP}% AUTO JUMP - <span class='live'></span> LIVE</div>"
+    if not open_tr:
+        html += "<div class='it' style='text-align:center;color:#666'>NO OPEN - WAITING SHARK 2.8-12% - AUTO SCAN EVERY 10s</div>"
+    for tr in open_tr:
+        col="#0f8" if tr.get("pct",0)>=0 else "#f44"
+        html += f"<div class='it' style='border-color:{col}'><b style='color:{col}'>{tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s PEAK {tr.get('peak',0):.1f}% SCORE {tr.get('score',0):.0f}</b><br>ENTRY ${tr['entry']:.6f} -> NOW <span style='color:#ffcc00'>${tr['price']:.6f}</span> H1 +{tr.get('h1',0):.1f}%<br><span style='color:{col};font-size:18px;font-weight:900' class='live-pct' data-entry='{tr['entry']}' data-symbol='{tr['symbol']}'>{tr.get('pct',0):+.2f}% ${tr.get('net',0):+.2f} REAL</span> <span class='live'></span> LIVE<br><span style='font-size:10px;color:#888'>TP {TP}% SL {SL}% QTY {tr.get('qty',0):.1f}</span></div>"
+    html += "</div>"
+
+    html += "<div id='closedbox-inner'>"
+    html += f"<div style='background:#111;padding:10px;margin:8px 0;border-radius:8px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:<span id='cwins'>{wins}</span> L:<span id='closs'>{loss}</span> T:<span id='ctotal'>{tot}</span> CAP ${cap:.2f} DAILY ${daily:+.2f} - AUTO UPDATES</div>"
+    for cl in closed[:15]:
+        c="#0f8" if cl["net"]>0 else "#f44"
+        html += f"<div style='padding:4px 0;border-bottom:1px solid #222;color:{c}'><b>{cl['symbol']}</b> ${cl['net']:+.2f} {cl['reason']} {cl['pct']:+.1f}% AGE {cl['age']}s</div>"
+    html += "</div></div>"
+    html += "</div>"
+
+    # Live price ticker via Binance WS simulation with polling
+    html += """
+<script>
+// Live price moving every second - fetch Binance ticker for open symbols
+async function updateLivePrices(){
+  try{
+    const res = await fetch('https://data-api.binance.vision/api/v3/ticker/price');
+    const all = await res.json();
+    const map={};
+    all.forEach(t=>{map[t.symbol]=parseFloat(t.price)});
+    document.querySelectorAll('.live-pct').forEach(el=>{
+      const sym = el.dataset.symbol+'USDT';
+      const entry = parseFloat(el.dataset.entry);
+      const now = map[sym];
+      if(now && entry){
+        const pct = (now-entry)/entry*100;
+        const net = 100*pct/100;
+        el.textContent = (pct>=0?'+':'')+pct.toFixed(2)+'% $'+(net>=0?'+':'')+net.toFixed(2)+' REAL';
+        el.style.color = pct>=0?'#0f8':'#f44';
+        // update price display
+        const priceSpan = el.parentElement.querySelector('span[style*=\"#ffcc00\"]');
+        if(priceSpan) priceSpan.textContent = '$'+now.toFixed(6);
+      }
+    });
+  }catch(e){}
+}
+setInterval(updateLivePrices, 2000);
+updateLivePrices();
+</script>
+"""
     html += "</body></html>"
     return html
 
@@ -351,4 +463,4 @@ def catch_all(path):
         h=render(st)
         return Response(h, mimetype="text/html")
     except Exception as e:
-        return Response(f"<html><body><h1>Error: {str(e)[:500]}</h1><p>Try <a href='/api/reset?key={ADMIN_KEY}'>RESET</a></p></body></html>", mimetype="text/html", status=200)
+        return Response(f"<html><body><h1>Error: {str(e)[:500]}</h1><p><a href='/api/reset?key={ADMIN_KEY}'>RESET</a></p></body></html>", mimetype="text/html", status=200)
