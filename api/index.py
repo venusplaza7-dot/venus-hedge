@@ -155,31 +155,42 @@ def is_blacklisted(state, symbol):
 def do_cron():
     state=load_state()
     tickers, base = get_tickers()
-    # FOOTPRINT + BAD FILTER - Avoid +50% pumped, avoid BAD coins, find early 2-10%
-    BAD_COINS=set([k for k,v in state.get("learn",{}).get("coins",{}).items() if v.get("pnl",0)<-8])
+    # FOOTPRINT SMART - Filter BAD, avoid +50% pumped, find early 2-10%
+    bad_coins=set([k for k,v in state.get("learn",{}).get("coins",{}).items() if v.get("pnl",0)<-5])
     pumps=[]
     for t in tickers:
         try:
             sym=t.get("symbol","")
             if not sym.endswith("USDT"): continue
-            price=float(t.get("lastPrice","0"))
-            if price < 0.01: continue
-            if sym.startswith("MBL"): continue
+            base_sym=sym.replace("USDT","")
+            if base_sym in bad_coins: continue
+            if base_sym=="MBL": continue
             if "UP" in sym or "DOWN" in sym or "BULL" in sym or "BEAR" in sym: continue
+            price=float(t.get("lastPrice","0"))
+            if price < 0.0001: continue
             h1=float(t.get("priceChangePercent","0"))
             vol=float(t.get("quoteVolume","0"))
+            # Skip already +45% pumped (dump risk)
+            if h1>45: continue
+            if vol < 800000: continue
+            if h1 < 1.5: continue
             high=float(t.get("highPrice","0"))
-            low=float(t.get("lowPrice","0"))
-            # Early footprint boost
-            if h1 < 8: continue
-            if vol < 500000: continue
+            # Early footprint: price near high 97% + H1 2-12% = moving now!
+            near_high = (price>=high*0.96) if high>0 else False
             score = h1 * (vol/1000000)
-            if 2 < h1 < 10: score*=3.0  # Early mover bonus
-            if 2 < h1 < 5: score*=2.0  # Super early = best!
-            tier="PUMP" if h1>15 else "WHALE"
-            pumps.append({"symbol":sym.replace("USDT",""),"h1":h1,"price":price,"vol":int(vol),"score":score,"tier":tier,"type":"PUMP","id":0})
+            is_early=False
+            if 2 < h1 < 12 and near_high:
+                score*=4.0
+                is_early=True
+            elif 2 < h1 < 8:
+                score*=2.5
+                is_early=True
+            elif near_high and h1>1.5:
+                score*=1.8
+            tier="FOOT" if is_early else ("PUMP" if h1>12 else "WHALE")
+            pumps.append({"symbol":base_sym,"h1":h1,"price":price,"vol":int(vol),"score":score,"tier":tier,"type":tier,"id":0,"is_early":is_early})
         except: continue
-    pumps=sorted(pumps, key=lambda x: x["score"], reverse=True)[:15]
+    pumps=sorted(pumps, key=lambda x: (x.get("is_early",False), x["score"]), reverse=True)[:20]
     for i,p in enumerate(pumps): p["id"]=i+1
 
     tp_a=0.7
@@ -216,12 +227,18 @@ def do_cron():
             tr["age"]=age
             tr["net"]=float(POS_SIZE)*pct/100
             should_close=None
-            if pct >= tp_a: should_close=f"TP {tp_a}% QUICK +{pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
-            elif pct <= -sl_a: should_close=f"SL -{sl_a}% QUICK {pct:.1f}% ${float(POS_SIZE)*pct/100:+.2f}"
-            elif peak>=0.4 and pct < peak-0.2: should_close=f"TRAIL lock +0.3% peak-{peak-pct:.1f}% {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
-            elif age>60 and pct>=0.55: should_close=f"TIME QUICK 60s {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
-            elif age>120 and pct>=0.4: should_close=f"TIME QUICK 120s {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
-            elif age>180 and pct>=0.2: should_close=f"TIME QUICK 300s {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
+            # Force close if stuck >5min regardless
+            if age>300:
+                if pct>=0.15: should_close=f"TIME QUICK 300s {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
+                elif pct<=-sl_a: should_close=f"SL -{sl_a}% QUICK {pct:.1f}% ${float(POS_SIZE)*pct/100:+.2f}"
+                elif age>600: should_close=f"FORCE 600s {pct:.1f}% ${float(POS_SIZE)*pct/100:+.2f}"
+            if not should_close:
+                if pct >= tp_a: should_close=f"TP {tp_a}% QUICK +{pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
+                elif pct <= -sl_a: should_close=f"SL -{sl_a}% QUICK {pct:.1f}% ${float(POS_SIZE)*pct/100:+.2f}"
+                elif peak>=0.35 and pct < peak-0.2: should_close=f"TRAIL lock +{peak:.1f}% peak-{peak-pct:.1f}% {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
+                elif age>60 and pct>=0.5: should_close=f"TIME QUICK 60s {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
+                elif age>120 and pct>=0.35: should_close=f"TIME QUICK 120s {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
+                elif age>180 and pct>=0.15: should_close=f"TIME QUICK 180s {pct:.1f}% +${float(POS_SIZE)*pct/100:+.2f}"
             if should_close:
                 net=float(POS_SIZE)*pct/100
                 cap+=net
@@ -295,7 +312,7 @@ def render(state):
     unreal=sum([t.get("net",0) for t in open_tr])
     bl=learn.get("blacklist",{})
     av=learn.get("avoid_pump",0)
-    learn_txt=f"KEEP TRACK LEARN AI: TP {tp_a}% SL {sl_a}% R:R 5.0 BL:{len(bl)} "
+    learn_txt=f"KEEP TRACK LEARN AI: TP {tp_a}% SL {sl_a}% R:R 2.0 BL:{len(bl)} "
     if bl:
         try: learn_txt+=",".join([f"{k}({int((v-time.time())/60)}m)" for k,v in list(bl.items())[:4]])
         except: learn_txt+=",".join(list(bl.keys())[:4])
@@ -316,27 +333,22 @@ def render(state):
             if "UP" in sym or "DOWN" in sym: continue
             h1=float(t.get("priceChangePercent","0"))
             vol=float(t.get("quoteVolume","0"))
-            high=float(t.get("highPrice","0"))
-            low=float(t.get("lowPrice","0"))
-            # Early footprint boost
             if h1 < 8: continue
             if vol < 500000: continue
             score = h1 * (vol/1000000)
-            if 2 < h1 < 10: score*=3.0  # Early mover bonus
-            if 2 < h1 < 5: score*=2.0  # Super early = best!
             tier="PUMP" if h1>15 else "WHALE"
             pumps.append({"symbol":sym.replace("USDT",""),"h1":h1,"price":price,"vol":int(vol),"score":score,"tier":tier,"type":"PUMP","id":0})
         except: continue
     pumps=sorted(pumps, key=lambda x: x["score"], reverse=True)[:15]
     for i,p in enumerate(pumps): p["id"]=i+1
     html=f"""<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{background:#000;color:#0f8;font-family:monospace;font-size:11px;margin:0;padding:4px}} .foot{{border:1px solid #333;padding:6px;margin:4px 0;background:#0a0a0a}} .bigrow{{display:flex;gap:4px}} .bigbox{{flex:1;border:1px solid #333;padding:6px;text-align:center;background:#111}} .yellowbar{{background:#ffcc00;color:#000;padding:6px;font-weight:bold;margin:4px 0;font-size:10px}}</style></head><body>
-<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v765 FOOTPRINT 0.7% SCALP $300 REAL $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - KEEPS TRACK</div>
-<div class="bigrow"><div class="bigbox"><div style="font-size:10px;color:#aaa">CAP $300 REAL</div><div style="font-size:26px;font-weight:bold;color:#ffcc00">${cap:.2f}</div><div style="font-size:10px;color:#aaa">WITH OPEN {cap+unreal:.2f}</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">TODAY / $50</div><div style="font-size:26px;font-weight:bold;color:{'#0f8' if daily>=0 else '#f44'}">${daily:+.2f}</div><div style="font-size:10px;color:#aaa">{daily_pct}% OF $50 TARGET</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">WIN {winrate}%</div><div style="font-size:18px;font-weight:bold;color:#0f8">W:{wins} L:{loss}<br>T:{tot}</div><div style="font-size:10px;color:#aaa">3 MAX PUMP+WHALE LEARN - FOOTPRINT 0.7% NET+0.5%</div></div></div>
+<div style="text-align:center;padding:6px;font-size:14px;font-weight:bold;color:#ffcc00">VENUS v766 SMART FOOTPRINT 0.7% SCALP $300 REAL $300 REAL - SCAN #{scan} - 3 MAX - POS ${POS_SIZE} - KEEPS TRACK</div>
+<div class="bigrow"><div class="bigbox"><div style="font-size:10px;color:#aaa">CAP $300 REAL</div><div style="font-size:26px;font-weight:bold;color:#ffcc00">${cap:.2f}</div><div style="font-size:10px;color:#aaa">WITH OPEN {cap+unreal:.2f}</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">TODAY / $50</div><div style="font-size:26px;font-weight:bold;color:{'#0f8' if daily>=0 else '#f44'}">${daily:+.2f}</div><div style="font-size:10px;color:#aaa">{daily_pct}% OF $50 TARGET</div></div><div class="bigbox"><div style="font-size:10px;color:#aaa">WIN {winrate}%</div><div style="font-size:18px;font-weight:bold;color:#0f8">W:{wins} L:{loss}<br>T:{tot}</div><div style="font-size:10px;color:#aaa">3 MAX PUMP+WHALE LEARN - FOOTPRINT NET +0.5%</div></div></div>
 <div style="padding:6px;background:#111;border:1px solid #0ff;margin:4px"><div style="color:#0ff;font-size:10px">{learn_txt}</div></div>
-<div class="yellowbar">PUMP+WHALE HUNTER {len(pumps)} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'% '+pumps[0].get('tier','') if pumps else 'NO PUMPS'} - TODAY $300 REAL HUNT LEARN - FOOTPRINT 0.7% - Early 2-10% + NET +0.5% - TP 2.5% SL 0.5%</div>"""
+<div class="yellowbar">PUMP+WHALE HUNTER {len(pumps)} - TOP {pumps[0]['symbol']+' +'+str(round(pumps[0]['h1'],1))+'% '+pumps[0].get('tier','') if pumps else 'NO PUMPS'} - TODAY $300 REAL HUNT LEARN - FOOTPRINT EARLY 2-10% + NET +0.5% - TP 0.7% SL 0.35%</div>"""
     for fp in pumps[:10]:
-        html+=f"""<div class="foot" style="border-color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'}"><span style="color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'};font-weight:bold">{fp.get('tier','')} #{fp['id']} {fp['symbol']} H1 +{fp['h1']:.1f}% {fp['type']}</span><br><span style="color:#0f8">VOL ${fp['vol']} PRICE ${fp['price']:.6f} SCORE {fp['score']:.1f}</span><br><span style="color:#ffcc00">POS ${POS_SIZE} TP {tp_a}% | SL {sl_a}% R:R 1.25:1</span></div>"""
-    html+=f"""<div class="yellowbar">OPEN {len(open_tr)}/3 MAX $300 REAL - LEARN AI - TP {tp_a}% | SL {sl_a}% R:R 1.25:1 | POS ${POS_SIZE} - FOOTPRINT 0.7% NET+0.5%</div>"""
+        html+=f"""<div class="foot" style="border-color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'}"><span style="color:{'#ffcc00' if fp.get('tier')=='PUMP' else '#0ff'};font-weight:bold">{fp.get('tier','')} #{fp['id']} {fp['symbol']} H1 +{fp['h1']:.1f}% {fp['type']}</span><br><span style="color:#0f8">VOL ${fp['vol']} PRICE ${fp['price']:.6f} SCORE {fp['score']:.1f}</span><br><span style="color:#ffcc00">POS ${POS_SIZE} TP {tp_a}% | SL {sl_a}% R:R 2.0</span></div>"""
+    html+=f"""<div class="yellowbar">OPEN {len(open_tr)}/3 MAX $300 REAL - LEARN AI - TP {tp_a}% | SL {sl_a}% R:R 2.0 | POS ${POS_SIZE} - FOOTPRINT NET +0.5%</div>"""
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         html+=f"""<div class="foot" style="border-color:{col}"><span style="color:{'#ffcc00' if tr.get('tier')=='PUMP' else '#0ff'};font-weight:bold">{tr.get('move')} {tr['symbol']} ${tr.get('pos')} AGE {tr.get('age',0)}s {tr.get('tier','')}</span><br><span style="color:#0f8">ENTRY ${tr['entry']:.6f} -> NOW ${tr['price']:.6f} PEAK {tr.get('peak',0):.1f}% H1 {tr.get('h1',0):+.1f}%</span><br><span style="color:{col};font-size:18px;font-weight:bold">{tr.get('pct',0):+.2f}% ${tr.get('net',0):+.2f} REAL</span><br><span style="font-size:9px;color:#aaa">TP {tp_a}% | SL {sl_a}% | TRAIL peak-0.2% | QTY {tr.get('qty',0)}</span></div>"""
@@ -344,10 +356,10 @@ def render(state):
     for cl in closed[:15]:
         ccol="#0f8" if cl["net"]>0 else "#f44"
         html+=f"""<div style="color:{ccol};padding:3px;border-bottom:1px solid #222;font-size:11px"><b>{cl['symbol']}</b> ${cl['net']:+.2f} {cl['reason']} {cl['pct']:+.1f}% POS ${cl.get('pos','')} AGE {cl['age']}s REAL</div>"""
-    html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING} - FOOTPRINT 0.7% NET+0.5%</div>"""
+    html+=f"""</div><div style="padding:6px"><div style="color:#ffcc00;font-weight:bold;font-size:11px">REAL ORDERS - TESTNET {len(real_orders)} - REAL_TRADING={REAL_TRADING} - FOOTPRINT NET +0.5%</div>"""
     for ro in real_orders[:10]:
         html+=f"""<div style="color:#0f8;padding:2px;font-size:10px">{ro.get('side')} {ro.get('symbol')} ${ro.get('price','')} POS ${ro.get('pos','')} {str(ro.get('result',''))[:150]}</div>"""
-    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v765 FOOTPRINT 0.7% SCALP $300 REAL - 3x$100 - TP 2.5% SL 0.5% R:R 1.25:1 - FOOTPRINT 0.7% NET +0.5% - KEEP TRACK SCAN #{scan} - KV:{'OK' if KV_URL else 'MISS'} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#f44">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50 - TP 2.5% SL 0.5%</a></div></body></html>"""
+    html+=f"""</div><div style="text-align:center;padding:10px;color:#555;font-size:10px">v766 SMART FOOTPRINT 0.7% SCALP $300 REAL $300 REAL - 3x$100 - TP 0.7% SL 0.35% R:R 2.0 - FOOTPRINT 0.7% NET +0.5% - KEEP TRACK SCAN #{scan} - KV:{'OK' if KV_URL else 'MISS'} - <a href="/api/cron?key={ADMIN_KEY}&cron=1" style="color:#0f8">CRON PUMP</a> | <a href="/api/reset?key={ADMIN_KEY}" style="color:#f44">RESET $300</a></div><div style="text-align:center;padding:12px"><a href="/api/cron?key={ADMIN_KEY}&cron=1" style="background:#ffcc00;color:#000;padding:12px 20px;text-decoration:none;font-weight:bold;font-size:12px">CRON PUMP - CAP ${cap:.2f} DAILY ${daily:+.2f}/$50 - TP 0.7% SL 0.35%</a></div></body></html>"""
     return html
 
 @app.route('/', defaults={'path': ''})
