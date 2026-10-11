@@ -117,12 +117,12 @@ def load_state():
 
 def get_market(ticker_map):
     btc_ticker=ticker_map.get("BTCUSDT")
-    btc_price=float(btc_ticker.get("lastPrice","83858")) if btc_ticker else 83858
+    btc_price=float(btc_ticker.get("lastPrice","83600")) if btc_ticker else 83600
     h1=float(btc_ticker.get("priceChangePercent","0")) if btc_ticker else 0
     if h1>0.8: regime="TRENDING_BULL"; bias="LONG"
     elif h1<-0.8: regime="TRENDING_BEAR"; bias="SHORT"
     else: regime="RANGING"; bias="BOTH"
-    return {"regime":regime,"bias":bias,"btc_price":btc_price,"adx":22,"h1":h1,"reason":f"{regime} BTC ${btc_price:.0f} H1 {h1:+.1f}% - Reversal CONF - Pump +6-18% + RSI>62 + Red candle = SHORT, Dip -3 to +4% + RSI<48 + Green candle = LONG - L:1 S:2 FORCED"}
+    return {"regime":regime,"bias":bias,"btc_price":btc_price,"adx":22,"h1":h1,"reason":f"{regime} BTC ${btc_price:.0f} H1 {h1:+.1f}% - CONF REVERSAL - Pump +6-18% + RSI>62 + Red = SHORT, Dip -3 to +4% + RSI<48 + Green = LONG - L:0 S:3 FORCED"}
 
 def do_cron():
     state=load_state()
@@ -144,12 +144,9 @@ def do_cron():
         real.append(t)
     real=sorted(real, key=lambda x: float(x.get("quoteVolume","0")), reverse=True)[:35]
     market=get_market(ticker_map)
-
     open_tr=state.get("open",[])
     open_syms=[t["symbol"] for t in open_tr]
-
-    long_cands=[]
-    short_cands=[]
+    long_cands=[]; short_cands=[]
     for t in real:
         base=t.get("symbol","").replace("USDT","")
         if base in open_syms: continue
@@ -164,74 +161,50 @@ def do_cron():
         sym=base+"USDT"
         klines=get_klines(sym,"5m",35)
         if len(klines)<20:
-            # allow BTC ETH etc without klines but with H1 filter
-            if base not in ["BTC","ETH","SOL","NEAR","STRK","ZEC","TIA","SUI","ARB","SEI","AVAX","ENA","FET","OP","SOL","BTC","ETH","XRP","BNB"]:
-                continue
+            if base not in ["BTC","ETH","SOL","NEAR","STRK","ZEC","TIA","SUI","ARB","SEI","AVAX","ENA","FET","OP","XRP","BNB"]: continue
             rsi=50; is_red=False; is_green=False; bb_upper=False; bb_lower=False
         else:
-            closes=[float(k[4]) for k in klines]
-            opens=[float(k[1]) for k in klines]
-            highs=[float(k[2]) for k in klines]
-            lows=[float(k[3]) for k in klines]
+            closes=[float(k[4]) for k in klines]; opens=[float(k[1]) for k in klines]
             rsi=calc_rsi(closes,14)
-            ema20=ema(closes,20)
             last_open=opens[-1]; last_close=closes[-1]
-            is_red=last_close<last_open
-            is_green=last_close>last_open
-            # Bollinger approx
-            last20=closes[-20:]
-            sma=sum(last20)/20
-            var=sum((c-sma)**2 for c in last20)/20
-            sd=math.sqrt(var)
-            bb_up=sma+2*sd
-            bb_low=sma-2*sd
-            bb_upper=price>=bb_up*0.98
-            bb_lower=price<=bb_low*1.02
-
-        # SHORT: Pumped + reversal confirmation
+            is_red=last_close<last_open; is_green=last_close>last_open
+            last20=closes[-20:]; sma=sum(last20)/20; var=sum((c-sma)**2 for c in last20)/20; sd=math.sqrt(var)
+            bb_up=sma+2*sd; bb_low=sma-2*sd
+            bb_upper=price>=bb_up*0.98; bb_lower=price<=bb_low*1.02
         if h1>=5.0 and h1<=18.0:
-            if rsi<58: continue  # need overbought
-            if not is_red and bb_upper==False and base not in ["NEAR","STRK","TIA","ZEC"]: 
-                # need red candle or upper BB touch
+            if rsi<58: continue
+            if not is_red and not bb_upper:
                 if rsi<68: continue
             score=vol/1e6*abs(h1)*2.2 + (rsi-50)*0.2
-            if base in ["STRK","NEAR","TIA","ZEC","SUI","ARB","SOL","BTC","ETH","CFX","CHIP","ENA","PENDLE","WIF","BONK"]:
-                score*=1.4
+            if base in ["STRK","NEAR","TIA","ZEC","SUI","ARB","SOL","BTC","ETH","CFX","CHIP","ENA","PENDLE","WIF","BONK","AVAX","ENA"]: score*=1.4
             short_cands.append({"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"rsi":rsi,"sector":sector,"score":score,"tp":0.45,"sl":0.55,"reason":f"SHORT CONF H1 +{h1:.1f}% RSI {rsi:.0f} Red={is_red} BBup={bb_upper} TOP REJECTION"})
         elif h1>=2.8 and h1<5.0:
             if rsi<62: continue
-            if not is_red: 
+            if not is_red:
                 if rsi<70: continue
             score=vol/1e6*h1*1.4 + (rsi-55)*0.15
             short_cands.append({"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"rsi":rsi,"sector":sector,"score":score,"tp":0.42,"sl":0.50,"reason":f"SHORT CONF H1 +{h1:.1f}% RSI {rsi:.0f} Red={is_red}"})
         elif h1>=-3.5 and h1<=3.0:
-            # LONG dip with confirmation
             if h1>3.0: continue
-            if abs(h1)<0.4 and vol<15000000: continue  # flat dead
-            if rsi>58: continue  # need oversold-ish
-            if not is_green and bb_lower==False:
+            if abs(h1)<0.4 and vol<15000000: continue
+            if rsi>58: continue
+            if not is_green and not bb_lower:
                 if rsi>48: continue
             score=vol/1e6*max(0.5, 3.5-abs(h1))*0.9 + (60-rsi)*0.15
-            if base in ["BTC","ETH","SOL","AVAX","SUI","ARB","SEI","NEAR","ZEC","CFX","XRP","BNB","SUI","SOL","BTC","ETH"]:
-                score*=1.3
+            if base in ["BTC","ETH","SOL","AVAX","SUI","ARB","SEI","NEAR","ZEC","CFX","XRP","BNB"]: score*=1.3
             long_cands.append({"symbol":base,"side":"LONG","price":price,"vol":int(vol),"h1":h1,"rsi":rsi,"sector":sector,"score":score,"tp":0.45,"sl":0.50,"reason":f"LONG CONF H1 {h1:+.1f}% RSI {rsi:.0f} Green={is_green} BBlow={bb_lower} DIP BOUNCE"})
         elif h1<=-1.2 and h1>=-7.0:
-            # breakdown short
             if rsi<35: continue
             score=vol/1e6*abs(h1)*1.3 + (rsi-40)*0.1
             short_cands.append({"symbol":base,"side":"SHORT","price":price,"vol":int(vol),"h1":h1,"rsi":rsi,"sector":sector,"score":score,"tp":0.42,"sl":0.55,"reason":f"SHORT BREAK H1 {h1:.1f}% RSI {rsi:.0f}"})
-
     long_cands=sorted(long_cands, key=lambda x: x["score"], reverse=True)[:10]
     short_cands=sorted(short_cands, key=lambda x: x["score"], reverse=True)[:10]
-
     final_sharks=[]
-    if short_cands:
-        final_sharks.append(short_cands[0])
+    if short_cands: final_sharks.append(short_cands[0])
     if long_cands:
         for lc in long_cands:
             if lc["symbol"] not in [x["symbol"] for x in final_sharks]:
-                final_sharks.append(lc)
-                break
+                final_sharks.append(lc); break
     long_in_final=sum(1 for x in final_sharks if x["side"]=="LONG")
     short_in_final=sum(1 for x in final_sharks if x["side"]=="SHORT")
     all_sorted=sorted(long_cands+short_cands, key=lambda x: x["score"], reverse=True)
@@ -248,59 +221,33 @@ def do_cron():
             if len(final_sharks)>=3: break
             if s["symbol"] in [x["symbol"] for x in final_sharks]: continue
             final_sharks.append(s)
-
-    closed=state.get("closed",[])
-    cap=state.get("cap",300.0)
-    daily=state.get("daily",0.0)
-    daily_gross=state.get("daily_gross",0.0)
-    fees_paid=state.get("fees_paid",0.0)
-    tot=state.get("total",0)
-    scan=state.get("scan",0)+1
-    final=[]
+    closed=state.get("closed",[]); cap=state.get("cap",300.0); daily=state.get("daily",0.0); daily_gross=state.get("daily_gross",0.0); fees_paid=state.get("fees_paid",0.0); tot=state.get("total",0); scan=state.get("scan",0)+1; final=[]
     for tr in open_tr:
         try:
             sym=tr["symbol"]+"USDT"
             price_now=tr.get("price", tr.get("entry",0))
-            if sym in ticker_map:
-                price_now=float(ticker_map[sym].get("lastPrice",price_now))
-            entry=tr.get("entry", price_now)
-            side=tr.get("side","LONG")
-            if side=="LONG":
-                pct_gross=(price_now-entry)/entry*100 if entry else 0
-            else:
-                pct_gross=(entry-price_now)/entry*100 if entry else 0
-            pct_net=pct_gross - FEE_PCT
-            net_usd=POS*pct_net/100
-            gross_usd=POS*pct_gross/100
-            age=now_ts-tr.get("ts",now_ts)
-            peak_gross=max(tr.get("peak_gross",0), pct_gross)
+            if sym in ticker_map: price_now=float(ticker_map[sym].get("lastPrice",price_now))
+            entry=tr.get("entry", price_now); side=tr.get("side","LONG")
+            if side=="LONG": pct_gross=(price_now-entry)/entry*100 if entry else 0
+            else: pct_gross=(entry-price_now)/entry*100 if entry else 0
+            pct_net=pct_gross - FEE_PCT; net_usd=POS*pct_net/100; gross_usd=POS*pct_gross/100
+            age=now_ts-tr.get("ts",now_ts); peak_gross=max(tr.get("peak_gross",0), pct_gross)
             tr["price"]=price_now; tr["pct_gross"]=pct_gross; tr["pct"]=pct_net; tr["peak_gross"]=peak_gross; tr["peak"]=peak_gross-FEE_PCT; tr["age"]=age; tr["net"]=net_usd; tr["gross"]=gross_usd
-            tp=tr.get("tp",0.45); sl=tr.get("sl",0.55)
-            should=None
-            if pct_gross>=tp:
-                should=f"TP {tp}% {side} +${net_usd:+.2f} NET WIN CONF"
-            elif pct_gross<=-sl:
-                should=f"SL -{sl}% {side} CUT FAST CONF"
-            elif peak_gross>=0.28 and pct_gross<peak_gross-0.12 and pct_net>=0.05:
-                should=f"TRAIL PEAK {peak_gross:.2f}%->{pct_gross:.2f}% -0.12% JUMP {side}"
-            elif age>350 and peak_gross<0.12 and pct_gross<0.14:
-                should=f"NO PEAK 0.12% {age}s FLAT CUT {side} 350s CONF"
-            elif age>650 and pct_gross<0.18 and peak_gross<0.30:
-                should=f"FLAT {pct_gross:.2f}% PEAK {peak_gross:.2f}% {age}s CUT {side}"
-            elif age>1200:
-                should=f"TIME 1200s FORCE {side} {pct_gross:.2f}%"
+            tp=tr.get("tp",0.45); sl=tr.get("sl",0.55); should=None
+            if pct_gross>=tp: should=f"TP {tp}% {side} +${net_usd:+.2f} NET WIN CONF"
+            elif pct_gross<=-sl: should=f"SL -{sl}% {side} CUT FAST CONF"
+            elif peak_gross>=0.28 and pct_gross<peak_gross-0.12 and pct_net>=0.05: should=f"TRAIL PEAK {peak_gross:.2f}%->{pct_gross:.2f}% -0.12% JUMP {side}"
+            elif age>350 and peak_gross<0.12 and pct_gross<0.14: should=f"NO PEAK 0.12% {age}s FLAT CUT {side} 350s CONF"
+            elif age>650 and pct_gross<0.18 and peak_gross<0.30: should=f"FLAT {pct_gross:.2f}% PEAK {peak_gross:.2f}% {age}s CUT {side}"
+            elif age>1200: should=f"TIME 1200s FORCE {side} {pct_gross:.2f}%"
             if should:
                 cap+=net_usd; daily+=net_usd; daily_gross+=gross_usd; fees_paid+=FEE_USD; tot+=1
                 closed.insert(0,{"symbol":tr["symbol"],"side":side,"net":net_usd,"gross":gross_usd,"fee":FEE_USD,"reason":should,"pct_gross":pct_gross,"pct_net":pct_net,"age":age,"sector":get_sector(tr["symbol"]),"strategy":tr.get("strategy","")})
                 L["last_coins"][tr["symbol"]]=now_ts+400
-                if pct_net<-0.55:
-                    L["blacklist"][tr["symbol"]]=now_ts+1800
-            else:
-                final.append(tr)
-        except:
-            final.append(tr)
-    wins=sum(1 for c in closed if c.get("net",0)>0.08)
-    loss=sum(1 for c in closed if c.get("net",0)<0)
+                if pct_net<-0.55: L["blacklist"][tr["symbol"]]=now_ts+1800
+            else: final.append(tr)
+        except: final.append(tr)
+    wins=sum(1 for c in closed if c.get("net",0)>0.08); loss=sum(1 for c in closed if c.get("net",0)<0)
     for sh in final_sharks:
         if len(final)>=MAXP: break
         if sh["symbol"] in [t["symbol"] for t in final]: continue
@@ -312,29 +259,16 @@ def do_cron():
         final.append(tr)
     state["open"]=final; state["closed"]=closed[:200]; state["cap"]=cap; state["daily"]=daily; state["daily_gross"]=daily_gross; state["fees_paid"]=fees_paid; state["wins"]=wins; state["loss"]=loss; state["total"]=tot; state["scan"]=scan; state["market"]=market
     kv_set(STATE_KEY, state)
-    long_c=sum(1 for s in final if s.get("side")=="LONG")
-    short_c=sum(1 for s in final if s.get("side")=="SHORT")
+    long_c=sum(1 for s in final if s.get("side")=="LONG"); short_c=sum(1 for s in final if s.get("side")=="SHORT")
     return {"ok":True,"scan":scan,"open":len(final),"long":long_c,"short":short_c,"cap":cap,"daily":daily,"sharks_long":len(long_cands),"sharks_short":len(short_cands),"total":tot,"wins":wins,"loss":loss,"market":market["regime"]+" "+market["bias"]+" BTC $"+str(int(market["btc_price"]))+" H1 "+str(round(market["h1"],1))+"% L:"+str(long_c)+" S:"+str(short_c)),"v":"v800 CONF REVERSAL SHORT"}
 
 def render(state):
-    open_tr=state.get("open",[])
-    closed=state.get("closed",[])
-    cap=state.get("cap",300.0)
-    daily=state.get("daily",0.0)
-    daily_gross=state.get("daily_gross",0.0)
-    fees_paid=state.get("fees_paid",0.0)
-    wins=state.get("wins",0)
-    loss=state.get("loss",0)
-    tot=state.get("total",0)
-    scan=state.get("scan",0)
-    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":83858,"adx":22,"h1":1.0,"reason":"no market"})
-    winrate=int(wins/tot*100) if tot>0 else 0
-    unreal=sum([t.get("net",0) for t in open_tr])
-    long_open=sum(1 for t in open_tr if t.get("side")=="LONG")
-    short_open=sum(1 for t in open_tr if t.get("side")=="SHORT")
+    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); daily=state.get("daily",0.0); daily_gross=state.get("daily_gross",0.0); fees_paid=state.get("fees_paid",0.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0)
+    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":83600,"adx":22,"h1":1.0,"reason":"no market"})
+    winrate=int(wins/tot*100) if tot>0 else 0; unreal=sum([t.get("net",0) for t in open_tr])
+    long_open=sum(1 for t in open_tr if t.get("side")=="LONG"); short_open=sum(1 for t in open_tr if t.get("side")=="SHORT")
     try:
-        tickers=get_tickers()
-        real=[]
+        tickers=get_tickers(); real=[]
         for t in tickers:
             sym=t.get("symbol","")
             if not sym.endswith("USDT"): continue
@@ -345,10 +279,8 @@ def render(state):
             real.append(t)
         real=sorted(real, key=lambda x: float(x.get("quoteVolume","0")), reverse=True)[:10]
         sharks=[{"symbol":t["symbol"].replace("USDT",""),"h1":float(t.get("priceChangePercent","0")),"vol":int(float(t.get("quoteVolume","0"))),"sector":get_sector(t["symbol"].replace("USDT","")),"score":float(t.get("quoteVolume","0"))*float(t.get("priceChangePercent","0"))/1e6} for t in real]
-    except:
-        sharks=[]; used_sectors=set()
-    else:
-        used_sectors=set([get_sector(t["symbol"]) for t in open_tr])
+    except: sharks=[]; used_sectors=set()
+    else: used_sectors=set([get_sector(t["symbol"]) for t in open_tr])
     html="<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
     html+="body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:12px;margin:0;padding:8px}"
     html+=".h{background:linear-gradient(90deg,#00ff88,#ff0044,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;position:sticky;top:0;z-index:10}"
@@ -356,7 +288,7 @@ def render(state):
     html+=".c{background:#1a1a1a;border:1px solid #333;padding:10px;text-align:center;border-radius:10px}"
     html+=".b{padding:9px;margin:8px 0;border-radius:7px;font-weight:800;font-size:11px}"
     html+=".by{background:#ffcc00;color:#000} .bb{background:#00d4ff;color:#000} .bd{background:#222;color:#888} .bg{background:#00ff88;color:#000} .bp{background:#ff00ff;color:#fff} .br{background:#ff4444;color:#fff}"
-    html+=".it{background:#111;border:1px solid #333;padding:10px;margin:6px 0;border-radius:10px;position:relative;overflow:hidden}"
+    html+=".it{background:#111;border:1px solid #333;padding:10px;margin:6px 0;border-radius:10px}"
     html+=".live{width:10px;height:10px;background:#0f0;border-radius:50%;display:inline-block;animation:blink 1s infinite} @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}"
     html+=".spark{width:100%;height:32px;background:#0a0a0a;border:1px solid #222;border-radius:6px;margin:6px 0}"
     html+=".sec{padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900;margin-left:6px}"
@@ -370,8 +302,7 @@ def render(state):
     html+=f"<div class='c'><div style='font-size:10px;color:#888'>TODAY NET L:{long_open} S:{short_open} x $0.50</div><div style='font-size:22px;color:{'#f44' if daily<0 else '#0f8'};font-weight:900'>${daily:+.2f} NET</div><div style='font-size:10px'>GROSS ${daily_gross:+.2f} - FEES ${fees_paid:.2f} | W:{wins} L:{loss} {winrate}% | CONF SHORT</div></div>"
     html+=f"<div class='c'><div style='font-size:10px;color:#888'>MARKET CONF REVERSAL</div><div style='font-size:9px;color:#0f8;font-weight:900'>{market.get('regime','?')} {market.get('bias','?')} BTC ${market.get('btc_price',0):.0f} H1 {market.get('h1',0):+.1f}% LIVE {scan}</div><div style='font-size:8px;color:#888'>{market.get('reason','')[:70]}</div><div style='font-size:10px'>Next <span id='countdown'>10s</span> TICK <span id='tickcount'>1s</span></div></div>"
     html+="</div>"
-    html+="<div id='sharkbox'><div class='b bd'>Scanning CONF REVERSAL SHORT...</div></div>"
-    html+="<div id='openbox'></div><div id='closedbox'></div>"
+    html+="<div id='sharkbox'><div class='b bd'>Scanning CONF REVERSAL SHORT...</div></div><div id='openbox'></div><div id='closedbox'></div>"
     import json as jsjson
     open_json=jsjson.dumps([{"symbol":tr["symbol"],"side":tr.get("side","LONG"),"entry":tr["entry"],"ts":tr.get("ts", int(time.time())),"peak_gross":tr.get("peak_gross",0)} for tr in open_tr])
     html+=f"""
@@ -421,11 +352,10 @@ let count=10; setInterval(()=>{{ count--; const el=document.getElementById('coun
 </script>
 """
     html+="<div style='display:none'><div id='sharkbox-inner'>"
-    html+=f"<div class='b bg'>CONF REVERSAL SHORT - MARKET {market.get('regime','?')} BIAS {market.get('bias','?')} - BTC ${market.get('btc_price',0):.0f} H1 {market.get('h1',0):+.1f}% - Pumped +5-18% + RSI>62 + Red candle = SHORT CONF, Dip -3 to +4% + RSI<48 + Green = LONG CONF - FORCED L:1 S:2 - {market.get('reason','')[:80]}</div>"
+    html+=f"<div class='b bg'>CONF REVERSAL SHORT - MARKET {market.get('regime','?')} BIAS {market.get('bias','?')} - BTC ${market.get('btc_price',0):.0f} H1 {market.get('h1',0):+.1f}% - Pumped +5-18% + RSI>62 + Red = SHORT CONF, Dip -3 to +4% + RSI<48 + Green = LONG CONF - FORCED L:0 S:3 - {market.get('reason','')[:80]}</div>"
     if sharks:
         for s in sharks[:10]:
-            side="SHORT" if s['h1']>=5 else "LONG"
-            col="#ff4444" if side=="SHORT" else "#0f8"
+            side="SHORT" if s['h1']>=5 else "LONG"; col="#ff4444" if side=="SHORT" else "#0f8"
             html+=f"<div class='it' style='border-color:{col}'><b style='color:{col}'>#{sharks.index(s)+1} {s['symbol']} <span class='sec s-{s['sector']}'>{s['sector']}</span> H1 {s['h1']:+.1f}% VOL ${s['vol']} - {side} CONF - SCORE {s['score']:.0f}</b><br><span style='color:{col}'>{'Pumped TOP + RSI + Red = SHORT CONF' if side=='SHORT' else 'Dip BOUNCE + RSI + Green = LONG CONF'} - BTC ${market.get('btc_price',0):.0f}</span></div>"
     else:
         html+=f"<div class='b by'>CONF SHORT {market.get('regime','?')} {market.get('bias','?')} - BTC ${market.get('btc_price',0):.0f} H1 {market.get('h1',0):+.1f}% - WILL FILL L:1 S:2 CONF</div>"
@@ -433,7 +363,7 @@ let count=10; setInterval(()=>{{ count--; const el=document.getElementById('coun
     html+="<div id='openbox-inner'>"
     html+=f"<div class='b bb'>OPEN {len(open_tr)}/{MAXP} MAX CONF REVERSAL SHORT $100 EACH - MARKET {market.get('regime','?')} {market.get('bias','?')} BTC ${market.get('btc_price',0):.0f} L:{long_open} S:{short_open} - SECTORS {','.join(list(used_sectors)) if used_sectors else 'CONF SHORT'} - <span class='live'></span> LIVE TICK GRAPH 1s</div>"
     if len(open_tr)==0:
-        html+=f"<div class='it' style='text-align:center;color:#0f8;border-color:#0f8'>CONF REVERSAL SHORT ACTIVE - SCAN #{scan}<br>{market.get('reason','')}<br>L:{long_open} S:{short_open} FORCED - Pumped +5-18% + RSI>62 + Red candle = SHORT CONF (not early like NEAR -0.46%), Dip -3 to +4% + RSI<48 + Green = LONG CONF - TP 0.45% gross (0.25% net) WIN, SL 0.55% wider, HOLD 350s not 180s, TRAIL -0.12% - 10% win -> 50% win target</div>"
+        html+=f"<div class='it' style='text-align:center;color:#0f8;border-color:#0f8'>CONF REVERSAL SHORT ACTIVE - SCAN #{scan}<br>{market.get('reason','')}<br>L:{long_open} S:{short_open} FORCED - Pumped +5-18% + RSI>62 + Red = SHORT CONF, Dip -3 to +4% + RSI<48 + Green = LONG CONF - TP 0.45% gross WIN, SL 0.55% wider, HOLD 350s not 180s, TRAIL -0.12% - 14% -> 40% target</div>"
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         pct_gross=tr.get("pct_gross",0); pct_net=tr.get("pct",0); net_usd=tr.get("net",0); entry=tr.get("entry",0); ts=tr.get("ts", int(time.time())); peak=tr.get("peak_gross",0); sector=tr.get("sector", get_sector(tr["symbol"])); side=tr.get("side","LONG")
