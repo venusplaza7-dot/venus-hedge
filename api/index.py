@@ -15,13 +15,11 @@ if not KV_TOKEN:
     for kk,vv in os.environ.items():
         if "REDIS" in kk and "TOKEN" in kk and "upstash" in kk.lower(): KV_TOKEN=vv.strip().strip('"').strip("'"); break
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V806_SMART"
+STATE_KEY="VENUS_V807_FIXED"
 
 POS_FIXED=100.0; MAXP=3; FEE_PCT=0.15; MAX_DAILY_LOSS_PCT=4.0
-MIN_TP_PCT=1.0; MAX_TP_PCT=2.2; MAX_SL_PCT=0.85
-TIME_EXIT_MIN=70
-
-PERM_BLACKLIST=set(["MAGIC","ZEC","CFX","UNI","NEAR","TIA","ENA","LUMIA"])
+MIN_TP_PCT=1.0; MAX_TP_PCT=2.2; MAX_SL_PCT=0.85; TIME_EXIT_MIN=70
+PERM_BLACKLIST=set(["MAGIC","ZEC","CFX","UNI","NEAR","TIA","ENA","LUMIA","STRK"]) # STRK TP 10% never hits
 
 SECTORS={"L1_CHAIN":["BTC","ETH","ARB","SUI","SEI","APT","TIA","AVAX","SOL","NEAR","OP","STRK","DOGE","CFX","ZEC"],"DEFI":["ENA","PENDLE","AERO","LDO","UNI","AAVE","BTC","ETH"],"MEME":["PEPE","BONK","WIF","FLOKI","SHIB","POPCAT","BRETT","DOGE"],"AI":["TAO","FET","RNDR","GRT"]}
 COIN_SECTOR={c:sec for sec, coins in SECTORS.items() for c in coins}
@@ -75,7 +73,7 @@ def get_klines_fast(symbol, interval="15m", limit=50):
         req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=4) as r:
             data=json.loads(r.read().decode())
-            return [{"c":float(x[4]),"h":float(x[2]),"l":float(x[3]),"v":float(x[5]),"o":float(x[1])} for x in data]
+            return [{"c":float(x[4]),"h":float(x[2]),"l":float(x[3]),"v":float(x[5])} for x in data]
     except: return []
 def calc_rsi(closes, period=14):
     if len(closes) < period+1: return 50
@@ -99,52 +97,36 @@ def calc_ema(closes, period):
     k=2/(period+1); ema=closes[0]
     for c in closes[1:]: ema=c*k + ema*(1-k)
     return ema
-
 def calc_trend_strength(closes):
     if len(closes) < 20: return 0
     ema9 = calc_ema(closes, 9); ema21 = calc_ema(closes, 21)
     return abs(ema9 - ema21) / closes[-1] * 100 * 10
 
-# === SMART BRAIN: Multi-timeframe BTC trend ===
 def get_market_smart(ticker_map):
     klines_1h=get_klines_fast("BTCUSDT","1h",60)
     klines_15m=get_klines_fast("BTCUSDT","15m",60)
     if not klines_1h:
         btc_ticker=ticker_map.get("BTCUSDT"); btc_price=float(btc_ticker.get("lastPrice","70000")) if btc_ticker else 70000
-        return {"regime":"RANGING","bias":"BOTH","btc_price":btc_price,"rsi":50,"strength":0,"rsi_15":50,"ema20":btc_price,"ema50":btc_price,"reason":f"RANGING BTC {btc_price:.0f} NO DATA"}
-    closes_1h=[k["c"] for k in klines_1h]
-    closes_15m=[k["c"] for k in klines_15m] if klines_15m else closes_1h
-    btc_price=closes_1h[-1]
-    ema20_1h=calc_ema(closes_1h, 20); ema50_1h=calc_ema(closes_1h, 50)
-    rsi_1h=calc_rsi(closes_1h, 14); rsi_15m=calc_rsi(closes_15m, 14)
-    strength=calc_trend_strength(closes_1h)
-    # trend score
-    above_ema20 = btc_price > ema20_1h
-    above_ema50 = btc_price > ema50_1h
-    ema20_above_50 = ema20_1h > ema50_1h
-
-    # SMART BIAS LOGIC
+        return {"regime":"RANGING","bias":"BOTH","btc_price":btc_price,"rsi":50,"rsi_15":50,"strength":0,"reason":f"RANGING BTC {btc_price:.0f} NO DATA"}
+    closes_1h=[k["c"] for k in klines_1h]; closes_15m=[k["c"] for k in klines_15m] if klines_15m else closes_1h
+    btc_price=closes_1h[-1]; ema20_1h=calc_ema(closes_1h, 20); ema50_1h=calc_ema(closes_1h, 50)
+    rsi_1h=calc_rsi(closes_1h, 14); rsi_15m=calc_rsi(closes_15m, 14); strength=calc_trend_strength(closes_1h)
+    above_ema20 = btc_price > ema20_1h; above_ema50 = btc_price > ema50_1h; ema20_above_50 = ema20_1h > ema50_1h
     if above_ema20 and above_ema50 and ema20_above_50 and rsi_1h>58 and rsi_15m>55 and strength>1.2:
-        regime="TRENDING_BULL"; bias="LONG_ONLY"  # SMART: Block all shorts in strong bull
-        reason=f"TRENDING_BULL BTC {btc_price:.0f} RSI {rsi_1h:.0f}/{rsi_15m:.0f} STR {strength:.1f} -> LONG ONLY"
+        regime="TRENDING_BULL"; bias="LONG_ONLY"; reason=f"TRENDING_BULL BTC {btc_price:.0f} RSI {rsi_1h:.0f}/{rsi_15m:.0f} STR {strength:.1f} -> LONG ONLY"
     elif not above_ema20 and not above_ema50 and not ema20_above_50 and rsi_1h<42 and rsi_15m<45 and strength>1.2:
-        regime="TRENDING_BEAR"; bias="SHORT_ONLY"
-        reason=f"TRENDING_BEAR BTC {btc_price:.0f} RSI {rsi_1h:.0f}/{rsi_15m:.0f} STR {strength:.1f} -> SHORT ONLY"
+        regime="TRENDING_BEAR"; bias="SHORT_ONLY"; reason=f"TRENDING_BEAR BTC {btc_price:.0f} RSI {rsi_1h:.0f}/{rsi_15m:.0f} STR {strength:.1f} -> SHORT ONLY"
     elif strength < 0.7:
-        regime="RANGING"; bias="NONE"
-        reason=f"RANGING BTC {btc_price:.0f} RSI {rsi_1h:.0f} STR {strength:.1f} -> NO TRADE"
+        regime="RANGING"; bias="NONE"; reason=f"RANGING BTC {btc_price:.0f} RSI {rsi_1h:.0f} STR {strength:.1f} -> NO TRADE"
     else:
-        regime="WEAK_TREND"; bias="BOTH"
-        reason=f"WEAK_TREND BTC {btc_price:.0f} RSI {rsi_1h:.0f} STR {strength:.1f} -> BOTH but strict"
-
-    return {"regime":regime,"bias":bias,"btc_price":btc_price,"rsi":rsi_1h,"rsi_15":rsi_15m,"strength":strength,"ema20":ema20_1h,"ema50":ema50_1h,"reason":reason}
+        regime="WEAK_TREND"; bias="BOTH"; reason=f"WEAK_TREND BTC {btc_price:.0f} RSI {rsi_1h:.0f} STR {strength:.1f} -> BOTH strict"
+    return {"regime":regime,"bias":bias,"btc_price":btc_price,"rsi":rsi_1h,"rsi_15":rsi_15m,"strength":strength,"reason":reason}
 
 def load_state():
     s=kv_get(STATE_KEY)
     if not s:
-        old=kv_get("VENUS_V805_REALTP") or kv_get("VENUS_V804_3X100") or kv_get("VENUS_V803_SUPER")
-        if old: s=old; s["learn"]["pause_until"]=0
-        else: s={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":"","last_coins":{}}}
+        # fresh start after reset - no old data
+        s={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}}}
     if "learn" not in s: s["learn"]={"blacklist":{},"pause_until":0,"last_date":"","last_coins":{}}
     L=s["learn"]; L.setdefault("blacklist",{}); L.setdefault("pause_until",0); L.setdefault("last_date",""); L.setdefault("last_coins",{})
     today=time.strftime("%Y-%m-%d")
@@ -168,13 +150,10 @@ def do_cron():
         real.append(t)
     real=sorted(real, key=lambda x: float(x.get("quoteVolume","0")), reverse=True)[:15]
     market=get_market_smart(ticker_map)
-
-    # SMART: Don't trade in RANGING/NONE
     if market["bias"]=="NONE":
         return {"ok":False,"paused":False,"scan":state.get("scan",0),"reason":f"SMART SKIP {market['regime']} - Waiting for trend","market":market["reason"]}
 
     open_tr=state.get("open",[]); open_syms=[t["symbol"] for t in open_tr]; candidates=[]
-
     for t in real:
         base=t.get("symbol","").replace("USDT","")
         if base in open_syms: continue
@@ -190,34 +169,26 @@ def do_cron():
         if strength < 0.6 or strength > 7.0: continue
         if rsi < 22 or rsi > 78: continue
         ema20=calc_ema(closes,20); ema50=calc_ema(closes,50); last_c=closes[-1]
-        
-        # SMART COIN TREND
-        coin_bull = last_c > ema20 and ema20 > ema50
-        coin_bear = last_c < ema20 and ema20 < ema50
-
+        coin_bull = last_c > ema20 and ema20 > ema50; coin_bear = last_c < ema20 and ema20 < ema50
         side=None; reason=""
-        # === SMART LONG/SHORT BRAIN ===
         if market["bias"]=="LONG_ONLY":
-            # In bull market, ONLY long dips, never short
             if rsi < 34 and last_c < ema20*0.997 and coin_bull and strength>0.8:
-                side="LONG"; reason=f"SMART LONG BULL DIP RSI {rsi:.0f} COIN BULL STR {strength:.1f}"
+                side="LONG"; reason=f"SMART LONG BULL DIP RSI {rsi:.0f}"
         elif market["bias"]=="SHORT_ONLY":
             if rsi > 66 and last_c > ema20*1.003 and coin_bear and strength>0.8:
-                side="SHORT"; reason=f"SMART SHORT BEAR PUMP RSI {rsi:.0f} COIN BEAR STR {strength:.1f}"
-        else: # BOTH weak trend - strict both
+                side="SHORT"; reason=f"SMART SHORT BEAR PUMP RSI {rsi:.0f}"
+        else:
             if rsi < 28 and last_c < ema20*0.996 and coin_bull:
-                side="LONG"; reason=f"SMART LONG WEAK RSI {rsi:.0f} STR {strength:.1f}"
+                side="LONG"; reason=f"SMART LONG WEAK RSI {rsi:.0f}"
             elif rsi > 72 and last_c > ema20*1.004 and coin_bear:
-                side="SHORT"; reason=f"SMART SHORT WEAK RSI {rsi:.0f} STR {strength:.1f}"
-
+                side="SHORT"; reason=f"SMART SHORT WEAK RSI {rsi:.0f}"
         if side:
             tp_pct=min(atr*2.0/price*100, MAX_TP_PCT); sl_pct=min(atr*0.6/price*100, MAX_SL_PCT)
             if tp_pct < MIN_TP_PCT: continue
             if tp_pct/sl_pct < 2.0: continue
             score=(abs(rsi-50)+strength*12)*vol/1e7
             if score < 20: continue
-            candidates.append({"symbol":base,"side":side,"price":price,"vol":int(vol),"sector":get_sector(base),"score":score,"tp":tp_pct,"sl":sl_pct,"rsi":rsi,"reason":reason,"strength":strength})
-
+            candidates.append({"symbol":base,"side":side,"price":price,"sector":get_sector(base),"score":score,"tp":tp_pct,"sl":sl_pct,"rsi":rsi,"reason":reason,"strength":strength})
     candidates=sorted(candidates, key=lambda x: x["score"], reverse=True)[:3]
 
     closed=state.get("closed",[]); cap=state.get("cap",300.0); daily=state.get("daily",0.0); fees_paid=state.get("fees_paid",0.0); tot=state.get("total",0); scan=state.get("scan",0)+1
@@ -234,7 +205,7 @@ def do_cron():
             tp=tr.get("tp",1.8); sl=tr.get("sl",0.75); should=None
             if pct_gross>=tp: should=f"TP {tp:.1f}% WIN +${net_usd:.2f}"
             elif pct_gross<=-sl: should=f"SL -{sl:.1f}% CUT ${net_usd:.2f}"
-            elif peak_gross>=0.6 and pct_gross<=0.10: should=f"BE_PROTECT {peak_gross:.1f}%->+0.1% LOCK"
+            elif peak_gross>=0.6 and pct_gross<=0.10: should=f"BE_PROTECT {peak_gross:.1f}%->+0.1%"
             elif peak_gross>=tp*0.5 and pct_gross<peak_gross-0.5: should=f"TRAIL {peak_gross:.1f}%->{pct_gross:.1f}%"
             elif age>TIME_EXIT_MIN*60 and pct_gross < 0.20: should=f"TIME {TIME_EXIT_MIN}m"
             if pct_net < -0.85: should=f"MAXLOSS -0.85% ${net_usd:.2f}"
@@ -261,12 +232,18 @@ def do_cron():
 
 def render(state):
     open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); daily=state.get("daily",0.0); fees_paid=state.get("fees_paid",0.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0)
-    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":70000,"rsi":50,"rsi_15":50,"reason":"Tap CRON","strength":0})
+    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":70000,"rsi":50,"rsi_15":50,"reason":"Tap CRON to start","strength":0})
     winrate=int(wins/tot*100) if tot>0 else 0; unreal=sum([t.get("net",0) for t in open_tr]); long_open=sum(1 for t in open_tr if t.get("side")=="LONG"); short_open=sum(1 for t in open_tr if t.get("side")=="SHORT")
     gross_profit=sum([c.get("net",0) for c in closed if c.get("net",0)>0]); gross_loss=sum([c.get("net",0) for c in closed if c.get("net",0)<0])
     avg_win=gross_profit / wins if wins>0 else 0; avg_loss=gross_loss / loss if loss>0 else 0
     profit_factor=abs(gross_profit / gross_loss) if gross_loss!=0 else (gross_profit if gross_profit>0 else 0); expectancy=(gross_profit + gross_loss) / tot if tot>0 else 0
-    best=max(closed, key=lambda x: x.get("net",0)) if closed else None; worst=min(closed, key=lambda x: x.get("net",0)) if closed else None
+    # FIXED: Safe handling when no trades yet - this was crashing
+    best = max(closed, key=lambda x: x.get("net",0)) if closed else None
+    worst = min(closed, key=lambda x: x.get("net",0)) if closed else None
+    best_sym = best.get('symbol','-') if best else '-'
+    best_net = best.get('net',0) if best else 0
+    worst_sym = worst.get('symbol','-') if worst else '-'
+    worst_net = worst.get('net',0) if worst else 0
     invested=sum([t.get("pos",0) for t in open_tr]); bias_color="#00ff88" if market.get("bias")=="LONG_ONLY" else "#ff4444" if market.get("bias")=="SHORT_ONLY" else "#ffcc00"
     html=f"""<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>
     body{{background:#0a0a0a;color:#eee;font-family:monospace;font-size:12px;margin:0;padding:8px}}
@@ -279,7 +256,7 @@ def render(state):
    .btn-cron{{background:#00ff88;color:#000}}.btn-reset{{background:#ff4444;color:#fff}}.btn-close{{background:#ffcc00;color:#000}}
    .badge{{padding:3px 8px;border-radius:20px;font-size:10px;font-weight:900}}.long{{background:#00ff88;color:#000}}.short{{background:#ff4444;color:#fff}}
     </style></head><body>
-    <div class='h'>VENUS v806 SMART BRAIN - SCAN #{scan} - ${cap:.2f} L:{long_open} S:{short_open} {market.get('regime')} BIAS {market.get('bias')} BTC ${market.get('btc_price',0):.0f}</div>
+    <div class='h'>VENUS v807 FIXED - SCAN #{scan} - ${cap:.2f} L:{long_open} S:{short_open} {market.get('regime')} BIAS {market.get('bias')} BTC ${market.get('btc_price',0):.0f}</div>
     <div class='btn-row'>
       <button class='btn btn-cron' onclick='callCron()'><span>⚡</span>CRON<div id='cronStat' style='font-size:11px'>TAP</div></button>
       <button class='btn btn-close' onclick='closeAll()'><span>💰</span>CLOSE ALL<div style='font-size:11px'>{len(open_tr)} OPEN ${invested:.0f}</div></button>
@@ -287,20 +264,19 @@ def render(state):
     </div>
     <div class='g'><div class='c'>CAP<br><b style='font-size:20px;color:#ffcc00'>${cap:.2f}</b><br>WITH OPEN {cap+unreal:.2f}<br>UNREAL {unreal:+.2f}<br>INV ${invested:.0f}</div>
     <div class='c'>TODAY<br><b style='font-size:20px;color:{"#f44" if daily<0 else "#0f8"}'>${daily:+.2f}</b><br>W:{wins} L:{loss} {winrate}%<br>FEES ${fees_paid:.2f}<br>3x${POS_FIXED:.0f}</div>
-    <div class='c' style='border-color:{bias_color}'>SMART BRAIN<br><b style='color:{bias_color}'>{market.get('bias')}</b><br>{market.get('regime')}<br>BTC ${market.get('btc_price',0):.0f} RSI {market.get('rsi',50):.0f}/{market.get('rsi_15',50):.0f}<br>STR {market.get('strength',0):.2f}</div></div>
+    <div class='c' style='border-color:{bias_color}'>SMART BRAIN<br><b style='color:{bias_color}'>{market.get('bias')}</b><br>{market.get('regime')}<br>BTC ${market.get('btc_price',0):.0f}<br>STR {market.get('strength',0):.2f}</div></div>
     <div class='stats'>
-      <div style='color:{bias_color};font-weight:900;font-size:13px'>🧠 SMART LONG/SHORT BRAIN - BIAS: {market.get('bias')}</div>
-      <div style='margin-top:6px;font-size:11px;color:#eee'>{market.get('reason','')}</div>
+      <div style='color:{bias_color};font-weight:900;font-size:13px'>🧠 SMART BRAIN v807 FIXED - 3x$100 - BIAS: {market.get('bias')}</div>
+      <div style='margin-top:6px;font-size:11px;color:#eee'>{market.get('reason','Tap CRON to start')}</div>
       <div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px'>
         <div>TOTAL: <b>{tot}</b></div><div>WIN: <b style='color:#0f8'>{wins}</b> | LOSS: <b style='color:#f44'>{loss}</b> | <b>{winrate}%</b></div>
-        <div>AVG WIN: <b style='color:#0f8'>${avg_win:.2f}</b></div><div>AVG LOSS: <b style='color:#f44'>${avg_loss:.2f}</b> {'✅' if abs(avg_win) > abs(avg_loss) else '❌ FIX NEEDED'}</div>
+        <div>AVG WIN: <b style='color:#0f8'>${avg_win:.2f}</b></div><div>AVG LOSS: <b style='color:#f44'>${avg_loss:.2f}</b></div>
         <div>PF: <b style='color:{"#0f8" if profit_factor>1.5 else "#ffcc00"}'>{profit_factor:.2f}</b></div><div>EXP: <b>${expectancy:.3f}</b></div>
-        <div>BEST: <b>{best.get('symbol','-') if best else '-'} ${best.get('net',0):+.2f}</b></div><div>WORST: <b>{worst.get('symbol','-') if worst else '-'} ${worst.get('net',0):+.2f}</b></div>
+        <div>BEST: <b>{best_sym} ${best_net:+.2f}</b></div><div>WORST: <b>{worst_sym} ${worst_net:+.2f}</b></div>
       </div>
-      <div style='margin-top:8px;color:#00ff88;font-size:11px'>✅ SMART: Bull= LONG ONLY blocks shorts | Bear= SHORT ONLY blocks longs | Ranging= NO TRADE | Coin must match BTC trend</div>
-      <div style='color:#888;font-size:10px'>TP max {MAX_TP_PCT}% SL max {MAX_SL_PCT}% RR 3:1 | LUMIA/MAGIC blacklisted | RSI 22-78 filter</div>
+      <div style='margin-top:8px;color:#00ff88;font-size:11px'>✅ FIXED: Reset now works! No more NoneType error | SMART: Bull=LONG_ONLY | Bear=SHORT_ONLY | Ranging=NO TRADE</div>
     </div>
-    <div class='it' style='border-color:{bias_color};color:{bias_color};text-align:center;font-weight:900'>{market.get('reason','Tap CRON')}<br><small>Scan #{scan} v806 SMART {market.get('bias')}</small></div>
+    <div class='it' style='border-color:{bias_color};color:{bias_color};text-align:center;font-weight:900'>{market.get('reason','Tap CRON')}<br><small>Scan #{scan} v807 FIXED {market.get('bias')}</small></div>
     <div id='openbox'>"""
     for tr in open_tr:
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
@@ -308,14 +284,14 @@ def render(state):
         <button onclick='closeOne("{tr['symbol']}")' style='float:right;background:#222;color:#fff;border:1px solid #444;border-radius:10px;padding:6px 12px'>✕</button><br>
         PEAK {tr.get('peak_gross',0):.2f}% <b>{tr.get('pct_gross',0):.3f}% NET ${tr.get('net',0):+.2f}</b> TP {tr.get('tp',0):.2f}% SL {tr.get('sl',0):.2f}%<br>
         <small>{tr.get('reason','')}</small></div>"""
-    if not open_tr: html+=f"<div class='it' style='text-align:center;color:#666'>No open. Smart brain waiting for correct BIAS {market.get('bias')}. Tap CRON.</div>"
-    html+=f"""</div><div style='background:#111;padding:12px;margin:8px 0;border-radius:12px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} {winrate}% - PF {profit_factor:.2f} - BIAS {market.get('bias')}</div>"""
+    if not open_tr: html+=f"<div class='it' style='text-align:center;color:#666'>No open. Fresh start after reset. Tap CRON for 3x${POS_FIXED:.0f} smart trades.</div>"
+    html+=f"""</div><div style='background:#111;padding:12px;margin:8px 0;border-radius:12px'><div style='color:#ffcc00;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} {winrate}% - PF {profit_factor:.2f}</div>"""
     for cl in closed[:25]:
         c="#0f8" if cl.get("net",0)>0 else "#f44"
         html+=f"<div style='padding:6px 0;border-bottom:1px solid #222;color:{c}'><b>{cl.get('symbol','')} {cl.get('side','')} ${cl.get('pos',POS_FIXED):.0f}</b> ${cl.get('net',0):+.2f} {cl.get('pct_net',0):+.2f}% | {cl.get('reason','')}</div>"
     html+=f"""</div><script>const ADMIN_KEY="{ADMIN_KEY}";
-    async function callCron(){{const b=document.getElementById('cronStat'); b.innerText='...'; try{{const r=await fetch('/api/cron?key='+ADMIN_KEY); const j=await r.json(); b.innerText=j.ok ? 'OK '+j.bias : j.reason; if(j.ok) setTimeout(()=>location.reload(),1000);}}catch(e){{b.innerText='ERR';}} }}
-    async function callReset(){{if(!confirm('RESET v806?')) return; await fetch('/api/reset?key='+ADMIN_KEY); location.reload();}}
+    async function callCron(){{const b=document.getElementById('cronStat'); b.innerText='SCANNING...'; try{{const r=await fetch('/api/cron?key='+ADMIN_KEY); const j=await r.json(); b.innerText=j.ok ? 'OK '+j.bias : j.reason; if(j.ok) setTimeout(()=>location.reload(),1000); else b.innerText=j.reason;}}catch(e){{b.innerText='ERR '+e;}} }}
+    async function callReset(){{if(!confirm('RESET v807? CAP $300 fresh start - this will fix the error')) return; await fetch('/api/reset?key='+ADMIN_KEY); location.reload();}}
     async function closeAll(){{if(!confirm('Close all?')) return; await fetch('/api/closeall?key='+ADMIN_KEY); location.reload();}}
     async function closeOne(s){{if(!confirm('Close '+s+'?')) return; await fetch('/api/close?symbol='+s+'&key='+ADMIN_KEY); location.reload();}}
     </script></body></html>"""
@@ -334,9 +310,10 @@ def catch_all(path):
         return Response(json.dumps({"KV_URL":bool(KV_URL),"KV_TOKEN":bool(KV_TOKEN),"STATE_KEY":STATE_KEY,"state":load_state()}), mimetype="application/json")
     if p.startswith("/api/reset"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
-        kv_del(STATE_KEY); time.sleep(0.4)
+        kv_del(STATE_KEY); time.sleep(0.6)
         new={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}}}
-        ok=kv_set(STATE_KEY, new); return Response(json.dumps({"ok":ok,"cap":300}), mimetype="application/json")
+        ok=kv_set(STATE_KEY, new)
+        return Response(json.dumps({"ok":ok,"cap":300,"reset":"v807 fixed"}), mimetype="application/json")
     if p.startswith("/api/closeall"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         state=load_state(); cap=state.get("cap",300.0)
@@ -351,4 +328,4 @@ def catch_all(path):
         state["open"]=final; state["cap"]=cap; kv_set(STATE_KEY, state); return Response(json.dumps({"ok":True,"closed":sym}), mimetype="application/json")
     try: st=load_state(); return Response(render(st), mimetype="text/html")
     except Exception as e:
-        import traceback; return Response(f"<html><body>Error {e}<pre>{traceback.format_exc()[:800]}</pre></body></html>", mimetype="text/html", status=200)
+        import traceback; return Response(f"<html><body>Error {e}<pre>{traceback.format_exc()[:1200]}</pre></body></html>", mimetype="text/html", status=200)
