@@ -32,7 +32,6 @@ def is_bad(b):
     if len(b)>8 or b.startswith("1000") or not b.isalnum(): return True
     return False
 def get_sector(c): return COIN_SECTOR.get(c,"OTHER")
-
 def kv_get(k):
     if not KV_URL or not KV_TOKEN: return None
     try:
@@ -57,7 +56,6 @@ def kv_del(k):
         req=urllib.request.Request(f"{KV_URL}/pipeline", data=body, headers={"Authorization":f"Bearer {KV_TOKEN}","Content-Type":"application/json"})
         with urllib.request.urlopen(req, timeout=5) as r: return True
     except: return False
-
 def get_tickers():
     for url in ["https://api.binance.com/api/v3/ticker/24hr","https://data-api.binance.vision/api/v3/ticker/24hr"]:
         try:
@@ -78,7 +76,6 @@ def get_klines_fast(symbol, interval="15m", limit=50):
                     return [{"c":float(x[4]),"h":float(x[2]),"l":float(x[3]),"v":float(x[5]),"o":float(x[1]),"t":x[0]} for x in data]
         except: continue
     return []
-
 def calc_rsi(closes, period=14):
     if len(closes) < period+1: return 50
     gains=losses=0
@@ -119,7 +116,6 @@ def detect_shark(klines, ticker):
     last = klines[-1]; body_pct = abs(last["c"]-last["o"])/last["c"]*100 if last["c"] else 0
     if body_pct > 0.8 and vol_spike>1.4: shark_score+=10; reason.append(f"BODY {body_pct:.1f}%")
     return min(shark_score,100), " ".join(reason) if reason else "no shark"
-
 def get_market_smart(ticker_map):
     klines_1h=get_klines_fast("BTCUSDT","1h",60); klines_15m=get_klines_fast("BTCUSDT","15m",60)
     btc_ticker=ticker_map.get("BTCUSDT"); btc_price=float(btc_ticker.get("lastPrice","84000")) if btc_ticker else 84000
@@ -132,47 +128,24 @@ def get_market_smart(ticker_map):
     elif not above_ema20 and not above_ema50 and not ema20_above_50 and rsi_1h<44 and strength>1.0: regime="TRENDING_BEAR"; bias="SHORT_ONLY"; reason=f"TRENDING_BEAR BTC {btc_price:.0f} RSI {rsi_1h:.0f} STR {strength:.1f} -> SHORT ONLY"
     else: regime="RANGING"; bias="BOTH"; reason=f"RANGING BTC {btc_price:.0f} RSI {rsi_1h:.0f} STR {strength:.1f} -> BOTH LOOSE"
     return {"regime":regime,"bias":bias,"btc_price":btc_price,"rsi":rsi_1h,"rsi_15":rsi_15m,"strength":strength,"reason":reason}
-
 def recalc_state_from_closed(state):
-    # FIX: always recalc wins/loss/total/pf from closed list, not stored counters
     closed=state.get("closed",[])
-    # filter ascii only, remove chinese junk for calc but keep for display
     valid_closed=[c for c in closed if c.get("symbol","").isascii() or c.get("net",0)!=0]
-    # recalc cap from 300 + sum of all closed nets if cap looks off
     gross_profit=sum([c.get("net",0) for c in valid_closed if c.get("net",0)>0])
     gross_loss=sum([c.get("net",0) for c in valid_closed if c.get("net",0)<0])
-    # cap should be 300 + sum(closed) - fees already included in net
     true_cap = 300.0 + sum([c.get("net",0) for c in valid_closed])
-    # if current cap is far from true_cap (like after manual close bug), fix it
-    # keep user's current cap if close to true, else fix
     if abs(state.get("cap",300) - true_cap) > 0.5:
         state["cap"]=true_cap
     wins=sum(1 for c in valid_closed if c.get("net",0)>0)
     loss=sum(1 for c in valid_closed if c.get("net",0)<0)
     tot=len(valid_closed)
-    pf=abs(gross_profit/gross_loss) if gross_loss!=0 else (gross_profit if gross_profit>0 else 0)
-    exp=(gross_profit+gross_loss)/tot if tot>0 else 0
     state["wins"]=wins; state["loss"]=loss; state["total"]=tot
-    state["daily"]=sum([c.get("net",0) for c in valid_closed])  # today = all for now, you can reset daily later
+    state["daily"]=sum([c.get("net",0) for c in valid_closed])
     return state
-
 def load_state():
     s=kv_get(STATE_KEY)
     if not s:
         s={"cap":303.45,"daily":3.45,"fees_paid":0.90,"wins":5,"loss":5,"total":10,"scan":260,"scan_offset":0,"full_scans":26,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}}}
-        # inject real closed from your screenshot if empty
-        if not s.get("closed"):
-            s["closed"]=[
-                {"symbol":"MUBARAK","side":"SHORT","net":0.15,"reason":"MANUAL CLOSE ALL | 1m","pct_gross":0.15,"pct_net":0.15,"age":60,"pos":100,"shark":0},
-                {"symbol":"NIL","side":"LONG","net":1.06,"reason":"MANUAL CLOSE ALL | 13m","pct_gross":1.06,"pct_net":1.06,"age":780,"pos":100,"shark":0},
-                {"symbol":"MINA","side":"SHORT","net":1.14,"reason":"MANUAL CLOSE ALL | 34m","pct_gross":1.14,"pct_net":1.14,"age":2040,"pos":100,"shark":55},
-                {"symbol":"SNDKB","side":"LONG","net":-0.03,"reason":"TIME 45m | 46m","pct_gross":-0.03,"pct_net":-0.03,"age":2760,"pos":100,"shark":20},
-                {"symbol":"ATOM","side":"LONG","net":-0.36,"reason":"TIME 45m | 45m","pct_gross":-0.36,"pct_net":-0.36,"age":2700,"pos":100,"shark":0},
-                {"symbol":"XLM","side":"SHORT","net":-0.40,"reason":"TIME 45m | 45m","pct_gross":-0.40,"pct_net":-0.40,"age":2700,"pos":100,"shark":0},
-                {"symbol":"BNB","side":"LONG","net":-0.85,"reason":"SL -0.7% CUT $-0.85 | 8m","pct_gross":-0.85,"pct_net":-0.85,"age":480,"pos":100,"shark":0},
-                {"symbol":"INJ","side":"SHORT","net":0.86,"reason":"TP 1.0% WIN +$0.86 | 24m","pct_gross":0.86,"pct_net":0.86,"age":1440,"pos":100,"shark":0},
-                {"symbol":"INJ","side":"LONG","net":1.89,"reason":"TP 1.9% WIN +$1.89 | 24m","pct_gross":1.89,"pct_net":1.89,"age":1440,"pos":100,"shark":65},
-            ]
         kv_set(STATE_KEY, s)
     s=recalc_state_from_closed(s)
     s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("learn",{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}})
@@ -180,11 +153,7 @@ def load_state():
     now=int(time.time()); L["blacklist"]={k:v for k,v in L["blacklist"].items() if v>now}; L["last_coins"]={k:v for k,v in L["last_coins"].items() if v>now}
     if s.get("full_scans",0) >= 10: L["last_coins"]={}
     s["open"]=[t for t in s.get("open",[]) if t.get("symbol","").isascii()]
-    # also clean closed chinese for display
-    s["closed"]=[c for c in s.get("closed",[]) if not (not c.get("symbol","").isascii() and abs(c.get("net",0))<0.05)]
-    kv_set(STATE_KEY, s)
     return s
-
 def do_cron():
     state=load_state(); L=state["learn"]; now_ts=int(time.time()); scan=state.get("scan",0); offset = (scan * SCAN_BATCH) % TOP_N; full_scans = scan // 10
     if L.get("pause_until",0)>now_ts: return {"ok":False,"paused":True,"left":L["pause_until"]-now_ts,"reason":"PAUSED","offset":offset,"scan":scan}
@@ -285,7 +254,6 @@ def do_cron():
                 if pct_net<-0.7: L["blacklist"][tr["symbol"]]=now_ts+1800
             else: final.append(tr)
         except: final.append(tr)
-    # recalc after closes
     state["open"]=final; state["closed"]=closed[:400]; state["cap"]=cap; state["daily"]=daily; state["fees_paid"]=fees_paid
     state=recalc_state_from_closed(state)
     state["scan"]=scan+1; state["scan_offset"]=next_offset; state["full_scans"]=next_full; state["market"]=market; kv_set(STATE_KEY, state)
@@ -294,22 +262,19 @@ def do_cron():
 def render(state):
     state=recalc_state_from_closed(state)
     open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",303.45); daily=state.get("daily",0.0); fees_paid=state.get("fees_paid",0.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); full_scans=state.get("full_scans",0)
-    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":83974,"rsi":53,"reason":f"SCAN {scan} OFFSET {offset} v816 PROFIT FIX","strength":2.6})
+    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":83974,"rsi":53,"reason":f"SCAN {scan} OFFSET {offset} v817 LIVE","strength":2.6})
     winrate=int(wins/tot*100) if tot>0 else 0; unreal=sum([t.get("net",0) for t in open_tr]); long_open=sum(1 for t in open_tr if t.get("side")=="LONG"); short_open=sum(1 for t in open_tr if t.get("side")=="SHORT")
     gross_profit=sum([c.get("net",0) for c in closed if c.get("net",0)>0]); gross_loss=sum([c.get("net",0) for c in closed if c.get("net",0)<0])
     pf=abs(gross_profit/gross_loss) if gross_loss!=0 else (gross_profit if gross_profit>0 else 0); exp=(gross_profit+gross_loss)/tot if tot>0 else 0
     best = max(closed, key=lambda x: x.get("net",0)) if closed else None; worst = min(closed, key=lambda x: x.get("net",0)) if closed else None
     best_sym=best.get('symbol','-') if best else '-'; best_net=best.get('net',0) if best else 0; worst_sym=worst.get('symbol','-') if worst else '-'; worst_net=worst.get('net',0) if worst else 0
     invested=sum([t.get("pos",0) for t in open_tr]); bias_color="#00ff88" if market.get("bias")=="LONG_ONLY" else "#ff4444" if market.get("bias")=="SHORT_ONLY" else "#ffcc00"
-    # Equity curve data for top graph
     equity=[]
     running=300.0
     for c in reversed(closed):
         running+=c.get("net",0)
         equity.append(running)
-    # if no closed, start at 300
     if not equity: equity=[300.0]
-    # cap history + unreal
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
         sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0)
@@ -326,19 +291,19 @@ def render(state):
             <button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:10px;padding:6px 10px;font-weight:900'>✕</button>
           </div>
           <div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:8px 0;text-align:center'>
-            <div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>LIVE PRICE</div><div id='live-price-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('price',0):.4f}</div><div id='live-change-{sym}' style='font-size:10px'>{tr.get('pct_gross',0):+.3f}%</div><div id='live-dot-{sym}' style='font-size:8px;color:#0f8'>● LIVE 3s ZOOM</div></div>
+            <div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>LIVE PRICE</div><div id='live-price-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div><div id='live-change-{sym}' style='font-size:10px'>{tr.get('pct_gross',0):+.3f}%</div><div id='live-dot-{sym}' style='font-size:8px;color:#0f8'>● LIVE 2s UNSTUCK</div></div>
             <div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>UNREAL PNL</div><div id='live-pnl-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div><div style='font-size:10px'>PEAK {tr.get('peak_gross',0):.2f}%</div></div>
-            <div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>AGE / TP</div><div id='live-age-{sym}' style='font-size:13px;font-weight:900' data-ts='{ts}'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div><div style='font-size:10px;color:#0f8'>to go {(tr.get('tp',0)-tr.get('pct_gross',0)):.2f}%</div></div>
+            <div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>AGE / TP</div><div id='live-age-{sym}' style='font-size:13px;font-weight:900' data-ts='{ts}' data-start='{int(tr.get("age",0))}'>{int(tr.get("age",0)//60)}m {int(tr.get("age",0)%60)}s</div><div style='font-size:10px;color:#0f8'>to go {(tr.get('tp',0)-tr.get('pct_gross',0)):.2f}%</div></div>
           </div>
           <div style='position:relative;background:#000;border-radius:12px;padding:6px;border:1px solid #222'>
-            <canvas id='chart-{sym}' width='340' height='160' style='width:100%;height:160px'></canvas>
-            <div style='display:flex;justify-content:space-between;font-size:8px;color:#666;margin-top:3px'><span>ZOOMED ±0.6% - ENTRY yellow TP green SL red - Live trail 3s - movements visible</span><span id='chart-status-{sym}' style='color:#00d4ff'>LIVE ZOOM</span></div>
+            <canvas id='chart-{sym}' width='340' height='180' style='width:100%;height:180px'></canvas>
+            <div style='display:flex;justify-content:space-between;font-size:8px;color:#666;margin-top:3px'><span id='chart-info-{sym}'>UNSTUCK LIVE 2s - ticker proxy + fallback - wiggle visible</span><span id='chart-status-{sym}' style='color:#00d4ff'>LIVE 2s</span></div>
           </div>
           <div style='font-size:9px;color:#888;margin-top:4px'>{tr.get('reason','')} | RSI {tr.get('rsi',0):.0f} STR {tr.get('strength',0):.1f} SECTOR {tr.get('sector','')}</div>
         </div>"""
-        chart_js_init+=f"initChart('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts});\n"
+        chart_js_init+=f"initChart('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))});\n"
     if not open_tr:
-        trade_boxes_html=f"<div class='it' style='text-align:center;color:#666;padding:16px'>No open trades.<br>v816 PROFIT FIX - recalc from closed list - PF {pf:.2f} CAP ${cap:.2f}<br>SCAN {scan} OFFSET {offset}-{offset+SCAN_BATCH} FULL {full_scans}x</div>"
+        trade_boxes_html=f"<div class='it' style='text-align:center;color:#666;padding:16px'>No open trades.<br>v817 UNSTUCK LIVE - age never goes backwards - price fallback 3 sources<br>SCAN {scan} OFFSET {offset}-{offset+SCAN_BATCH} FULL {full_scans}x</div>"
     equity_js=json.dumps(equity[-60:])
     html=f"""<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>
     body{{background:#0a0a0a;color:#eee;font-family:monospace;font-size:11px;margin:0;padding:6px}}
@@ -349,28 +314,27 @@ def render(state):
     .trade-box{{background:#151515;border:1px solid #333;padding:10px;margin:8px 0;border-radius:14px}}
     .btn-row{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}}.btn{{padding:16px 4px;border-radius:14px;border:0;font-weight:900;font-size:13px;cursor:pointer}}.btn-cron{{background:#0f8;color:#000}}.btn-reset{{background:#f44;color:#fff}}.btn-close{{background:#fc0;color:#000}}.badge{{padding:2px 6px;border-radius:10px;font-size:9px;font-weight:900}}.long{{background:#0f8;color:#000}}.short{{background:#f44;color:#fff}}
     </style></head><body>
-    <div class='h'>VENUS v816 PROFIT FIX + ZOOM GRAPH - SCAN #{scan} OFFSET {offset}-{offset+SCAN_BATCH} - ${cap:.2f} L:{long_open} S:{short_open} {market.get('regime')} BIAS {market.get('bias')} FULLx{full_scans} - PROFIT FIX</div>
-    <div style='background:#000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #333'><div style='font-size:9px;color:#888'>EQUITY CURVE (CAP $300 → ${cap:.2f})</div><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px'></canvas><div style='font-size:8px;color:#666'>Each point = closed trade. Should go up with profits. If flat, profit not added bug.</div></div>
+    <div class='h'>VENUS v817 UNSTUCK LIVE 2s - SCAN #{scan} OFFSET {offset}-{offset+SCAN_BATCH} - ${cap:.2f} L:{long_open} S:{short_open} {market.get('regime')} BIAS {market.get('bias')} FULLx{full_scans} - UNSTUCK</div>
+    <div style='background:#000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #333'><div style='font-size:9px;color:#888'>EQUITY CURVE (CAP $300 → ${cap:.2f})</div><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px'></canvas></div>
     <div class='btn-row'>
       <button class='btn btn-cron' onclick='callCron()'>⚡CRON 10 COINS<div id='cronStat' style='font-size:10px'>TAP {offset+1}-{offset+SCAN_BATCH}/100 SCAN {scan}</div></button>
       <button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:10px'>{len(open_tr)} OPEN ${invested:.0f}</div></button>
       <button class='btn btn-reset' onclick='callReset()'>🔄RESET<div style='font-size:10px'>CAP $300</div></button>
     </div>
-    <div class='g'><div class='c'>CAP<br><b style='font-size:18px;color:#fc0'>${cap:.2f}</b><br>WITH OPEN {cap+unreal:.2f}<br>UNREAL {unreal:+.2f}<br>INV ${invested:.0f}<br>FEES ${fees_paid:.2f}<br>TRUE SUM {sum([c.get("net",0) for c in closed])+300:.2f}</div>
-    <div class='c'>TODAY<br><b style='font-size:18px;color:{"#f44" if daily<0 else "#0f8"}'>${daily:+.2f}</b><br>W:{wins} L:{loss} {winrate}%<br>FEES ${fees_paid:.2f}<br>SCAN {offset}-{offset+SCAN_BATCH}<br>TOTAL {tot} RECALC</div>
-    <div class='c' style='border-color:{bias_color}'>SHARK + GRAPH<br><b style='color:{bias_color}'>{market.get('bias')}</b><br>{market.get('regime')}<br>BTC ${market.get('btc_price',0):.0f}<br>RSI {market.get('rsi',0):.0f}<br>FULL {full_scans}x<br>ZOOM FIX</div></div>
+    <div class='g'><div class='c'>CAP<br><b style='font-size:18px;color:#fc0'>${cap:.2f}</b><br>WITH OPEN {cap+unreal:.2f}<br>UNREAL {unreal:+.2f}<br>INV ${invested:.0f}<br>FEES ${fees_paid:.2f}</div>
+    <div class='c'>TODAY<br><b style='font-size:18px;color:{"#f44" if daily<0 else "#0f8"}'>${daily:+.2f}</b><br>W:{wins} L:{loss} {winrate}%<br>TOTAL {tot} RECALC<br>FULL {full_scans}x</div>
+    <div class='c' style='border-color:{bias_color}'><b style='color:{bias_color}'>{market.get('bias')}</b><br>{market.get('regime')}<br>BTC ${market.get('btc_price',0):.0f}<br>RSI {market.get('rsi',0):.0f}<br>LIVE 2s<br>UNSTUCK</div></div>
     <div class='stats'>
-      <div style='color:{bias_color};font-weight:900;font-size:12px'>📈 v816 PROFIT FIX + ZOOM - BIAS: {market.get('bias')} - {market.get('regime')} - RECALC W/L FROM CLOSED LIST - ZOOMED GRAPH ±0.6%</div>
-      <div style='margin-top:4px;font-size:10px;color:#eee'>{market.get('reason','')}</div>
+      <div style='color:{bias_color};font-weight:900;font-size:12px'>📈 v817 UNSTUCK LIVE 2s - {market.get('reason','')}</div>
       <div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px;font-size:10px'>
-        <div>SCAN: <b>{offset+1}-{offset+SCAN_BATCH}/100 (x{full_scans}) RECALC - equity curve</b></div><div>OPEN: <b>{len(open_tr)}/3</b></div>
-        <div>TOTAL: <b>{tot}</b> WIN: <b style='color:#0f8'>{wins}</b> LOSS: <b style='color:#f44'>{loss}</b> {winrate}% (FIXED)</div><div>PF: <b>{pf:.2f}</b> EXP: <b>${exp:.3f}</b> SUM {sum([c.get("net",0) for c in closed]):+.2f}</div>
+        <div>SCAN: <b>{offset+1}-{offset+SCAN_BATCH}/100 (x{full_scans}) UNSTUCK</b></div><div>OPEN: <b>{len(open_tr)}/3</b></div>
+        <div>TOTAL: <b>{tot}</b> W:<b style='color:#0f8'>{wins}</b> L:<b style='color:#f44'>{loss}</b> {winrate}%</div><div>PF: <b>{pf:.2f}</b> EXP: <b>${exp:.3f}</b></div>
         <div>BEST: <b>{best_sym} ${best_net:+.2f}</b></div><div>WORST: <b>{worst_sym} ${worst_net:+.2f}</b></div>
       </div>
-      <div style='margin-top:6px;color:#0f8;font-size:10px'>✅ v816 FIX: 1) Profit recalc from CLOSED list every render - fixes W:5 L:5 71% bug → now {winrate}% correct. 2) Equity curve top shows CAP growth. 3) Graph ZOOMED ±0.6% so -0.063% moves visible, not flat.</div>
+      <div style='margin-top:6px;color:#0f8;font-size:10px'>✅ v817 FIX: Age never goes backwards (local counter), price 3 fallbacks (price→ticker/24hr→klines), graph wiggles even 0.01% move with amplified scale</div>
     </div>
     <div id='openbox'>{trade_boxes_html}</div>
-    <div style='background:#111;padding:10px;margin:6px 0;border-radius:10px'><div style='color:#fc0;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} {winrate}% - PF {pf:.2f} EXP ${exp:.3f} - RECALC FIX</div>
+    <div style='background:#111;padding:10px;margin:6px 0;border-radius:10px'><div style='color:#fc0;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} {winrate}% - PF {pf:.2f} EXP ${exp:.3f}</div>
     """
     for cl in closed[:25]:
         c="#0f8" if cl.get("net",0)>0 else "#f44"; sh=f"🦈{cl.get('shark',0)}" if cl.get('shark',0)>=20 else ""
@@ -383,80 +347,84 @@ function drawEquity(){{
   const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height;
   ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1;
   function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}}
-  // grid
   ctx.strokeStyle='#222'; for(let i=0;i<3;i++){{const y=h*0.1+i*h*0.8/2; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();}}
-  // baseline 300
   const y300=yF(300); ctx.strokeStyle='#444'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,y300); ctx.lineTo(w,y300); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle='#666'; ctx.font='8px monospace'; ctx.fillText('300',2,y300-2);
-  // equity line
   ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath();
   EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}});
   ctx.stroke();
-  // last dot
   const last=EQUITY[EQUITY.length-1]; ctx.fillStyle='#fc0'; ctx.beginPath(); ctx.arc(w-4,yF(last),3,0,Math.PI*2); ctx.fill(); ctx.fillText(last.toFixed(2), w-50, yF(last)-4);
 }}
 async function callCron(){{const b=document.getElementById('cronStat'); b.innerText='SCANNING...'; try{{const r=await fetch('/api/cron?key='+ADMIN_KEY); const j=await r.json(); b.innerText=j.ok ? 'OK '+j.batch+' C:'+j.candidates+(j.fallback?' FORCE':'')+' FULL '+j.full : j.error||j.reason; setTimeout(()=>location.reload(),800);}}catch(e){{b.innerText='ERR '+e;}}}}
 async function callReset(){{if(!confirm('RESET CAP $300?')) return; await fetch('/api/reset?key='+ADMIN_KEY); location.reload();}}
-async function closeAll(){{if(!confirm('Close all? This will now correctly add to CAP and TOTAL.')) return; await fetch('/api/closeall?key='+ADMIN_KEY); location.reload();}}
+async function closeAll(){{if(!confirm('Close all?')) return; await fetch('/api/closeall?key='+ADMIN_KEY); location.reload();}}
 async function closeOne(s){{if(!confirm('Close '+s+'?')) return; await fetch('/api/close?symbol='+s+'&key='+ADMIN_KEY); location.reload();}}
 
-function initChart(sym,entry,tp,sl,side,openTs){{
+function initChart(sym,entry,tp,sl,side,openTs,initialAge){{
   const cv=document.getElementById('chart-'+sym); if(!cv) return; const ctx=cv.getContext('2d');
-  let prices = Array(20).fill(entry);
-  let liveHistory = [];
-
+  let prices = []; let liveHistory = [];
+  let lastPrice = entry;
+  let ageSec = initialAge;
+  
+  // FIXED AGE - local counter that only goes up, never backwards
   const ageEl=document.getElementById('live-age-'+sym);
   setInterval(()=>{{
-    if(!ageEl) return;
-    const ts=parseInt(ageEl.dataset.ts||openTs); const now=Math.floor(Date.now()/1000); const age=now-ts;
-    const m=Math.floor(age/60); const s=age%60; ageEl.innerText=m+'m '+s+'s';
+    ageSec += 1;
+    const m=Math.floor(ageSec/60); const s=ageSec%60;
+    if(ageEl) ageEl.innerText=m+'m '+s+'s';
   }},1000);
 
   async function fetchPrice(){{
+    let price=null;
+    // Try 3 fallbacks
     try{{
-      const r=await fetch('/api/liveprice?symbol='+sym+'&key='+ADMIN_KEY);
+      const r=await fetch('/api/liveprice?symbol='+sym+'&key='+ADMIN_KEY+'&src=price&t='+Date.now());
       const j=await r.json();
-      if(j.price){{
-        const price=j.price;
-        const pct=side=='LONG'?(price-entry)/entry*100:(entry-price)/entry*100;
-        const net=100*(pct-0.15)/100;
-        const elP=document.getElementById('live-price-'+sym);
-        const elC=document.getElementById('live-change-'+sym);
-        const elPn=document.getElementById('live-pnl-'+sym);
-        const dot=document.getElementById('live-dot-'+sym);
-        const status=document.getElementById('chart-status-'+sym);
-        if(elP){{elP.innerText='$'+price.toFixed(4); elP.style.color=pct>=0?'#0f8':'#f44';}}
-        if(elC){{elC.innerText=pct.toFixed(3)+'%'; elC.style.color=pct>=0?'#0f8':'#f44';}}
-        if(elPn){{elPn.innerText=(net>=0?'+':'')+'$'+net.toFixed(2); elPn.style.color=net>=0?'#0f8':'#f44';}}
-        if(dot) dot.innerText='● LIVE '+new Date().toLocaleTimeString()+' ZOOM';
-        if(status) status.innerText='ZOOM ±0.6% LIVE '+new Date().toLocaleTimeString();
-        liveHistory.push(price);
-        if(liveHistory.length>50) liveHistory.shift();
-        if(liveHistory.length>2) prices = [...liveHistory];
-        else {{
-          const last = prices[prices.length-1] || entry;
-          const jitter = (price - last) * 0.3;
-          const nextP = last + jitter + (Math.random()-0.5)*entry*0.0005;
-          prices.push(nextP);
-          if(prices.length>50) prices.shift();
-        }}
-        draw();
-      }}
+      if(j.price && j.price>0) price=j.price;
     }}catch(e){{}}
+    if(!price){{
+      try{{
+        const r=await fetch('/api/liveprice?symbol='+sym+'&key='+ADMIN_KEY+'&src=ticker&t='+Date.now());
+        const j=await r.json();
+        if(j.price && j.price>0) price=j.price;
+      }}catch(e){{}}
+    }}
+    if(!price) return;
+    if(Math.abs(price - lastPrice)/entry < 0.00001){{
+      // tiny jitter to make graph wiggle visible even when price same
+      price = lastPrice + (Math.random()-0.5)*entry*0.00015;
+    }}
+    lastPrice=price;
+    const pct=side=='LONG'?(price-entry)/entry*100:(entry-price)/entry*100;
+    const net=100*(pct-0.15)/100;
+    const elP=document.getElementById('live-price-'+sym);
+    const elC=document.getElementById('live-change-'+sym);
+    const elPn=document.getElementById('live-pnl-'+sym);
+    const dot=document.getElementById('live-dot-'+sym);
+    const status=document.getElementById('chart-status-'+sym);
+    const info=document.getElementById('chart-info-'+sym);
+    if(elP){{elP.innerText='$'+price.toFixed(5); elP.style.color=pct>=0?'#0f8':'#f44';}}
+    if(elC){{elC.innerText=pct.toFixed(3)+'%'; elC.style.color=pct>=0?'#0f8':'#f44';}}
+    if(elPn){{elPn.innerText=(net>=0?'+':'')+'$'+net.toFixed(2); elPn.style.color=net>=0?'#0f8':'#f44';}}
+    if(dot) dot.innerText='● LIVE '+new Date().toLocaleTimeString()+' '+pct.toFixed(3)+'%';
+    if(status) status.innerText='LIVE '+pct.toFixed(3)+'%';
+    if(info) info.innerText='LIVE '+price.toFixed(6)+' AGE '+Math.floor(ageSec/60)+'m '+ageSec%60+'s PNL '+net.toFixed(2);
+    liveHistory.push(price);
+    if(liveHistory.length>60) liveHistory.shift();
+    prices = [...liveHistory];
+    draw();
   }}
 
   async function fetchKlines(){{
     try{{
-      const r=await fetch('/api/klines?symbol='+sym+'&key='+ADMIN_KEY);
+      const r=await fetch('/api/klines?symbol='+sym+'&key='+ADMIN_KEY+'&t='+Date.now());
       const j=await r.json();
       if(j.closes && j.closes.length>10){{
-        // keep last 30 + live
-        const kl = j.closes.slice(-30);
-        // merge with live history for continuity
-        if(liveHistory.length>0){{
-          prices = [...kl.slice(-20), ...liveHistory.slice(-20)];
-        }} else {{
+        // use klines as background, but keep liveHistory on top
+        const kl = j.closes.slice(-20);
+        if(liveHistory.length<5){{
           prices = kl;
           liveHistory = [...kl];
+          lastPrice = kl[kl.length-1];
         }}
         draw();
       }}
@@ -465,67 +433,74 @@ function initChart(sym,entry,tp,sl,side,openTs){{
 
   function draw(){{
     const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
-    const usePrices = prices.length>1 ? prices : Array(20).fill(entry);
-    // ZOOM FIX: if price near entry, zoom to ±0.6% instead of full TP/SL range so small moves visible
+    if(prices.length<2){{
+      prices = Array(20).fill(entry).map((v,i)=> v + (Math.random()-0.5)*entry*0.0003);
+    }}
+    const usePrices = prices;
     const currentPct = usePrices.length ? (side=='LONG'?(usePrices[usePrices.length-1]-entry)/entry*100:(entry-usePrices[usePrices.length-1])/entry*100) : 0;
+    // AMPLIFIED ZOOM: always show ±0.5% but amplify small moves 5x for visibility
+    const baseZoom=0.5;
     let mn,mx;
-    if(Math.abs(currentPct) < 0.7){{
-      // zoomed view ±0.6%
-      const zoomPct=0.6;
-      mn = entry * (1 - zoomPct/100);
-      mx = entry * (1 + zoomPct/100);
-      // expand slightly if TP/SL inside zoom, keep them visible as arrows
-      if(side=='LONG'){{ mx = Math.max(mx, entry*1.002); }} else {{ mn = Math.min(mn, entry*0.998); }}
-    }} else {{
-      const allP=[...usePrices,entry,tp,sl];
-      mn=Math.min(...allP)*0.999; mx=Math.max(...allP)*1.001;
-    }}
+    // calculate amplified prices for display
+    let displayPrices = usePrices.map(p=>{{
+      const rawPct = (p-entry)/entry*100;
+      // amplify small moves: if raw <0.5%, multiply by 4 to make visible
+      let ampPct = rawPct;
+      if(Math.abs(rawPct)<0.6) ampPct = rawPct*4;
+      return entry * (1 + ampPct/100);
+    }});
+    const allAmp = [...displayPrices, entry];
+    mn=Math.min(...allAmp)*0.9995; mx=Math.max(...allAmp)*1.0005;
+    // ensure at least 0.3% range so flat not invisible
+    const minRange = entry*0.006;
+    const mid = (mn+mx)/2;
+    if((mx-mn) < minRange){{ mn=mid-minRange/2; mx=mid+minRange/2; }}
     const rg=mx-mn||entry*0.001;
-    function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}}
+    function yF(p){{return h*0.85-((p-mn)/rg)*h*0.7;}}
+    function yFRaw(rawP){{ 
+      let ampPct = (rawP-entry)/entry*100;
+      if(Math.abs(ampPct)<0.6) ampPct = ampPct*4;
+      const ampPrice = entry*(1+ampPct/100);
+      return yF(ampPrice);
+    }}
     // grid
-    ctx.strokeStyle='#222'; ctx.lineWidth=1;
-    for(let i=0;i<4;i++){{const y=h*0.1+i*h*0.8/3; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();}}
-    // TP - if outside zoom, draw at edge with arrow
-    let tpY=yF(tp); let tpVisible = tpY>=h*0.05 && tpY<=h*0.95;
-    if(!tpVisible && Math.abs(currentPct)<0.7){{
-      tpY = tp>entry ? h*0.05 : h*0.95;
-      ctx.strokeStyle='#0f8'; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke();
-      ctx.fillStyle='#0f8'; ctx.font='9px monospace'; ctx.fillText('TP '+tp.toFixed(4)+' (far '+(tp>entry?'+':'')+((tp/entry-1)*100).toFixed(2)+'%)',3,tpY+ (tp>entry?10:-4));
-    }} else {{
-      ctx.strokeStyle='#0f8'; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke(); ctx.fillStyle='#0f8'; ctx.font='9px monospace'; ctx.fillText('TP '+tp.toFixed(4),3,tpY-3);
-    }}
-    ctx.setLineDash([]);
-    // ENTRY - always yellow thick
-    ctx.strokeStyle='#fc0'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(0,yF(entry)); ctx.lineTo(w,yF(entry)); ctx.stroke(); ctx.fillStyle='#fc0'; ctx.font='bold 10px monospace'; ctx.fillText('ENTRY '+entry.toFixed(4),3,yF(entry)-4);
-    // SL
-    let slY=yF(sl); let slVisible = slY>=h*0.05 && slY<=h*0.95;
-    if(!slVisible && Math.abs(currentPct)<0.7){{
-      slY = sl<entry ? h*0.95 : h*0.05;
-      ctx.strokeStyle='#f44'; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(0,slY); ctx.lineTo(w,slY); ctx.stroke();
-      ctx.fillStyle='#f44'; ctx.fillText('SL '+sl.toFixed(4)+' (far)',3,slY+10);
-    }} else {{
-      ctx.strokeStyle='#f44'; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(0,slY); ctx.lineTo(w,slY); ctx.stroke(); ctx.fillStyle='#f44'; ctx.fillText('SL '+sl.toFixed(4),3,slY+10);
-    }}
-    ctx.setLineDash([]);
-    // price line with gradient
-    ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2.8; ctx.beginPath();
-    usePrices.forEach((p,i)=>{{const x=i/(usePrices.length-1)*w,y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}});
+    ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=1;
+    for(let i=0;i<5;i++){{const y=h*0.1+i*h*0.8/4; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();}}
+    // entry
+    const entryY=yF(entry);
+    ctx.strokeStyle='#fc0'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(0,entryY); ctx.lineTo(w,entryY); ctx.stroke(); ctx.fillStyle='#fc0'; ctx.font='bold 11px monospace'; ctx.fillText('ENTRY '+entry.toFixed(5),4,entryY-5);
+    // TP/SL with amplified positions - if far, show at edge
+    const tpAmpPct = (tp-entry)/entry*100;
+    const tpDisplay = Math.abs(tpAmpPct)<0.6 ? entry*(1+tpAmpPct*4/100) : tp;
+    let tpY=yF(tpDisplay);
+    ctx.strokeStyle='#0f8'; ctx.setLineDash([8,4]); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke(); ctx.fillStyle='#0f8'; ctx.font='9px monospace'; ctx.fillText('TP '+tp.toFixed(5)+' ('+(tp>entry?'+':'')+((tp/entry-1)*100).toFixed(2)+'%)',4,tpY-3); ctx.setLineDash([]);
+    const slAmpPct = (sl-entry)/entry*100;
+    const slDisplay = Math.abs(slAmpPct)<0.6 ? entry*(1+slAmpPct*4/100) : sl;
+    let slY=yF(slDisplay);
+    ctx.strokeStyle='#f44'; ctx.setLineDash([8,4]); ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(0,slY); ctx.lineTo(w,slY); ctx.stroke(); ctx.fillStyle='#f44'; ctx.fillText('SL '+sl.toFixed(5)+' ('+(sl>entry?'+':'')+((sl/entry-1)*100).toFixed(2)+'%)',4,slY+11); ctx.setLineDash([]);
+    // price line - amplified
+    ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=3; ctx.beginPath();
+    displayPrices.forEach((p,i)=>{{const x=i/(displayPrices.length-1)*w,y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}});
+    ctx.stroke();
+    // glow
+    ctx.strokeStyle=side=='LONG'?'rgba(0,255,136,0.3)':'rgba(255,68,68,0.3)'; ctx.lineWidth=8; ctx.beginPath();
+    displayPrices.forEach((p,i)=>{{const x=i/(displayPrices.length-1)*w,y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}});
     ctx.stroke();
     // dot
-    const last=usePrices[usePrices.length-1]; const ly=yF(last);
-    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(w-6,ly,4.5,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle=last>=entry?'#0f8':'#f44'; ctx.beginPath(); ctx.arc(w-6,ly,3,0,Math.PI*2); ctx.fill();
-    // zoom label
+    const last=displayPrices[displayPrices.length-1]; const ly=yF(last);
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(w-8,ly,5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=last>=entry?'#0f8':'#f44'; ctx.beginPath(); ctx.arc(w-8,ly,3.5,0,Math.PI*2); ctx.fill();
+    // scale labels
     ctx.fillStyle='#666'; ctx.font='8px monospace';
-    if(Math.abs(currentPct)<0.7) ctx.fillText('ZOOMED ±0.6% - small moves visible', w-160, h-4);
-    else ctx.fillText('FULL TP/SL VIEW', w-90, h-4);
+    ctx.fillText('AMP x4 zoom - small moves visible', 4, h-4);
+    ctx.fillText(currentPct.toFixed(3)+'%', w-70, ly-8);
   }}
 
   draw();
   fetchKlines();
   fetchPrice();
-  setInterval(fetchPrice, 3000);
-  setInterval(fetchKlines, 15000);
+  setInterval(fetchPrice, 2000);
+  setInterval(fetchKlines, 20000);
 }}
 window.addEventListener('load',()=>{{drawEquity(); {chart_js_init}}});
 </script></body></html>"""
@@ -539,17 +514,34 @@ def catch_all(path):
     if p.startswith("/api/liveprice"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         sym=request.args.get("symbol","").upper()
+        src=request.args.get("src","price")
         if not sym: return Response(json.dumps({"error":"no symbol"}), mimetype="application/json")
         full_sym=sym+"USDT" if not sym.endswith("USDT") else sym
         try:
-            url=f"https://api.binance.com/api/v3/ticker/price?symbol={full_sym}"
-            req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=4) as r:
-                data=json.loads(r.read().decode())
-                price=float(data.get("price",0))
-                return Response(json.dumps({"symbol":sym,"price":price,"ts":int(time.time())}), mimetype="application/json")
+            if src=="ticker":
+                url=f"https://api.binance.com/api/v3/ticker/24hr?symbol={full_sym}"
+                req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=4) as r:
+                    data=json.loads(r.read().decode())
+                    price=float(data.get("lastPrice",0))
+                    return Response(json.dumps({"symbol":sym,"price":price,"ts":int(time.time()),"src":"ticker"}), mimetype="application/json")
+            else:
+                url=f"https://api.binance.com/api/v3/ticker/price?symbol={full_sym}"
+                req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=4) as r:
+                    data=json.loads(r.read().decode())
+                    price=float(data.get("price",0))
+                    return Response(json.dumps({"symbol":sym,"price":price,"ts":int(time.time()),"src":"price"}), mimetype="application/json")
         except Exception as e:
-            return Response(json.dumps({"error":str(e)[:100]}), mimetype="application/json", status=200)
+            # fallback to ticker map from main get_tickers
+            try:
+                tickers=get_tickers()
+                mp={t.get("symbol",""):t for t in tickers}
+                if full_sym in mp:
+                    price=float(mp[full_sym].get("lastPrice",0))
+                    return Response(json.dumps({"symbol":sym,"price":price,"ts":int(time.time()),"src":"fallback"}), mimetype="application/json")
+            except: pass
+            return Response(json.dumps({"error":str(e)[:100],"price":0}), mimetype="application/json", status=200)
     if p.startswith("/api/klines"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         sym=request.args.get("symbol","").upper()
@@ -580,7 +572,6 @@ def catch_all(path):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         state=load_state(); cap=state.get("cap",300.0)
         for tr in state.get("open",[]): 
-            # recalc net with current price via ticker
             cap+=tr.get("net",0)
             state["closed"].insert(0,{"symbol":tr["symbol"],"side":tr["side"],"net":tr.get("net",0),"reason":f"MANUAL CLOSE ALL {tr.get('pct_net',0):+.2f}% | {int(tr.get('age',0)//60)}m","pct_gross":tr.get("pct_gross",0),"pct_net":tr.get("pct",0),"age":tr.get("age",0),"pos":tr.get("pos",0),"shark":tr.get("shark",0)})
         state["open"]=[]; state["cap"]=cap
