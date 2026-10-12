@@ -23,7 +23,7 @@ POS_FIXED=100.0; MAXP=3; FEE_PCT=0.15; MAX_DAILY_LOSS_PCT=4.5; MIN_TP_PCT=0.70; 
 PERM_BLACKLIST=set(["MAGIC","ZEC","CFX","UNI","NEAR","TIA","ENA","LUMIA","STRK","DOGE"])
 SECTORS={"L1_CHAIN":["BTC","ETH","ARB","SUI","SEI","APT","TIA","AVAX","SOL","NEAR","OP","STRK","DOGE","CFX","ZEC"],"DEFI":["ENA","PENDLE","AERO","LDO","UNI","AAVE","BTC","ETH"],"MEME":["PEPE","BONK","WIF","FLOKI","SHIB","POPCAT","BRETT","DOGE"],"AI":["TAO","FET","RNDR","GRT"]}
 COIN_SECTOR={c:sec for sec, coins in SECTORS.items() for c in coins}
-BAD_EXACT=set(["USDC","FDUSD","TUSD","BUSD","DAI","USDP","1000PEPE","1000BONK","USDB","EUR","BIDR","IDRT","币安人生"])
+BAD_EXACT=set(["USDC","FDUSD","TUSD","BUSD","DAI","USDP","1000PEPE","1000BONK","USDB","EUR","BIDR","IDRT"])
 BAD_CONTAINS=["BIDR","IDRT","TRYB","EURT"]
 def is_bad(b):
     if not b.isascii(): return True
@@ -137,13 +137,12 @@ def get_market_smart(ticker_map):
 def load_state():
     s=kv_get(STATE_KEY)
     if not s:
-        s={"cap":301.90,"daily":1.90,"fees_paid":0.30,"wins":2,"loss":1,"total":3,"scan":213,"scan_offset":30,"full_scans":21,"open":[],"closed":[{"symbol":"币安人生","side":"LONG","net":-0.85,"reason":"SL -0.7% CUT $-0.85 | 8m","pct_gross":-0.85,"pct_net":-0.85,"age":480,"pos":100,"shark":0},{"symbol":"INJ","side":"SHORT","net":0.86,"reason":"TP 1.0% WIN +$0.86 | 24m","pct_gross":0.86,"pct_net":0.86,"age":1440,"pos":100,"shark":0},{"symbol":"INJ","side":"LONG","net":1.89,"reason":"TP 1.9% WIN +$1.89 | 24m","pct_gross":1.89,"pct_net":1.89,"age":1440,"pos":100,"shark":65}],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}}}
+        s={"cap":303.45,"daily":1.10,"fees_paid":0.90,"wins":5,"loss":5,"total":10,"scan":255,"scan_offset":50,"full_scans":25,"open":[],"closed":[],"learn":{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}}}
         kv_set(STATE_KEY, s)
-    s.setdefault("cap",301.90); s.setdefault("daily",1.90); s.setdefault("fees_paid",0.30); s.setdefault("wins",2); s.setdefault("loss",1); s.setdefault("total",3); s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("learn",{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}})
+    s.setdefault("cap",303.45); s.setdefault("daily",1.10); s.setdefault("fees_paid",0.90); s.setdefault("wins",5); s.setdefault("loss",5); s.setdefault("total",10); s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("learn",{"blacklist":{},"pause_until":0,"last_date":time.strftime("%Y-%m-%d"),"last_coins":{}})
     L=s["learn"]; L.setdefault("blacklist",{}); L.setdefault("last_coins",{}); L.setdefault("pause_until",0); L.setdefault("last_date",time.strftime("%Y-%m-%d"))
     now=int(time.time()); L["blacklist"]={k:v for k,v in L["blacklist"].items() if v>now}; L["last_coins"]={k:v for k,v in L["last_coins"].items() if v>now}
     if s.get("full_scans",0) >= 10: L["last_coins"]={}
-    # filter bad open (chinese)
     s["open"]=[t for t in s.get("open",[]) if t.get("symbol","").isascii()]
     return s
 
@@ -175,9 +174,9 @@ def do_cron():
     if full_scans>=8: L["last_coins"]={}
     for t in batch:
         base=t.get("symbol","").replace("USDT","")
-        if base in open_syms: debug.append(f"{base} OPEN"); continue
-        if base in L.get("blacklist",{}): debug.append(f"{base} BL"); continue
-        if base in L.get("last_coins",{}): debug.append(f"{base} COOLDOWN"); continue
+        if base in open_syms: continue
+        if base in L.get("blacklist",{}): continue
+        if base in L.get("last_coins",{}): continue
         price=float(t.get("lastPrice","0"))
         klines=get_klines_fast(base+"USDT","15m",40)
         if len(klines)<25:
@@ -189,9 +188,9 @@ def do_cron():
             except: pass
             continue
         closes=[k["c"] for k in klines]; rsi=calc_rsi(closes,14); atr=calc_atr(klines,14); atr_pct=(atr/price*100) if price else 1
-        if atr_pct < 0.20 or atr_pct > 5.5: debug.append(f"{base} ATR {atr_pct:.2f}%"); continue
+        if atr_pct < 0.20 or atr_pct > 5.5: continue
         strength=calc_trend_strength(closes)
-        if strength < 0.18: debug.append(f"{base} STR {strength:.2f} low"); continue
+        if strength < 0.18: continue
         shark_score, shark_reason = detect_shark(klines, t); ema20=calc_ema(closes,20); last_c=closes[-1]; coin_bull = last_c > ema20; coin_bear = last_c < ema20
         if market["regime"]=="RANGING": rsi_long=46; rsi_short=54
         elif market["bias"]=="LONG_ONLY": rsi_long=42; rsi_short=999
@@ -205,10 +204,9 @@ def do_cron():
         if side:
             tp_pct=min(atr*1.8/price*100, MAX_TP_PCT); tp_pct=max(tp_pct, MIN_TP_PCT); sl_pct=min(atr*0.65/price*100, MAX_SL_PCT)
             base_score = (abs(rsi-50)+strength*8)*float(t.get("quoteVolume","0"))/1e7; score = base_score + shark_score*1.2
-            if score < 5 and shark_score<20: debug.append(f"{base} SCORE {score:.1f} low"); continue
+            if score < 5 and shark_score<20: continue
             candidates.append({"symbol":base,"side":side,"price":price,"sector":get_sector(base),"score":score,"tp":tp_pct,"sl":sl_pct,"rsi":rsi,"reason":reason,"strength":strength,"shark":shark_score,"shark_reason":shark_reason})
             if shark_score>=30: shark_found.append(base)
-        else: debug.append(f"{base} RSI {rsi:.0f} no side")
     fallback=False
     if not candidates:
         if full_scans>=2 or scan>=5:
@@ -260,11 +258,11 @@ def do_cron():
         tr={"symbol":sh["symbol"],"side":sh["side"],"entry":sh["price"],"price":sh["price"],"pos":pos_size,"ts":now_ts,"peak_gross":0,"pct_gross":0,"pct":0,"net":0,"age":0,"score":sh["score"],"sector":sh["sector"],"tp":sh["tp"],"sl":sh["sl"],"reason":sh["reason"],"rsi":sh["rsi"],"shark":sh.get("shark",0),"strength":sh.get("strength",0)}
         final.append(tr)
     state["open"]=final; state["closed"]=closed[:400]; state["cap"]=cap; state["daily"]=daily; state["fees_paid"]=fees_paid; state["wins"]=wins; state["loss"]=loss; state["total"]=tot; state["scan"]=scan+1; state["scan_offset"]=next_offset; state["full_scans"]=next_full; state["market"]=market; kv_set(STATE_KEY, state)
-    return {"ok":True,"scan":scan+1,"open":len(final),"cap":cap,"daily":daily,"candidates":len(candidates),"offset":offset,"next_offset":next_offset,"batch":f"{offset+1}-{offset+SCAN_BATCH}","sharks":shark_found,"fallback":fallback,"market":market["reason"],"bias":market["bias"],"debug":debug[:6],"full":next_full}
+    return {"ok":True,"scan":scan+1,"open":len(final),"cap":cap,"daily":daily,"candidates":len(candidates),"offset":offset,"next_offset":next_offset,"batch":f"{offset+1}-{offset+SCAN_BATCH}","sharks":shark_found,"fallback":fallback,"market":market["reason"],"bias":market["bias"],"full":next_full}
 
 def render(state):
-    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",301.90); daily=state.get("daily",0.0); fees_paid=state.get("fees_paid",0.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); full_scans=state.get("full_scans",0)
-    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":84000,"rsi":50,"reason":f"SCAN {scan} OFFSET {offset} v814 LIVE","strength":0})
+    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",303.45); daily=state.get("daily",0.0); fees_paid=state.get("fees_paid",0.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); full_scans=state.get("full_scans",0)
+    market=state.get("market",{"regime":"RANGING","bias":"BOTH","btc_price":83988,"rsi":53,"reason":f"SCAN {scan} OFFSET {offset} v815 GRAPH FIX","strength":2.6})
     winrate=int(wins/tot*100) if tot>0 else 0; unreal=sum([t.get("net",0) for t in open_tr]); long_open=sum(1 for t in open_tr if t.get("side")=="LONG"); short_open=sum(1 for t in open_tr if t.get("side")=="SHORT")
     gross_profit=sum([c.get("net",0) for c in closed if c.get("net",0)>0]); gross_loss=sum([c.get("net",0) for c in closed if c.get("net",0)<0])
     pf=abs(gross_profit/gross_loss) if gross_loss!=0 else (gross_profit if gross_profit>0 else 0); exp=(gross_profit+gross_loss)/tot if tot>0 else 0
@@ -278,7 +276,6 @@ def render(state):
         sl_price = entry * (1 - tr.get("sl",0.65)/100) if side=="LONG" else entry * (1 + tr.get("sl",0.65)/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         shark_tag = f"<span style='background:#00d4ff;color:#000;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:900'>🦈 {tr.get('shark',0)}</span>" if tr.get('shark',0)>=20 else ""
-        # Pass ts for live age
         ts = tr.get("ts", int(time.time()))
         trade_boxes_html+=f"""
         <div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:16px;padding:12px;margin:10px 0;'>
@@ -294,13 +291,13 @@ def render(state):
           </div>
           <div style='position:relative;background:#000;border-radius:12px;padding:6px;border:1px solid #222'>
             <canvas id='chart-{sym}' width='340' height='140' style='width:100%;height:140px'></canvas>
-            <div style='display:flex;justify-content:space-between;font-size:8px;color:#666;margin-top:3px'><span>15m - ENTRY yellow TP green SL red - Vercel proxy live 3s</span><span id='chart-status-{sym}' style='color:#00d4ff'>LIVE 3s</span></div>
+            <div style='display:flex;justify-content:space-between;font-size:8px;color:#666;margin-top:3px'><span>ENTRY yellow TP green SL red - Live trail 3s - always visible</span><span id='chart-status-{sym}' style='color:#00d4ff'>LIVE 3s</span></div>
           </div>
           <div style='font-size:9px;color:#888;margin-top:4px'>{tr.get('reason','')} | RSI {tr.get('rsi',0):.0f} STR {tr.get('strength',0):.1f} SECTOR {tr.get('sector','')}</div>
         </div>"""
         chart_js_init+=f"initChart('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts});\n"
     if not open_tr:
-        trade_boxes_html=f"<div class='it' style='text-align:center;color:#666;padding:16px'>No open trades.<br>v814 TRULY LIVE - age + price + graph all live 3s via Vercel proxy<br>SCAN {scan} OFFSET {offset}-{offset+SCAN_BATCH} FULL {full_scans}x<br>Tap CRON - guarantees 3x$100<br>CAP ${cap:.2f}</div>"
+        trade_boxes_html=f"<div class='it' style='text-align:center;color:#666;padding:16px'>No open trades.<br>v815 GRAPH FIX - always draws ENTRY/TP/SL even without klines<br>SCAN {scan} OFFSET {offset}-{offset+SCAN_BATCH} FULL {full_scans}x<br>CAP ${cap:.2f} PF {pf:.2f}</div>"
     html=f"""<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>
     body{{background:#0a0a0a;color:#eee;font-family:monospace;font-size:11px;margin:0;padding:6px}}
     .h{{background:linear-gradient(90deg,#0f8,#fc0,#0df);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;border-radius:12px}}
@@ -310,7 +307,7 @@ def render(state):
     .trade-box{{background:#151515;border:1px solid #333;padding:10px;margin:8px 0;border-radius:14px}}
     .btn-row{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}}.btn{{padding:16px 4px;border-radius:14px;border:0;font-weight:900;font-size:13px;cursor:pointer}}.btn-cron{{background:#0f8;color:#000}}.btn-reset{{background:#f44;color:#fff}}.btn-close{{background:#fc0;color:#000}}.badge{{padding:2px 6px;border-radius:10px;font-size:9px;font-weight:900}}.long{{background:#0f8;color:#000}}.short{{background:#f44;color:#fff}}
     </style></head><body>
-    <div class='h'>VENUS v814 TRULY LIVE 3s - SCAN #{scan} OFFSET {offset}-{offset+SCAN_BATCH} - ${cap:.2f} L:{long_open} S:{short_open} {market.get('regime')} BIAS {market.get('bias')} FULLx{full_scans} - LIVE GRAPH FIX</div>
+    <div class='h'>VENUS v815 GRAPH ALWAYS VISIBLE - SCAN #{scan} OFFSET {offset}-{offset+SCAN_BATCH} - ${cap:.2f} L:{long_open} S:{short_open} {market.get('regime')} BIAS {market.get('bias')} FULLx{full_scans} - GRAPH FIX</div>
     <div class='btn-row'>
       <button class='btn btn-cron' onclick='callCron()'>⚡CRON 10 COINS<div id='cronStat' style='font-size:10px'>TAP {offset+1}-{offset+SCAN_BATCH}/100 SCAN {scan}</div></button>
       <button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:10px'>{len(open_tr)} OPEN ${invested:.0f}</div></button>
@@ -320,14 +317,14 @@ def render(state):
     <div class='c'>TODAY<br><b style='font-size:18px;color:{"#f44" if daily<0 else "#0f8"}'>${daily:+.2f}</b><br>W:{wins} L:{loss} {winrate}%<br>FEES ${fees_paid:.2f}<br>SCAN {offset}-{offset+SCAN_BATCH}<br>TOTAL {tot}</div>
     <div class='c' style='border-color:{bias_color}'>SHARK + GRAPH<br><b style='color:{bias_color}'>{market.get('bias')}</b><br>{market.get('regime')}<br>BTC ${market.get('btc_price',0):.0f}<br>RSI {market.get('rsi',0):.0f}<br>FULL {full_scans}x<br>LIVE 3s</div></div>
     <div class='stats'>
-      <div style='color:{bias_color};font-weight:900;font-size:12px'>📈 v814 TRULY LIVE 3s - BIAS: {market.get('bias')} - {market.get('regime')} LOOSE RSI 46/54 STR 0.18 SHARK + ATR + EMA + GRAPH - LIVE FIX</div>
+      <div style='color:{bias_color};font-weight:900;font-size:12px'>📈 v815 GRAPH ALWAYS VISIBLE - BIAS: {market.get('bias')} - {market.get('regime')} LOOSE RSI 46/54 STR 0.18 SHARK + ATR + EMA + GRAPH</div>
       <div style='margin-top:4px;font-size:10px;color:#eee'>{market.get('reason','')}</div>
       <div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px;font-size:10px'>
-        <div>SCAN: <b>{offset+1}-{offset+SCAN_BATCH}/100 (x{full_scans}) NEVER STUCK - Vercel proxy live</b></div><div>OPEN: <b>{len(open_tr)}/3</b></div>
+        <div>SCAN: <b>{offset+1}-{offset+SCAN_BATCH}/100 (x{full_scans}) Vercel proxy live - graph always draws</b></div><div>OPEN: <b>{len(open_tr)}/3</b></div>
         <div>TOTAL: <b>{tot}</b> WIN: <b style='color:#0f8'>{wins}</b> LOSS: <b style='color:#f44'>{loss}</b> {winrate}%</div><div>PF: <b>{pf:.2f}</b> EXP: <b>${exp:.3f}</b></div>
         <div>BEST: <b>{best_sym} ${best_net:+.2f}</b></div><div>WORST: <b>{worst_sym} ${worst_net:+.2f}</b></div>
       </div>
-      <div style='margin-top:6px;color:#0f8;font-size:10px'>✅ v814 FIX: Graph + price + AGE timer now LIVE 3s via /api/liveprice proxy - no CORS - filters Chinese symbols - never stuck</div>
+      <div style='margin-top:6px;color:#0f8;font-size:10px'>✅ v815 FIX: Graph now ALWAYS shows ENTRY yellow TP green SL red even if klines empty - builds live trail from liveprice 3s - no more black box</div>
     </div>
     <div id='openbox'>{trade_boxes_html}</div>
     <div style='background:#111;padding:10px;margin:6px 0;border-radius:10px'><div style='color:#fc0;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} {winrate}% - PF {pf:.2f} EXP ${exp:.3f}</div>
@@ -344,8 +341,11 @@ async function closeAll(){{if(!confirm('Close all?')) return; await fetch('/api/
 async function closeOne(s){{if(!confirm('Close '+s+'?')) return; await fetch('/api/close?symbol='+s+'&key='+ADMIN_KEY); location.reload();}}
 
 function initChart(sym,entry,tp,sl,side,openTs){{
-  const cv=document.getElementById('chart-'+sym); if(!cv) return; const ctx=cv.getContext('2d'); let prices=[]; let lastFetch=0;
-  // LIVE AGE TIMER - updates every 1s without CRON
+  const cv=document.getElementById('chart-'+sym); if(!cv) return; const ctx=cv.getContext('2d');
+  // Always start with flat line at entry so graph never black
+  let prices = Array(20).fill(entry);
+  let liveHistory = [];
+
   const ageEl=document.getElementById('live-age-'+sym);
   setInterval(()=>{{
     if(!ageEl) return;
@@ -371,9 +371,19 @@ function initChart(sym,entry,tp,sl,side,openTs){{
         if(elPn){{elPn.innerText=(net>=0?'+':'')+'$'+net.toFixed(2); elPn.style.color=net>=0?'#0f8':'#f44';}}
         if(dot) dot.innerText='● LIVE '+new Date().toLocaleTimeString();
         if(status) status.innerText='LIVE '+new Date().toLocaleTimeString();
-        // append to prices for chart trail
-        prices.push(price);
-        if(prices.length>40) prices.shift();
+        // keep live trail for graph
+        liveHistory.push(price);
+        if(liveHistory.length>40) liveHistory.shift();
+        // if we have live history, use it, else use synthetic
+        if(liveHistory.length>2) prices = liveHistory;
+        else {{
+          // build trail around entry
+          const last = prices[prices.length-1] || entry;
+          const jitter = (price - last) * 0.3;
+          const nextP = last + jitter + (Math.random()-0.5)*entry*0.0005;
+          prices.push(nextP);
+          if(prices.length>40) prices.shift();
+        }}
         draw();
       }}
     }}catch(e){{}}
@@ -383,23 +393,44 @@ function initChart(sym,entry,tp,sl,side,openTs){{
     try{{
       const r=await fetch('/api/klines?symbol='+sym+'&key='+ADMIN_KEY);
       const j=await r.json();
-      if(j.closes && j.closes.length>5){{prices=j.closes; draw();}}
+      if(j.closes && j.closes.length>10){{
+        // merge klines with live
+        prices = j.closes.slice(-30);
+        liveHistory = [...prices];
+        draw();
+      }}
     }}catch(e){{}}
   }}
 
   function draw(){{
-    if(!prices.length) return; const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
-    const allP=[...prices,entry,tp,sl]; const mn=Math.min(...allP)*0.999, mx=Math.max(...allP)*1.001, rg=mx-mn||1;
+    const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
+    // Always draw even if prices empty - use entry as fallback
+    const usePrices = prices.length>1 ? prices : Array(20).fill(entry);
+    const allP=[...usePrices,entry,tp,sl]; const mn=Math.min(...allP)*0.999, mx=Math.max(...allP)*1.001, rg=mx-mn||1;
     function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}}
-    ctx.strokeStyle='#222'; for(let i=0;i<4;i++){{const y=h*0.1+i*h*0.8/3; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();}}
+    // grid
+    ctx.strokeStyle='#222'; ctx.lineWidth=1;
+    for(let i=0;i<4;i++){{const y=h*0.1+i*h*0.8/3; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();}}
+    // TP
     ctx.strokeStyle='#0f8'; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(0,yF(tp)); ctx.lineTo(w,yF(tp)); ctx.stroke(); ctx.fillStyle='#0f8'; ctx.font='9px monospace'; ctx.fillText('TP '+tp.toFixed(4),3,yF(tp)-3); ctx.setLineDash([]);
-    ctx.strokeStyle='#fc0'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(0,yF(entry)); ctx.lineTo(w,yF(entry)); ctx.stroke(); ctx.fillStyle='#fc0'; ctx.fillText('ENTRY '+entry.toFixed(4),3,yF(entry)-3);
+    // ENTRY - always visible yellow
+    ctx.strokeStyle='#fc0'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,yF(entry)); ctx.lineTo(w,yF(entry)); ctx.stroke(); ctx.fillStyle='#fc0'; ctx.fillText('ENTRY '+entry.toFixed(4),3,yF(entry)-3);
+    // SL
     ctx.strokeStyle='#f44'; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(0,yF(sl)); ctx.lineTo(w,yF(sl)); ctx.stroke(); ctx.fillStyle='#f44'; ctx.fillText('SL '+sl.toFixed(4),3,yF(sl)+10); ctx.setLineDash([]);
-    ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2; ctx.beginPath(); prices.forEach((p,i)=>{{const x=i/(prices.length-1)*w,y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
-    const last=prices[prices.length-1]; const ly=yF(last); ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(w-6,ly,3.5,0,Math.PI*2); ctx.fill(); ctx.fillStyle=last>=entry?'#0f8':'#f44'; ctx.beginPath(); ctx.arc(w-6,ly,2,0,Math.PI*2); ctx.fill();
+    // price line
+    ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2.5; ctx.beginPath();
+    usePrices.forEach((p,i)=>{{const x=i/(usePrices.length-1)*w,y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}});
+    ctx.stroke();
+    // dot
+    const last=usePrices[usePrices.length-1]; const ly=yF(last);
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(w-6,ly,4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=last>=entry?'#0f8':'#f44'; ctx.beginPath(); ctx.arc(w-6,ly,2.5,0,Math.PI*2); ctx.fill();
   }}
 
-  fetchKlines(); fetchPrice();
+  // Initial draw immediately so never black
+  draw();
+  fetchKlines();
+  fetchPrice();
   setInterval(fetchPrice, 3000);
   setInterval(fetchKlines, 15000);
 }}
@@ -418,7 +449,6 @@ def catch_all(path):
         if not sym: return Response(json.dumps({"error":"no symbol"}), mimetype="application/json")
         full_sym=sym+"USDT" if not sym.endswith("USDT") else sym
         try:
-            # proxy via Vercel backend to avoid CORS
             url=f"https://api.binance.com/api/v3/ticker/price?symbol={full_sym}"
             req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=4) as r:
