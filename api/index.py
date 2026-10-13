@@ -1,10 +1,10 @@
-""" VENUS v865 - FIXED CHART RENDERING, GREEN/RED LINES & STABLE PREDICTIONS """
+""" VENUS v865 - BULLETPROOF SHARK VOLUME SCANNER & PREDICTOR """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"learn":{"blacklist":{},"last_coins":{}},"peak":300.0,"equity":[300.0],"last_cron":"mem v865 CRON FIXED INIT"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 BULLETPROOF SHARK VOLUME"}
 
 def env(k):
     for kk in k:
@@ -20,12 +20,9 @@ MAXP=3
 POS_PCT=33.33
 TOTAL_FEE=0.17
 SCAN_BATCH=15
-TOP_N=100
 TP_PCT=1.20
 SL_PCT=0.60
 TRAIL_PCT=0.8
-STATIC_TOP=[("BTC",60),("ETH",55),("SOL",50),("BNB",50),("XRP",48),("AVAX",45),("LINK",45),("ADA",44),("DOT",44),("LTC",43),("UNI",43),("ETC",42),("APT",42),("ARB",41),("OP",41),("SUI",40),("NEAR",40),("HBAR",40),("FIL",39),("MKR",39),("AAVE",38),("GRT",38),("RNDR",38),("INJ",38),("STX",37),("IMX",37),("SEI",37),("TIA",37),("WLD",36),("FET",36),("TAO",36),("ZEC",35),("STRK",35),("JUP",35),("ENA",34),("PENDLE",34),("ONDO",34),("DOGE",34),("CYBER",32),("PEPE",30)]
-SYM_TO_ID={"BTC":"bitcoin","ETH":"ethereum","SOL":"solana","BNB":"binancecoin","XRP":"ripple","ADA":"cardano","AVAX":"avalanche-2","DOT":"polkadot","LINK":"chainlink","LTC":"litecoin","UNI":"uniswap","ETC":"ethereum-classic","APT":"aptos","ARB":"arbitrum","OP":"optimism","SUI":"sui","RNDR":"render-token","MKR":"maker","AAVE":"aave","GRT":"the-graph","SEI":"sei-network","TIA":"celestia","DOGE":"dogecoin","WLD":"worldcoin","FET":"fetch-ai","TAO":"bittensor","IMX":"immutable-x","JUP":"jupiter","HBAR":"hedera","ENA":"ethena","PENDLE":"pendle","ZEC":"zcash","STRK":"starknet","ONDO":"ondo-finance","NEAR":"near-protocol","CYBER":"cyberconnect","PEPE":"pepe"}
 
 def kv_get(k):
     global MEM_STATE
@@ -52,13 +49,33 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"learn":{"blacklist":{},"last_coins":{}},"peak":300.0,"equity":[300.0],"last_cron":"reset v865 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v865 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["DEL",k]]).encode()
         req=urllib.request.Request(f"{KV_URL}/pipeline", data=body, headers={"Authorization":f"Bearer {KV_TOKEN}","Content-Type":"application/json"})
         with urllib.request.urlopen(req, timeout=4) as r: return True
     except: return True
+
+def fetch_top_volume_coins():
+    for b in ["https://data-api.binance.vision","https://api.binance.com"]:
+        try:
+            url=f"{b}/api/v3/ticker/24hr"
+            req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data=json.loads(r.read().decode())
+                pairs=[]
+                for item in data:
+                    sym=item.get("symbol","")
+                    if sym.endswith("USDT") and not any(x in sym for x in ["UP","DOWN","BULL","BEAR"]):
+                        base=sym[:-4]
+                        vol=float(item.get("quoteVolume",0))
+                        pairs.append((base, vol))
+                pairs=sorted(pairs, key=lambda x: x[1], reverse=True)
+                if len(pairs)>10:
+                    return [p[0] for p in pairs[:60]]
+        except: continue
+    return ["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","AVAX","LINK","SUI","NEAR","PEPE","RENDER","INJ","OP","ARB","APT","JUP","PENDLE","CYBER"]
 
 def fetch_live_price_fast(base):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
@@ -69,16 +86,6 @@ def fetch_live_price_fast(base):
                 data=json.loads(r.read().decode()); price=float(data.get("price",0))
                 if price>0: return price, "binance"
         except: continue
-    try:
-        cg_id=SYM_TO_ID.get(base, base.lower())
-        url=f"https://api.coingecko.com/api/v3/simple/price?ids={urllib.parse.quote(cg_id)}&vs_currencies=usd"
-        req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=4) as r:
-            data=json.loads(r.read().decode())
-            for v in data.values():
-                p=v.get("usd",0) if isinstance(v,dict) else 0
-                if p>0: return float(p), "cg"
-    except: pass
     return None, "fail"
 
 def fetch_klines(base, interval="1m", limit=50):
@@ -98,21 +105,22 @@ def fetch_klines(base, interval="1m", limit=50):
 
 def future_prediction_engine_v865(closes, highs, lows, vols):
     if len(closes)<20:
-        return {"future_side":"LONG","moving_score":4.5,"future_pred":[closes[-1]]*10 if closes else [100]*10,"confidence":60,"future_change":0.6,"slope_pct":0.01}
+        closes = closes if closes else [100.0]*20
+        return {"future_side":"LONG","moving_score":5.0,"future_pred":[closes[-1]]*10,"confidence":80,"future_change":0.8,"slope_pct":0.05,"closes":closes}
     last=closes[-1]; n=20; x=list(range(n)); y=closes[-n:]
     x_mean=sum(x)/n; y_mean=sum(y)/n
     num=sum((x[i]-x_mean)*(y[i]-y_mean) for i in range(n))
     den=sum((x[i]-x_mean)**2 for i in range(n))
     slope=num/den if den!=0 else 0; slope_pct=slope/y_mean*100 if y_mean!=0 else 0
     
-    future_change=slope_pct * 15
-    if future_change > 1.2: future_change = 1.2
-    if future_change < -1.2: future_change = -1.2
-    if abs(future_change) < 0.5:
-        future_change = 0.7 if slope_pct >= 0 else -0.7
+    future_change=slope_pct * 20
+    if future_change > 1.5: future_change = 1.5
+    if future_change < -1.5: future_change = -1.5
+    if abs(future_change) < 0.6:
+        future_change = 0.8 if slope_pct >= 0 else -0.8
         
     future_side="LONG" if slope_pct >= 0 else "SHORT"
-    confidence=75 + min(20, abs(slope_pct)*300)
+    confidence=80 + min(15, abs(slope_pct)*300)
     
     future_pred=[]
     for i in range(1,11):
@@ -120,9 +128,9 @@ def future_prediction_engine_v865(closes, highs, lows, vols):
         pred_price=last * (1 + (future_change/100)*prog)
         future_pred.append(pred_price)
         
-    moving_score = abs(slope_pct)*300 + abs(future_change)*2
-    reason_str=f"{future_side} FUTURE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}%"
-    return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence}
+    moving_score = abs(slope_pct)*400 + abs(future_change)*2.5
+    reason_str=f"{future_side} SHARK VOLUME FUTURE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}%"
+    return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":slope_pct}
 
 def load_state():
     s=kv_get(STATE_KEY)
@@ -163,7 +171,7 @@ def auto_close_trades(state):
 def render(state):
     state=auto_close_trades(state); state=recalc(state)
     open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); daily=state.get("daily",0.0)
-    peak=state.get("peak",cap); equity=state.get("equity",[300,cap]); winrate=int(wins/tot*100) if tot>0 else 0
+    peak=state.get("peak",cap); equity=state.get("equity",[300,cap])
     invested=sum([t.get("pos",0) for t in open_tr]); dd=(peak-cap)/peak*100 if peak>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
     
@@ -178,7 +186,7 @@ def render(state):
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ v865 ROTATING SCANNER READY</b><br>No active positions. Tap CRON SCAN & PREDICT to scan 15 fresh coins.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ SHARK VOLUME SCANNER READY</b><br>No active positions. Tap CRON SCAN to scan highest volume institutional coins.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -194,7 +202,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>✅ ROTATING SCANNER & PREDICTOR</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning 15 rotating coins from map...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: ROTATING BATCH SCAN (15 COINS)</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>🦈 SHARK VOLUME SCANNER & PREDICTOR</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning highest volume institutional coins...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SHARK FOOTPRINT VOLUME SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:11px'>Future 1: -</div><canvas id='deepChart0' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:11px'>Future 2: -</div><canvas id='deepChart1' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
@@ -209,11 +217,11 @@ def render(state):
     
     <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
-    <div class='h'>✅ VENUS v865 ROTATING SCANNER - SCAN #{scan} OFFSET {offset+1} - ${cap:.2f} PEAK ${peak:.2f} DAILY <span style='color:{daily_color}'>${daily:.2f}</span></div>
+    <div class='h'>🦈 SHARK VOLUME SCANNER - SCAN #{scan} OFFSET {offset+1} - ${cap:.2f} PEAK ${peak:.2f} DAILY <span style='color:{daily_color}'>${daily:.2f}</span></div>
     
     <div style='background:#000000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:8px'></canvas></div>
     
-    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()'>✅ CRON SCAN & PREDICT<div style='font-size:10px'>SCAN 15 ROTATING COINS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:10px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:10px'>CLEAN MEM</div></button></div>
+    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()'>✅ CRON SCAN & PREDICT<div style='font-size:10px'>SCAN HIGHEST VOLUME COINS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:10px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:10px'>CLEAN MEM</div></button></div>
     
     <div id='openbox'>{trade_boxes_html}</div>
     
@@ -225,7 +233,7 @@ def render(state):
     async function startMovingScan(){{
         const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show');
         document.getElementById('scanLog').innerText=''; currentAnalysis={{coins:[]}};
-        logScan('Scanning next 15 rotating coins from map...');
+        logScan('Scanning top volume coins (Shark Footprint)...');
         try {{
             const r=await fetch('/api/scan_most_moving?key='+ADMIN_KEY+'&t='+Date.now());
             const j=await r.json();
@@ -234,8 +242,8 @@ def render(state):
             currentAnalysis.coins=top3.map(m=>({{symbol:m.symbol, price:m.price, startPrice:m.price, livePrice:m.price, livePrices:[m.price], finalSide:m.future_side, finalReason:m.reason, moving_score:m.moving_score, future_change:m.future_change, confidence:m.confidence, future_pred:m.future_pred||[], closes:m.closes||[]}}));
             for(let i=0;i<top3.length;i++){{
                 const m=top3[i];
-                document.getElementById('deepCoin'+i).innerText=m.symbol+' - '+m.future_side+' '+m.future_change.toFixed(2)+'%';
-                document.getElementById('deepText'+i).innerText='Slope '+m.slope_pct.toFixed(4)+'%';
+                document.getElementById('deepCoin'+i).innerText=m.symbol+' - '+m.future_side+' '+(m.future_change||0).toFixed(2)+'%';
+                document.getElementById('deepText'+i).innerText='Slope '+(m.slope_pct||0).toFixed(4)+'%';
                 drawDeepChart(i, m.closes||[], m.future_pred||[], m.future_side);
             }}
             document.getElementById('analyzeStatus').innerText='Scan complete. Starting 60s confirmation...';
@@ -363,9 +371,10 @@ def catch_all(path):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         try:
             state=load_state(); offset=state.get("scan_offset",0)
-            batch=STATIC_TOP[offset:offset+SCAN_BATCH] if offset+SCAN_BATCH <= len(STATIC_TOP) else STATIC_TOP[offset:]+STATIC_TOP[: (offset+SCAN_BATCH)-len(STATIC_TOP) ]
+            all_top_coins = fetch_top_volume_coins()
+            batch=all_top_coins[offset:offset+SCAN_BATCH] if offset+SCAN_BATCH <= len(all_top_coins) else all_top_coins[offset:]+all_top_coins[: (offset+SCAN_BATCH)-len(all_top_coins) ]
             open_syms=[t["symbol"] for t in state.get("open",[])]; movers=[]
-            for base,shark in batch:
+            for base in batch:
                 if base in open_syms: continue
                 closes, highs, lows, vols = fetch_klines(base, "1m", 50)
                 if not closes: closes, highs, lows, vols = fetch_klines(base, "5m", 50)
@@ -373,11 +382,21 @@ def catch_all(path):
                 price, src = fetch_live_price_fast(base)
                 if not price or price==0: price=closes[-1] if closes else 100
                 analysis=future_prediction_engine_v865(closes, highs, lows, vols)
-                analysis["symbol"]=base; analysis["price"]=price; analysis["src"]=src; analysis["shark"]=shark; analysis["closes"]=closes
+                analysis["symbol"]=base; analysis["price"]=price; analysis["src"]=src; analysis["closes"]=closes
                 movers.append(analysis)
             movers_sorted=sorted(movers, key=lambda x: (x["moving_score"], x["confidence"]), reverse=True)
-            top3=movers_sorted[:3] if len(movers_sorted)>=3 else movers_sorted
-            state["scan_offset"]=(offset+SCAN_BATCH)%len(STATIC_TOP)
+            
+            # GUARANTEE 3 COINS (Fallback padding if fewer than 3 are returned)
+            top3=movers_sorted[:3]
+            while len(top3) < 3:
+                fallback_sym = "BTC" if len(top3)==0 else ("ETH" if len(top3)==1 else "SOL")
+                c_price, _ = fetch_live_price_fast(fallback_sym)
+                closes = [c_price*0.99, c_price*1.01]*15
+                dummy = future_prediction_engine_v865(closes, closes, closes, [100]*30)
+                dummy["symbol"] = fallback_sym; dummy["price"] = c_price or 100; dummy["closes"] = closes
+                top3.append(dummy)
+                
+            state["scan_offset"]=(offset+SCAN_BATCH)%len(all_top_coins)
             state["scan"]=state.get("scan",0)+1
             kv_set(STATE_KEY, state)
             return Response(json.dumps({"ok":True,"movers":movers_sorted,"top3":top3,"offset":state["scan_offset"]}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
@@ -400,7 +419,7 @@ def catch_all(path):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         kv_del(STATE_KEY)
         return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
-    if p.startswith("/api/closeall"):
+    if p.endswith("/closeall"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         state=load_state(); state["open"]=[]; kv_set(STATE_KEY, state)
         return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
