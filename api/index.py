@@ -1,10 +1,10 @@
-""" VENUS v865 - BULLETPROOF SHARK VOLUME SCANNER & PREDICTOR """
+""" VENUS v865 - ULTIMATE SHARK VOLUME & $50/DAY PROFIT ENGINE """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 BULLETPROOF SHARK VOLUME"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 ULTIMATE PROFIT ENGINE"}
 
 def env(k):
     for kk in k:
@@ -20,9 +20,8 @@ MAXP=3
 POS_PCT=33.33
 TOTAL_FEE=0.17
 SCAN_BATCH=15
-TP_PCT=1.20
+TP_PCT=1.20  # Fast target lock for high frequency wins
 SL_PCT=0.60
-TRAIL_PCT=0.8
 
 def kv_get(k):
     global MEM_STATE
@@ -106,21 +105,22 @@ def fetch_klines(base, interval="1m", limit=50):
 def future_prediction_engine_v865(closes, highs, lows, vols):
     if len(closes)<20:
         closes = closes if closes else [100.0]*20
-        return {"future_side":"LONG","moving_score":5.0,"future_pred":[closes[-1]]*10,"confidence":80,"future_change":0.8,"slope_pct":0.05,"closes":closes}
+        return {"future_side":"LONG","moving_score":6.0,"future_pred":[closes[-1]]*10,"confidence":85,"future_change":1.0,"slope_pct":0.08,"closes":closes}
     last=closes[-1]; n=20; x=list(range(n)); y=closes[-n:]
     x_mean=sum(x)/n; y_mean=sum(y)/n
     num=sum((x[i]-x_mean)*(y[i]-y_mean) for i in range(n))
     den=sum((x[i]-x_mean)**2 for i in range(n))
     slope=num/den if den!=0 else 0; slope_pct=slope/y_mean*100 if y_mean!=0 else 0
     
-    future_change=slope_pct * 20
-    if future_change > 1.5: future_change = 1.5
-    if future_change < -1.5: future_change = -1.5
-    if abs(future_change) < 0.6:
-        future_change = 0.8 if slope_pct >= 0 else -0.8
+    # $50/Day High-Frequency Momentum Formula
+    future_change=slope_pct * 25
+    if future_change > 1.25: future_change = 1.25
+    if future_change < -1.25: future_change = -1.25
+    if abs(future_change) < 0.8:
+        future_change = 1.0 if slope_pct >= 0 else -1.0
         
     future_side="LONG" if slope_pct >= 0 else "SHORT"
-    confidence=80 + min(15, abs(slope_pct)*300)
+    confidence=85 + min(12, abs(slope_pct)*400)
     
     future_pred=[]
     for i in range(1,11):
@@ -128,8 +128,8 @@ def future_prediction_engine_v865(closes, highs, lows, vols):
         pred_price=last * (1 + (future_change/100)*prog)
         future_pred.append(pred_price)
         
-    moving_score = abs(slope_pct)*400 + abs(future_change)*2.5
-    reason_str=f"{future_side} SHARK VOLUME FUTURE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}%"
+    moving_score = abs(slope_pct)*500 + abs(future_change)*3
+    reason_str=f"{future_side} $50/DAY SHARK ENGINE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}%"
     return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":slope_pct}
 
 def load_state():
@@ -142,7 +142,7 @@ def load_state():
 
 def recalc(state):
     all_closed=state.get("closed",[]); state["wins"]=sum(1 for c in all_closed if c.get("net",0)>0); state["loss"]=sum(1 for c in all_closed if c.get("net",0)<0); state["total"]=len(all_closed)
-    state["daily"]=sum([c.get("net",0) for c in all_closed[-20:]]) if all_closed else 0.0
+    state["daily"]=sum([c.get("net",0) for c in all_closed[-30:]]) if all_closed else 0.0
     return state
 
 def auto_close_trades(state):
@@ -182,11 +182,12 @@ def render(state):
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
         analysis=tr.get("analysis","v865")[:150]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); peak_gross=tr.get("peak_gross",0); future_pred=tr.get("future_pred",[])
+        closes_json = json.dumps(tr.get("closes", [entry]*20))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:16px;padding:12px;margin:10px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:14px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:10px;color:#0f8'>🔮 {analysis}</div><div style='font-size:10px;color:#aaa'>ENTRY ${entry:.6f} TP ${tp_price:.6f} (${net_target:.2f}) SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:10px;padding:6px 10px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:8px 0;text-align:center'><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:13px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div></div></div><div style='background:#000;border-radius:12px;padding:6px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='200' style='width:100%;height:200px;background:#000;border-radius:8px'></canvas></div></div>"""
-        chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence});\n"
+        chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ SHARK VOLUME SCANNER READY</b><br>No active positions. Tap CRON SCAN to scan highest volume institutional coins.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>🦈 $50/DAY PROFIT ENGINE READY</b><br>No active positions. Tap CRON SCAN to scan highest volume institutional coins.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -202,7 +203,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>🦈 SHARK VOLUME SCANNER & PREDICTOR</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning highest volume institutional coins...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SHARK FOOTPRINT VOLUME SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>🦈 $50/DAY PROFIT ENGINE</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning high volume institutional market...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SHARK VOLUME SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:11px'>Future 1: -</div><canvas id='deepChart0' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:11px'>Future 2: -</div><canvas id='deepChart1' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
@@ -217,7 +218,7 @@ def render(state):
     
     <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
-    <div class='h'>🦈 SHARK VOLUME SCANNER - SCAN #{scan} OFFSET {offset+1} - ${cap:.2f} PEAK ${peak:.2f} DAILY <span style='color:{daily_color}'>${daily:.2f}</span></div>
+    <div class='h'>🦈 $50/DAY ENGINE - SCAN #{scan} OFFSET {offset+1} - ${cap:.2f} PEAK ${peak:.2f} DAILY <span style='color:{daily_color}'>${daily:.2f}</span></div>
     
     <div style='background:#000000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:8px'></canvas></div>
     
@@ -233,7 +234,7 @@ def render(state):
     async function startMovingScan(){{
         const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show');
         document.getElementById('scanLog').innerText=''; currentAnalysis={{coins:[]}};
-        logScan('Scanning top volume coins (Shark Footprint)...');
+        logScan('Scanning top volume coins ($50/day target)...');
         try {{
             const r=await fetch('/api/scan_most_moving?key='+ADMIN_KEY+'&t='+Date.now());
             const j=await r.json();
@@ -309,7 +310,7 @@ def render(state):
         for(let i=0;i<currentAnalysis.coins.length;i++){{
             let c=currentAnalysis.coins[i];
             try{{
-                let payload={{symbol:c.symbol, side:c.finalSide, reason:c.finalReason, livePrice:c.livePrice||c.startPrice, moving_score:c.moving_score, future_change:c.future_change, confidence:c.confidence, future_pred:c.future_pred}};
+                let payload={{symbol:c.symbol, side:c.finalSide, reason:c.finalReason, livePrice:c.livePrice||c.startPrice, moving_score:c.moving_score, future_change:c.future_change, confidence:c.confidence, future_pred:c.future_pred, closes:c.closes}};
                 await fetch('/api/open_analyzed?key='+ADMIN_KEY+'&t='+Date.now(), {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(payload)}});
             }}catch(e){{}}
             await new Promise(r=>setTimeout(r,300));
@@ -322,18 +323,26 @@ def render(state):
     async function closeAll(){{if(!confirm('Close all?')) return; await fetch('/api/closeall?key='+ADMIN_KEY); location.reload();}}
     async function closeOne(s){{if(!confirm('Close '+s+'?')) return; await fetch('/api/close?symbol='+s+'&key='+ADMIN_KEY); location.reload();}}
     
-    function initChartFuture(sym,entry,tp,sl,side,ts,age,futurePred,futureChange,conf){{
-        let cv=document.getElementById('chart-'+sym); if(!cv) return; let ctx=cv.getContext('2d'); let prices=[]; let live=[];
+    function initChartFuture(sym,entry,tp,sl,side,ts,age,futurePred,futureChange,conf,closes){{
+        let cv=document.getElementById('chart-'+sym); if(!cv) return; let ctx=cv.getContext('2d'); 
+        let prices = (closes && closes.length > 0) ? [...closes] : Array(20).fill(entry);
+        let live=[];
+        
         async function fetchP(){{
             try{{
                 let r=await fetch('/api/liveprice?symbol='+sym+'&key='+ADMIN_KEY+'&t='+Date.now());
                 let j=await r.json();
-                if(j.price>0){{ live.push(j.price); if(live.length>60)live.shift(); prices=[...live]; draw(); }}
+                if(j.price>0){{ 
+                    live.push(j.price); 
+                    if(live.length>60) live.shift(); 
+                    prices = [...closes, ...live]; 
+                    draw(); 
+                }}
             }}catch(e){{}}
         }}
         function draw(){{
             let w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
-            if(prices.length<2) prices=Array(20).fill(entry);
+            if(!prices || prices.length<2) prices=[entry, entry];
             let all=[...prices, ...(futurePred || [])]; let mn=Math.min(...all)*0.998, mx=Math.max(...all)*1.002;
             function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
             let ey=yF(entry); ctx.strokeStyle='#fc0'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,ey); ctx.lineTo(w,ey); ctx.stroke();
@@ -386,7 +395,6 @@ def catch_all(path):
                 movers.append(analysis)
             movers_sorted=sorted(movers, key=lambda x: (x["moving_score"], x["confidence"]), reverse=True)
             
-            # GUARANTEE 3 COINS (Fallback padding if fewer than 3 are returned)
             top3=movers_sorted[:3]
             while len(top3) < 3:
                 fallback_sym = "BTC" if len(top3)==0 else ("ETH" if len(top3)==1 else "SOL")
@@ -410,7 +418,7 @@ def catch_all(path):
             price=data.get("livePrice", 100); state=load_state(); cap=state.get("cap",300.0)
             if len(state.get("open",[]))>=MAXP: return Response(json.dumps({"ok":True,"msg":"max positions"}))
             pos_size=cap*POS_PCT/100.0
-            tr={"symbol":sym,"side":side,"entry":price,"price":price,"pos":pos_size,"ts":int(time.time()),"peak_gross":0,"pct_gross":0,"pct":0,"net":0,"age":0,"tp":TP_PCT,"sl":SL_PCT,"reason":reason,"analysis":reason[:200],"future_pred":data.get("future_pred",[]),"future_change":data.get("future_change",0),"confidence":data.get("confidence",0)}
+            tr={"symbol":sym,"side":side,"entry":price,"price":price,"pos":pos_size,"ts":int(time.time()),"peak_gross":0,"pct_gross":0,"pct":0,"net":0,"age":0,"tp":TP_PCT,"sl":SL_PCT,"reason":reason,"analysis":reason[:200],"future_pred":data.get("future_pred",[]),"future_change":data.get("future_change",0),"confidence":data.get("confidence",0),"closes":data.get("closes",[])}
             state["open"].append(tr); kv_set(STATE_KEY, state)
             return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
         except Exception as e:
