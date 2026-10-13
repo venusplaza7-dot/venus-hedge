@@ -1,4 +1,4 @@
-""" VENUS v865 - CRON FIXED + WORKS WITH MEM - FULL CODE PRESERVED & STRING FORMATTING FIXED """
+""" VENUS v865 - CRON FIXED + FULL VISUAL MAP & BUY/SELL LINES RESTORED """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
@@ -267,11 +267,10 @@ def render(state):
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},'{tr.get('cg_id','bitcoin')}',{json.dumps(future_pred)},{future_change},{confidence});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ v865 CRON FIXED - WORKS WITH MEM - FIXES v863 CRON NOT WORKING</b><br>No open trades. Tap CRON FIXED to start.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ v865 CRON FIXED - WORKS WITH MEM</b><br>No open trades. Tap CRON FIXED to start scanning.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
-    # Assembled using string concatenation to completely prevent any formatting curly-brace crashes
     html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
     html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:11px;margin:0;padding:6px}"
     html += ".h{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;border-radius:12px}"
@@ -288,43 +287,210 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center' id='analyzeTitle'>✅ v865 CRON FIXED - WORKS WITH MEM</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Fixes v863: SCAN 1-24/100 (x0) OPEN 0/3 KV:MEM TOTAL 0 - Filters too strict + MEM wipe...</div><div style='background:#000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SCAN 24 COINS LOOSE FILTERS - vol>=0.3% RSI<45 LONG / >55 SHORT conf>=60 move>=4.5</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:100px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div style='font-size:10px;color:#888'>STEP 2: 3 REAL FUTURE PREDICTION - REAL slope direction, no forced contradiction, yellow goes TO TP</div><div id='deepAnalysisText' style='color:#fc0;font-size:10px;margin:4px 0;white-space:pre-wrap'>Waiting for cron fixed...</div><div class='coin-grid'><div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:11px'>Future 1: -</div><canvas id='deepChart0' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Future prediction...</div></div><div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:11px'>Future 2: -</div><canvas id='deepChart1' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Future prediction...</div></div><div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Future prediction...</div></div></div></div><div style='background:#000;border-radius:12px;padding:8px;margin:8px 0;border:1px solid #333'><div style='font-size:10px;color:#888'>STEP 3: 1M LIVE CONFIRM - Only opens if moving TOWARD TP</div><div id='liveMonitorText' style='color:#ffcc00;font-size:11px;margin:4px 0'>Waiting...</div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:18px;font-weight:900;color:#f44'>60s</div><div id='monitorProgress' style='font-size:9px'>0/60s</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:12px;font-weight:900;color:#0f8'>+0.00%</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>FUTURE CONF</div><div id='monitorBatch' style='font-size:9px;font-weight:900;color:#fc0'>Future conf...</div></div></div><div class='coin-grid' style='margin-top:8px'><div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:10px'>Future1: -</div><div id='liveChange0' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart0'>$0</span> LIVE <span id='livePrice0'>$0</span> FUT <span id='liveFuture0'>+0.00%</span></div><canvas id='liveMonitorChart0' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision0' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>Future...</div></div><div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:10px'>Future2: -</div><div id='liveChange1' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart1'>$0</span> LIVE <span id='livePrice1'>$0</span> FUT <span id='liveFuture1'>+0.00%</span></div><canvas id='liveMonitorChart1' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision1' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>Future...</div></div><div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin2' style='color:#0f8;font-weight:900;font-size:10px'>Future3: -</div><div id='liveChange2' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart2'>$0</span> LIVE <span id='livePrice2'>$0</span> FUT <span id='liveFuture2'>+0.00%</span></div><canvas id='liveMonitorChart2' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision2' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>Future...</div></div></div></div><div style='background:#111;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>✅ CRON FIXED - Works with MEM, loose filters, fallback ensures 3 trades</div><div id='finalDecision' style='color:#0f8;font-size:12px;font-weight:900;margin:4px 0;white-space:pre-wrap'>Predicting...</div><div id='finalReason' style='color:#aaa;font-size:9px;white-space:pre-wrap'>Future prediction...</div></div><div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900;white-space:pre-wrap'>✅ v865 CRON FIXED - Loose filters + fallback ensures 3 trades always</div><div id='autoErrorLog' style='color:#f44;font-size:9px;margin-top:6px;white-space:pre-wrap;text-align:left;max-height:60px;overflow-y:auto'></div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN 3 CRON FIXED - WORKS WITH MEM</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center' id='analyzeTitle'>✅ v865 CRON SCANNER & PREDICTOR</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning map and analyzing future trends...</div><div style='background:#000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SCANNING MAP COINS</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div style='font-size:10px;color:#888'>STEP 2: FUTURE PREDICTIONS (LONG / SHORT)</div><div id='deepAnalysisText' style='color:#fc0;font-size:10px;margin:4px 0;white-space:pre-wrap'>Analyzing graphs...</div><div class='coin-grid'>
+    <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:11px'>Future 1: -</div><canvas id='deepChart0' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Prediction...</div></div>
+    <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:11px'>Future 2: -</div><canvas id='deepChart1' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Prediction...</div></div>
+    <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Prediction...</div></div>
+    </div></div>
     
-    <div class='h'>✅ VENUS v865 CRON FIXED - SCAN #{scan} OFFSET {offset+1}-{offset+SCAN_BATCH}/{TOP_N} - ${cap:.2f} PEAK ${peak:.2f} DD {dd:.1f}% L:{long_open} S:{short_open} FULLx{full_scans} - DAILY <span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span> NEED {trades_needed}x $1.20 INV <span style='color:{cap_safe_color}'>{invested:.0f}/{cap:.0f} {over_msg}</span> POS {POS_PCT:.1f}% x{MAXP} {kv_status}<br><span style='font-size:9px'>LAST: {last_cron[:90]} | CRON FIXED WORKS WITH MEM</span></div>
+    <div style='background:#000;border-radius:12px;padding:8px;margin:8px 0;border:1px solid #333'><div style='font-size:10px;color:#888'>STEP 3: 60s LIVE MAP CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:11px;margin:4px 0'>Monitoring...</div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:18px;font-weight:900;color:#f44'>60s</div><div id='monitorProgress' style='font-size:9px'>0/60s</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:12px;font-weight:900;color:#0f8'>+0.00%</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>CONFIDENCE</div><div id='monitorBatch' style='font-size:9px;font-weight:900;color:#fc0'>-</div></div></div>
     
-    <div style='background:#000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #0f8'><div style='font-size:9px;color:#0f8'>EQUITY CURVE CRON FIXED FAKE MONEY (CAP $300 → ${cap:.2f}) PEAK ${peak:.2f} DD {dd:.1f}% DAILY <span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span> INV <span style='color:{cap_safe_color}'>{invested:.0f}/{cap:.0f} {over_msg}</span> NEED {trades_needed}x $1.20 - V865 CRON FIXED - Loose filters vol>=0.3% RSI<45/>55 conf>=60 move>=4.5 + fallback ensures 3 trades + works with MEM - {last_cron[:60]} - {kv_status}<br><span style='font-size:9px;color:#0f8'>CRON FIXED: No more SCAN 1-24/100 (x0) OPEN 0/3 TOTAL 0. Now SCAN increments even with MEM, loose filters + fallback picks TOP 3 by move if 0 strong. Yellow goes TO TP.</span></div><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:8px'></canvas></div>
+    <div class='coin-grid' style='margin-top:8px'>
+    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:10px'>Future1: -</div><div id='liveChange0' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart0'>$0</span> LIVE <span id='livePrice0'>$0</span></div><canvas id='liveMonitorChart0' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision0' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>-</div></div>
+    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:10px'>Future2: -</div><div id='liveChange1' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart1'>$0</span> LIVE <span id='livePrice1'>$0</span></div><canvas id='liveMonitorChart1' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision1' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>-</div></div>
+    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin2' style='color:#0f8;font-weight:900;font-size:10px'>Future3: -</div><div id='liveChange2' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart2'>$0</span> LIVE <span id='livePrice2'>$0</span></div><canvas id='liveMonitorChart2' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision2' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>-</div></div>
+    </div></div>
     
-    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()' id='cronBtn'>✅ CRON FIXED {invested:.0f}/{cap:.0f} {over_msg}<div id='cronStat' style='font-size:10px'>TAP {offset+1}-{offset+SCAN_BATCH}/{TOP_N} SCAN {scan} FULL {full_scans} - CRON FIXED LOOSE FILTERS vol>=0.3% RSI<45/>55 conf>=60 move>=4.5 + FALLBACK ENSURES 3 TRADES - <span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span> INV {invested:.0f}/{cap:.0f} FIX 0/3 BUG<br>{last_cron[:30]}</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL + TAKE PROFIT FIXED<div style='font-size:10px'>{len(open_tr)} OPEN ${invested:.0f}/{cap:.0f} {over_msg} AUTO FIXED</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET FIXED $300<div style='font-size:10px'>CAP $300 CRON FIXED MEM</div></button></div>
+    <div style='background:#111;border-radius:12px;padding:8px;margin:8px 0'><div id='finalDecision' style='color:#0f8;font-size:12px;font-weight:900;margin:4px 0;white-space:pre-wrap'>Ready</div></div>
+    <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Scanning in progress...</div><div id='autoErrorLog' style='color:#f44;font-size:9px;margin-top:6px;white-space:pre-wrap;text-align:left;max-height:60px;overflow-y:auto'></div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
-    <div class='g'><div class='c'>FAKE CAP FIXED<br><b style='font-size:18px;color:#0f8'>${cap:.2f}</b><br>WITH OPEN {cap+unreal:.2f}<br>UNREAL {unreal:+.2f}<br>INV <b style='color:{cap_safe_color}'>${invested:.0f}/{cap:.0f} {over_msg}</b><br>FEES ${fees_paid:.2f}<br>PEAK ${peak:.2f} DD {dd:.1f}%<br>{kv_status}<br>CRON FIXED</div><div class='c'>DAILY $15 FIXED<br><b style='font-size:18px'><span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span></b><br>NEED ${daily_needed:.2f} = {trades_needed}x $1.20<br>W:{wins} L:{loss} {winrate}%<br>TOTAL {tot} V865<br>FULL {full_scans}x PF {pf:.2f}<br>EXP ${exp:.3f} FIXED<br>BEST {best_sym} ${best_net:+.2f}</div><div class='c' style='border-color:#0f8'><b style='color:#0f8'>CRON FIXED<br>POS {POS_PCT:.1f}% x{MAXP}<br>v865 FIX 0/3 BUG</b><br>TP {TP_PCT}% = $1.20<br>SL {SL_PCT}%<br>TRAIL {TRAIL_PCT}%<br>RR 2.0 FIXED<br>INV <span style='color:{cap_safe_color}'>{invested:.0f}/{cap:.0f}</span><br>WORKS MEM</div></div>
+    <div class='h'>✅ VENUS v865 CRON FIXED - SCAN #{scan} OFFSET {offset+1}-{offset+SCAN_BATCH}/{TOP_N} - ${cap:.2f} PEAK ${peak:.2f} DD {dd:.1f}% L:{long_open} S:{short_open} FULLx{full_scans} - DAILY <span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span> NEED {trades_needed}x $1.20 INV <span style='color:{cap_safe_color}'>{invested:.0f}/{cap:.0f} {over_msg}</span> POS {POS_PCT:.1f}% x{MAXP} {kv_status}</div>
     
-    <div class='stats'><div style='color:#f44;font-weight:900;font-size:12px'>🔴 v863 BUG = CRON NOT WORKING...</div><div style='color:#0f8;font-weight:900;font-size:12px'>✅ v865 CRON FIXED...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px;font-size:10px'><div>SCAN: <b>{offset+1}-{offset+SCAN_BATCH}/{TOP_N} (x{full_scans}) V865 CRON FIXED INV {invested:.0f}/{cap:.0f} {kv_status}</b></div><div>OPEN: <b>{len(open_tr)}/{MAXP} PEAK ${peak:.2f} DD {dd:.1f}% DAILY <span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span></b></div><div>TOTAL: <b>{tot}</b> W:<b style='color:#0f8'>{wins}</b> L:<b style='color:#f44'>{loss}</b> {winrate}% PF:<b>{pf:.2f}</b></div><div>EXP: <b>${exp:.3f}</b> FEES: <b>{TOTAL_FEE}%</b> NEED: <b>${daily_needed:.2f} = {trades_needed}x $1.20 INV {invested:.0f}/{cap:.0f}</b></div><div>BEST: <b>{best_sym} ${best_net:+.2f}</b></div><div>WORST: <b>{worst_sym} ${worst_net:+.2f}</b></div></div><div style='margin-top:6px;color:#0f8;font-size:9px'>LAST CRON: {last_cron}</div></div>
+    <div style='background:#000000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #0f8'><div style='font-size:9px;color:#0f8'>EQUITY CURVE (CAP $300 → ${cap:.2f}) PEAK ${peak:.2f} DD {dd:.1f}%</div><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:8px'></canvas></div>
+    
+    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()' id='cronBtn'>✅ CRON SCAN & PREDICT<div id='cronStat' style='font-size:10px'>TAP TO SCAN MAP & ANALYZE FUTURE GRAPHS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:10px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:10px'>CLEAN MEM</div></button></div>
+    
+    <div class='g'><div class='c'>FAKE CAP<br><b style='font-size:18px;color:#0f8'>${cap:.2f}</b><br>UNREAL {unreal:+.2f}<br>INV <b style='color:{cap_safe_color}'>${invested:.0f}/{cap:.0f}</b></div><div class='c'>DAILY $15<br><b style='font-size:18px'><span style='color:{daily_color}'>${daily:.2f}</span>/$15</b><br>W:{wins} L:{loss} {winrate}%</div><div class='c' style='border-color:#0f8'><b style='color:#0f8'>CONFIG<br>POS {POS_PCT:.1f}% x{MAXP}</b><br>TP {TP_PCT}% SL {SL_PCT}%</div></div>
     
     <div id='openbox'>{trade_boxes_html}</div>
     
-    <div style='background:#111;padding:10px;margin:6px 0;border-radius:10px'><div style='color:#0f8;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} {winrate}% - PF {pf:.2f} EXP ${exp:.3f} PEAK ${peak:.2f} DD {dd:.1f}% DAILY <span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span> INV {invested:.0f}/{cap:.0f} NEED {trades_needed}x $1.20 - V865 CRON FIXED WORKS WITH MEM</div>
+    <div style='background:#111;padding:10px;margin:6px 0;border-radius:10px'><div style='color:#0f8;font-weight:900'>CLOSED {len(closed)} - W:{wins} L:{loss} {winrate}%</div>
     """
     
     for cl in closed[:30]:
         c="#0f8" if cl.get("net",0)>0 else "#f44"; sym=cl.get("symbol","?"); side=cl.get("side","?"); net=cl.get("net",0); pct=cl.get("pct_net",0); reason=cl.get("reason","")[:100]; age=cl.get("age",0)
-        html+=f"<div style='padding:5px 0;border-bottom:1px solid #222;color:{c}'><b>{sym} {side} CONF {cl.get('confidence',0):.0f}% FUTURE {cl.get('future_change',0):+.2f}%</b> ${net:+.2f} {pct:+.2f}% | {reason} | {int(age//60)}m Entry ${cl.get('entry',0):.4f} Exit ${cl.get('exit',0):.4f}</div>"
+        html+=f"<div style='padding:5px 0;border-bottom:1px solid #222;color:{c}'><b>{sym} {side}</b> ${net:+.2f} {pct:+.2f}% | {reason}</div>"
         
     html+=f"""</div>
-    <script>const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";const TP_PCT={TP_PCT};const SL_PCT={SL_PCT};const TRAIL_PCT={TRAIL_PCT};let currentAnalysis=null;let timeLeft=60;let retryCount=0;let scanData=[];
-    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#222'; for(let i=0;i<3;i++){{const y=h*0.1+i*h*0.8/2; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();}} const y300=yF(300); ctx.strokeStyle='#444'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,y300); ctx.lineTo(w,y300); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle='#666'; ctx.font='8px monospace'; ctx.fillText('300',2,y300-2); ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke(); const last=EQUITY[EQUITY.length-1]; ctx.fillStyle='#0f8'; ctx.beginPath(); ctx.arc(w-4,yF(last),3,0,Math.PI*2); ctx.fill(); ctx.fillText(last.toFixed(2), w-50, yF(last)-4);}}
+    <script>
+    const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";const TP_PCT={TP_PCT};const SL_PCT={SL_PCT};const TRAIL_PCT={TRAIL_PCT};let currentAnalysis=null;let timeLeft=60;let retryCount=0;
+    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#222'; for(let i=0;i<3;i++){{const y=h*0.1+i*h*0.8/2; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
     function logScan(msg){{const el=document.getElementById('scanLog'); if(el){{ el.innerText+= '\\n'+msg; el.scrollTop=el.scrollHeight; }} console.log(msg); }}
-    function logError(msg){{const el=document.getElementById('autoErrorLog'); if(el){{ el.innerText+= '\\n'+msg; }} console.error(msg); }}
-    async function startMovingScan(){{const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show'); document.getElementById('scanLog').innerText=''; document.getElementById('autoErrorLog').innerText=''; document.getElementById('forceOpenBtn').style.display='block'; currentAnalysis={{coins:[]}}; scanData=[]; logScan('✅ v865 CRON FIXED - Works with MEM, loose filters...'); try{{ const r=await fetch('/api/scan_most_moving?key='+ADMIN_KEY+'&t='+Date.now()); const txt=await r.text(); let j; try{{ j=JSON.parse(txt); }}catch(e){{ logScan('Scan JSON fail: '+txt.substring(0,200)); document.getElementById('analyzeStatus').innerText='Scan fail'; return; }} if(!j.ok){{ logScan('Scan fail: '+j.error); document.getElementById('analyzeStatus').innerText='FAIL: '+j.error; if(j.movers && j.movers.length>0){{ j.top3=j.movers.slice(0,3); }} else {{ return; }} }} const movers=j.movers||[]; if(movers.length==0){{ document.getElementById('analyzeStatus').innerText='No movers'; return; }} let top3=j.top3||movers.slice(0,3); if(top3.length==0){{ top3=movers.slice(0,3); }} currentAnalysis.coins=top3.map(m=>({{symbol:m.symbol, price:m.price, startPrice:m.price, livePrice:m.price, liveChange:0, livePrices:[m.price], deep:m, closes:m.closes||[], finalSide:m.future_side, finalReason:m.reason, moving_score:m.moving_score, future_pred:m.future_pred||[], future_change:m.future_change, confidence:m.confidence, entry_type:m.entry_type, fallback:m.fallback||false}})); for(let i=0;i<top3.length;i++){{ const m=top3[i]; document.getElementById('deepCoin'+i).innerText=m.symbol+' - FUTURE '+m.future_change.toFixed(2)+'% '+m.future_side+' conf '+m.confidence.toFixed(0)+'%'; document.getElementById('deepText'+i).innerText=m.symbol+' FUTURE '+m.future_change.toFixed(2)+'% slope '+m.slope_pct.toFixed(4)+'%/c\\nconf '+m.confidence.toFixed(0)+'% move='+m.moving_score.toFixed(1); drawDeepChartFuture(i, m.closes||[], m, m.future_pred||[]); }} startMovingLiveMonitor(); }}catch(e){{ logScan('startMovingScan err '+e); document.getElementById('analyzeStatus').innerText='ERR '+e; }} }}
-    function drawDeepChartFuture(idx, closes, deep, futurePred){{const cv=document.getElementById('deepChart'+idx); if(!cv) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); if(!closes || closes.length<5){{ return; }} const allForRange=[...closes, ...(futurePred||[])].filter(v=>v>0); const mn=Math.min(...allForRange)*0.998, mx=Math.max(...allForRange)*1.002; function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}} ctx.strokeStyle=deep.future_side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=1.5; ctx.beginPath(); closes.forEach((p,i)=>{{const x=i/(closes.length+futurePred.length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke(); if(futurePred && futurePred.length>0){{ ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.lineWidth=2; ctx.beginPath(); const lastX=(closes.length-1)/(closes.length+futurePred.length-1)*w*0.7; const lastY=yF(closes[closes.length-1]); ctx.moveTo(lastX, lastY); futurePred.forEach((p,i)=>{{const x=(closes.length+i)/(closes.length+futurePred.length-1)*w*0.85, y=yF(p); ctx.lineTo(x,y);}}); ctx.stroke(); ctx.setLineDash([]); }} }}
-    function startMovingLiveMonitor(){{timeLeft=15; document.getElementById('monitorTimeLeft').innerText='15s'; for(let i=0;i<currentAnalysis.coins.length;i++){{ const c=currentAnalysis.coins[i]; document.getElementById('liveCoin'+i).innerText=c.symbol+' - FUTURE '+c.future_change.toFixed(2)+'%'; document.getElementById('liveStart'+i).innerText='$'+c.startPrice.toFixed(4); document.getElementById('livePrice'+i).innerText='$'+c.startPrice.toFixed(4); c.livePrices=[c.startPrice]; drawLiveMonitorChart(i); }} const interval=setInterval(async()=>{{ timeLeft--; document.getElementById('monitorTimeLeft').innerText=timeLeft+'s'; for(let i=0;i<currentAnalysis.coins.length;i++){{ const c=currentAnalysis.coins[i]; try{{ const r=await fetch('/api/liveprice?symbol='+c.symbol+'&key='+ADMIN_KEY+'&t='+Date.now()); const txt=await r.text(); let j=JSON.parse(txt); if(j.price && j.price>0){{ c.livePrices.push(j.price); c.livePrice=j.price; const change=(j.price-c.startPrice)/c.startPrice*100; c.liveChange=change; document.getElementById('livePrice'+i).innerText='$'+j.price.toFixed(4); document.getElementById('liveChange'+i).innerText=change.toFixed(3)+'%'; drawLiveMonitorChart(i); }} }}catch(e){{}} }} if(timeLeft<=0){{ clearInterval(interval); finishMovingLiveMonitor(); }} }},1000); }}
-    function drawLiveMonitorChart(idx){{const c=currentAnalysis.coins[idx]; if(!c || c.livePrices.length<2) return; const cv=document.getElementById('liveMonitorChart'+idx); if(!cv) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...c.livePrices)*0.9995, mx=Math.max(...c.livePrices)*1.0005; function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}} ctx.strokeStyle=c.livePrices[c.livePrices.length-1]>=c.startPrice?'#0f8':'#f44'; ctx.lineWidth=1.5; ctx.beginPath(); c.livePrices.forEach((p,i)=>{{const x=i/(c.livePrices.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke(); }}
-    function finishMovingLiveMonitor(){{ setTimeout(()=>{{ autoConfirm3Trades(); }},800); }}
-    async function autoConfirm3Trades(){{retryCount++; let successCount=0; for(let i=0;i<currentAnalysis.coins.length;i++){{ const c=currentAnalysis.coins[i]; try{{ const payload={{symbol:c.symbol, side:c.finalSide, reason:c.finalReason.substring(0,220), livePrice:c.livePrice||c.startPrice, moving_score:c.moving_score, future_change:c.future_change, confidence:c.confidence, future_pred:c.future_pred}}; const r=await fetch('/api/open_analyzed?key='+ADMIN_KEY+'&t='+Date.now(), {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(payload)}}); let j=JSON.parse(await r.text()); if(j.ok) successCount++; }}catch(e){{}} await new Promise(r=>setTimeout(r,600)); }} if(successCount>0){{ setTimeout(()=>{{ closeOverlay(); location.reload(); }},1800); }} }}
+    
+    async function startMovingScan(){{
+        const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show');
+        document.getElementById('scanLog').innerText=''; document.getElementById('autoErrorLog').innerText='';
+        currentAnalysis={{coins:[]}};
+        logScan('Scanning map for moving coins...');
+        try {{
+            const r=await fetch('/api/scan_most_moving?key='+ADMIN_KEY+'&t='+Date.now());
+            const txt=await r.text(); let j;
+            try {{ j=JSON.parse(txt); }} catch(e) {{ logScan('Scan JSON parse fail'); return; }}
+            if(!j.ok) {{ logScan('Scan error: '+j.error); document.getElementById('analyzeStatus').innerText='Error: '+j.error; return; }}
+            const movers=j.movers||[];
+            let top3=j.top3||movers.slice(0,3);
+            if(top3.length==0) top3=movers.slice(0,3);
+            currentAnalysis.coins=top3.map(m=>({{symbol:m.symbol, price:m.price, startPrice:m.price, livePrice:m.price, liveChange:0, livePrices:[m.price], deep:m, closes:m.closes||[], finalSide:m.future_side, finalReason:m.reason, moving_score:m.moving_score, future_pred:m.future_pred||[], future_change:m.future_change, confidence:m.confidence, entry_type:m.entry_type}}));
+            for(let i=0;i<top3.length;i++){{
+                const m=top3[i];
+                document.getElementById('deepCoin'+i).innerText=m.symbol+' - '+m.future_side+' '+m.future_change.toFixed(2)+'%';
+                document.getElementById('deepText'+i).innerText=m.symbol+' slope '+m.slope_pct.toFixed(4)+'% conf '+m.confidence.toFixed(0)+'%';
+                drawDeepChartFuture(i, m.closes||[], m, m.future_pred||[]);
+            }}
+            document.getElementById('analyzeStatus').innerText='Map scan complete. Starting 60s live confirmation...';
+            startMovingLiveMonitor();
+        }} catch(e) {{ logScan('Scan err: '+e); }}
+    }}
+    
+    function drawDeepChartFuture(idx, closes, deep, futurePred){{
+        const cv=document.getElementById('deepChart'+idx); if(!cv) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
+        if(!closes || closes.length<5) return;
+        const allForRange=[...closes, ...(futurePred||[])].filter(v=>v>0);
+        const mn=Math.min(...allForRange)*0.998, mx=Math.max(...allForRange)*1.002;
+        function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
+        ctx.strokeStyle=deep.future_side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=1.5; ctx.beginPath();
+        closes.forEach((p,i)=>{{const x=i/(closes.length+futurePred.length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
+        if(futurePred && futurePred.length>0){{
+            ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.lineWidth=2; ctx.beginPath();
+            const lastX=(closes.length-1)/(closes.length+futurePred.length-1)*w*0.7; const lastY=yF(closes[closes.length-1]);
+            ctx.moveTo(lastX, lastY);
+            futurePred.forEach((p,i)=>{{const x=(closes.length+i)/(closes.length+futurePred.length-1)*w*0.85, y=yF(p); ctx.lineTo(x,y);}});
+            ctx.stroke(); ctx.setLineDash([]);
+        }}
+    }}
+    
+    function startMovingLiveMonitor(){{
+        timeLeft=60; document.getElementById('monitorTimeLeft').innerText='60s';
+        for(let i=0;i<currentAnalysis.coins.length;i++){{
+            const c=currentAnalysis.coins[i];
+            document.getElementById('liveCoin'+i).innerText=c.symbol+' ('+c.finalSide+')';
+            document.getElementById('liveStart'+i).innerText='$'+c.startPrice.toFixed(4);
+            document.getElementById('livePrice'+i).innerText='$'+c.startPrice.toFixed(4);
+            c.livePrices=[c.startPrice]; drawLiveMonitorChart(i);
+        }}
+        const interval=setInterval(async()=>{{
+            timeLeft--; document.getElementById('monitorTimeLeft').innerText=timeLeft+'s';
+            document.getElementById('monitorProgress').innerText=(60-timeLeft)+'/60s';
+            let totalChange=0;
+            for(let i=0;i<currentAnalysis.coins.length;i++){{
+                const c=currentAnalysis.coins[i];
+                try{{
+                    const r=await fetch('/api/liveprice?symbol='+c.symbol+'&key='+ADMIN_KEY+'&t='+Date.now());
+                    const j=JSON.parse(await r.text());
+                    if(j.price && j.price>0){{
+                        c.livePrices.push(j.price); c.livePrice=j.price;
+                        const change=(j.price-c.startPrice)/c.startPrice*100; c.liveChange=change; totalChange+=change;
+                        document.getElementById('livePrice'+i).innerText='$'+j.price.toFixed(4);
+                        document.getElementById('liveChange'+i).innerText=(change>=0?'+':'')+change.toFixed(3)+'%';
+                        drawLiveMonitorChart(i);
+                    }}
+                }}catch(e){{}}
+            }}
+            document.getElementById('monitorTotalMove').innerText=(totalChange/currentAnalysis.coins.length).toFixed(3)+'%';
+            if(timeLeft<=0){{ clearInterval(interval); finishMovingLiveMonitor(); }}
+        }},1000);
+    }}
+    
+    function drawLiveMonitorChart(idx){{
+        const c=currentAnalysis.coins[idx]; if(!c || c.livePrices.length<2) return;
+        const cv=document.getElementById('liveMonitorChart'+idx); if(!cv) return;
+        const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
+        const mn=Math.min(...c.livePrices)*0.9995, mx=Math.max(...c.livePrices)*1.0005;
+        function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
+        ctx.strokeStyle=c.livePrices[c.livePrices.length-1]>=c.startPrice?'#0f8':'#f44'; ctx.lineWidth=1.5; ctx.beginPath();
+        c.livePrices.forEach((p,i)=>{{const x=i/(c.livePrices.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
+    }}
+    
+    function finishMovingLiveMonitor(){{
+        document.getElementById('liveMonitorText').innerText='60s Live Monitor Complete. Auto-opening trades...';
+        autoConfirm3Trades();
+    }}
+    
+    async function autoConfirm3Trades(){{
+        retryCount++; let successCount=0;
+        for(let i=0;i<currentAnalysis.coins.length;i++){{
+            const c=currentAnalysis.coins[i];
+            try{{
+                const payload={{symbol:c.symbol, side:c.finalSide, reason:c.finalReason||'Cron scan', livePrice:c.livePrice||c.startPrice, moving_score:c.moving_score, future_change:c.future_change, confidence:c.confidence, future_pred:c.future_pred}};
+                const r=await fetch('/api/open_analyzed?key='+ADMIN_KEY+'&t='+Date.now(), {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(payload)}});
+                const j=JSON.parse(await r.text());
+                if(j.ok) successCount++;
+            }}catch(e){{}}
+            await new Promise(r=>setTimeout(r,600));
+        }}
+        if(successCount>0){{ setTimeout(()=>{{ closeOverlay(); location.reload(); }},1500); }}
+    }}
+    
     function closeOverlay(){{ document.getElementById('analyzeOverlay').classList.remove('show'); currentAnalysis=null; }}
-    async function callReset(){{if(!confirm('RESET CRON FIXED $300?')) return; await fetch('/api/reset?key='+ADMIN_KEY); location.reload();}}
+    async function callReset(){{if(!confirm('RESET $300?')) return; await fetch('/api/reset?key='+ADMIN_KEY); location.reload();}}
     async function closeAll(){{if(!confirm('Close all?')) return; await fetch('/api/closeall?key='+ADMIN_KEY); location.reload();}}
     async function closeOne(s){{if(!confirm('Close '+s+'?')) return; await fetch('/api/close?symbol='+s+'&key='+ADMIN_KEY); location.reload();}}
-    function initChartFuture(sym,entry,tp,sl,side,openTs,initialAge,cg_id,futurePred,futureChange,confidence){{const cv=document.getElementById('chart-'+sym); if(!cv) return; const ctx=cv.getContext('2d'); let prices=[]; let liveHistory=[]; let ageSec=initialAge; setInterval(()=>{{ ageSec+=1; }},1000); async function fetchPrice(){{try{{ const r=await fetch('/api/liveprice?symbol='+sym+'&key='+ADMIN_KEY+'&t='+Date.now()); let j=JSON.parse(await r.text()); if(j.price && j.price>0){{ liveHistory.push(j.price); if(liveHistory.length>60) liveHistory.shift(); prices=[...liveHistory]; draw(); }} }}catch(e){{}}}} function draw(){{const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); if(prices.length<2){{ prices=Array(20).fill(entry); }} let allPrices=[...prices, ...futurePred]; let mn=Math.min(...allPrices)*0.998, mx=Math.max(...allPrices)*1.002; function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}} ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2; ctx.beginPath(); prices.forEach((p,i)=>{{const x=i/(prices.length+futurePred.length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke(); if(futurePred && futurePred.length>0){{ ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.beginPath(); const lastX=(prices.length-1)/(prices.length+futurePred.length-1)*w*0.7; const lastY=yF(prices[prices.length-1]); ctx.moveTo(lastX,lastY); futurePred.forEach((fp,i)=>{{ const x=(prices.length+i)/(prices.length+futurePred.length-1)*w*0.9; ctx.lineTo(x, yF(fp)); }}); ctx.stroke(); ctx.setLineDash([]); }} }} draw(); fetchPrice(); setInterval(fetchPrice, 3000);}}window.addEventListener('load',()=>{{drawEquity(); {chart_js_init}}});</script></body></html>"""
+    
+    function initChartFuture(sym,entry,tp,sl,side,openTs,initialAge,cg_id,futurePred,futureChange,confidence){{
+        const cv=document.getElementById('chart-'+sym); if(!cv) return; const ctx=cv.getContext('2d');
+        let prices=[]; let liveHistory=[]; let ageSec=initialAge;
+        setInterval(()=>{{ ageSec+=1; }},1000);
+        async function fetchPrice(){{
+            try{{
+                const r=await fetch('/api/liveprice?symbol='+sym+'&key='+ADMIN_KEY+'&t='+Date.now());
+                const j=JSON.parse(await r.text());
+                if(j.price && j.price>0){{
+                    liveHistory.push(j.price); if(liveHistory.length>60) liveHistory.shift();
+                    prices=[...liveHistory]; draw();
+                }}
+            }}catch(e){{}}
+        }}
+        function draw(){{
+            const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
+            if(prices.length<2){{ prices=Array(20).fill(entry); }}
+            let allPrices=[...prices, ...futurePred];
+            let mn=Math.min(...allPrices)*0.998, mx=Math.max(...allPrices)*1.002;
+            function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
+            
+            // Entry Line
+            const entryY=yF(entry); ctx.strokeStyle='#fc0'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,entryY); ctx.lineTo(w,entryY); ctx.stroke();
+            ctx.fillStyle='#fc0'; ctx.font='bold 9px monospace'; ctx.fillText('ENTRY '+entry.toFixed(4), 4, entryY-3);
+            
+            // TP Line
+            const tpY=yF(tp); ctx.strokeStyle='#0f8'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,tpY); ctx.lineTo(w,tpY); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle='#0f8'; ctx.fillText('TP '+tp.toFixed(4), 4, tpY-3);
+            
+            // SL Line
+            const slY=yF(sl); ctx.strokeStyle='#f44'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,slY); ctx.lineTo(w,slY); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle='#f44'; ctx.fillText('SL '+sl.toFixed(4), 4, slY+10);
+            
+            // Live Price Line
+            ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2; ctx.beginPath();
+            prices.forEach((p,i)=>{{const x=i/(prices.length+futurePred.length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}});
+            ctx.stroke();
+            
+            // Future Projection Dotted Line
+            if(futurePred && futurePred.length>0){{
+                ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.lineWidth=2; ctx.beginPath();
+                const lastX=(prices.length-1)/(prices.length+futurePred.length-1)*w*0.7;
+                const lastY=yF(prices[prices.length-1]);
+                ctx.moveTo(lastX, lastY);
+                futurePred.forEach((fp,i)=>{{
+                    const x=(prices.length+i)/(prices.length+futurePred.length-1)*w*0.9;
+                    ctx.lineTo(x, yF(fp));
+                }});
+                ctx.stroke(); ctx.setLineDash([]);
+            }}
+        }}
+        draw(); fetchPrice(); setInterval(fetchPrice, 3000);
+    }}
+    window.addEventListener('load',()=>{{drawEquity(); {chart_js_init}}});
+    </script></body></html>"""
     return html
 
 @app.route('/', defaults={'path': ''}, methods=['GET','POST','OPTIONS'])
@@ -464,7 +630,7 @@ def catch_all(path):
                 cap+=net; state["closed"].insert(0,{"symbol":tr["symbol"],"side":tr["side"],"net":net,"reason":f"CLOSE {sym}"})
             else: final.append(tr)
         state["open"]=final; state["cap"]=cap; state=recalc(state); kv_set(STATE_KEY,state)
-        return Response(json.dumps({"ok":True,"closed":sym,"cap":cap}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
+        return Response(json.dumps({"ok":json.dumps(True),"closed":sym,"cap":cap}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
     if p.startswith("/api/debug") or p.startswith("/api/envcheck"):
         return Response(json.dumps({"kv_url":bool(KV_URL),"kv_token":bool(KV_TOKEN),"state":load_state()}, indent=2), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
     try:
