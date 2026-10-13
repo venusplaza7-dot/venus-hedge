@@ -1,8 +1,7 @@
-""" VENUS v865 - CRON FIXED + FULL VISUAL MAP & BUY/SELL LINES RESTORED """
+""" VENUS v865 - FIXED 60S MAP SCAN, 24H TREND ANALYSIS & PREDICTION ENGINE """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
-# --- TOP LEVEL FLASK INSTANCE ---
 app = Flask(__name__)
 
 MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"learn":{"blacklist":{},"last_coins":{}},"peak":300.0,"equity":[300.0],"last_cron":"mem v865 CRON FIXED INIT"}
@@ -25,7 +24,7 @@ TOP_N=100
 TP_PCT=1.20
 SL_PCT=0.60
 TRAIL_PCT=0.8
-STATIC_TOP=[("BTC",60),("ETH",55),("SOL",50),("BNB",50),("XRP",48),("AVAX",45),("LINK",45),("ADA",44),("DOT",44),("LTC",43),("UNI",43),("ETC",42),("APT",42),("ARB",41),("OP",41),("SUI",40),("NEAR",40),("HBAR",40),("FIL",39),("MKR",39),("AAVE",38),("GRT",38),("RNDR",38),("INJ",38),("STX",37),("IMX",37),("SEI",37),("TIA",37),("WLD",36),("FET",36),("TAO",36),("ZEC",35),("STRK",35),("JUP",35),("ENA",34),("PENDLE",34),("ONDO",34),("DOGE",34),("CYBER",32),("PEPE",30),]
+STATIC_TOP=[("BTC",60),("ETH",55),("SOL",50),("BNB",50),("XRP",48),("AVAX",45),("LINK",45),("ADA",44),("DOT",44),("LTC",43),("UNI",43),("ETC",42),("APT",42),("ARB",41),("OP",41),("SUI",40),("NEAR",40),("HBAR",40),("FIL",39),("MKR",39),("AAVE",38),("GRT",38),("RNDR",38),("INJ",38),("STX",37),("IMX",37),("SEI",37),("TIA",37),("WLD",36),("FET",36),("TAO",36),("ZEC",35),("STRK",35),("JUP",35),("ENA",34),("PENDLE",34),("ONDO",34),("DOGE",34),("CYBER",32),("PEPE",30)]
 SYM_TO_ID={"BTC":"bitcoin","ETH":"ethereum","SOL":"solana","BNB":"binancecoin","XRP":"ripple","ADA":"cardano","AVAX":"avalanche-2","DOT":"polkadot","LINK":"chainlink","LTC":"litecoin","UNI":"uniswap","ETC":"ethereum-classic","APT":"aptos","ARB":"arbitrum","OP":"optimism","SUI":"sui","RNDR":"render-token","MKR":"maker","AAVE":"aave","GRT":"the-graph","SEI":"sei-network","TIA":"celestia","DOGE":"dogecoin","WLD":"worldcoin","FET":"fetch-ai","TAO":"bittensor","IMX":"immutable-x","JUP":"jupiter","HBAR":"hedera","ENA":"ethena","PENDLE":"pendle","ZEC":"zcash","STRK":"starknet","ONDO":"ondo-finance","NEAR":"near-protocol","CYBER":"cyberconnect","PEPE":"pepe"}
 
 def kv_get(k):
@@ -238,17 +237,15 @@ def auto_close_trades(state):
 
 def render(state):
     state=auto_close_trades(state); state=recalc(state)
-    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); fees_paid=state.get("fees_paid",0.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); full_scans=state.get("full_scans",0); daily=state.get("daily",0.0)
+    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); full_scans=state.get("full_scans",0); daily=state.get("daily",0.0)
     peak=state.get("peak",cap); equity=state.get("equity",[300,cap])
     winrate=int(wins/tot*100) if tot>0 else 0; unreal=sum([t.get("net",0) for t in open_tr]); long_open=sum(1 for t in open_tr if t.get("side")=="LONG"); short_open=sum(1 for t in open_tr if t.get("side")=="SHORT")
     gross_profit=sum([c.get("net",0) for c in closed if c.get("net",0)>0]); gross_loss=sum([c.get("net",0) for c in closed if c.get("net",0)<0])
     pf=abs(gross_profit/gross_loss) if gross_loss!=0 else 0; exp=(gross_profit+gross_loss)/tot if tot>0 else 0
     best=max(closed, key=lambda x: x.get("net",0)) if closed else None; worst=min(closed, key=lambda x: x.get("net",0)) if closed else None
-    best_sym=best.get('symbol','-') if best else '-'; best_net=best.get('net',0) if best else 0; worst_sym=worst.get('symbol','-') if worst else '-'; worst_net=worst.get('net',0) if worst else 0
     invested=sum([t.get("pos",0) for t in open_tr]); dd=(peak-cap)/peak*100 if peak>0 else 0
     daily_needed=max(0,15.0-daily); trades_needed=int(daily_needed/1.20)+1 if daily_needed>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"; target_color = "#0f8"
-    last_cron = state.get("last_cron","never v865")
     cap_safe_color = "#0f8" if invested <= cap*1.05 else "#f44"
     over_msg = "✅" if invested<=cap*1.05 else "❌ OVER"
     kv_status = f"KV:{'OK' if KV_URL and KV_TOKEN else 'MEM v865 CRON FIXED WORKS'}"
@@ -263,11 +260,11 @@ def render(state):
         future_pred=tr.get("future_pred",[]); future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         shark_tag=f"<span style='background:#00d4ff;color:#000;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:900'>FUTURE {future_change:+.2f}% CONF {confidence:.0f}% ${net_target:.2f}</span>"
         ts=tr.get("ts",int(time.time())); peak_gross=tr.get("peak_gross",0)
-        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:16px;padding:12px;margin:10px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:14px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f} {shark_tag}</b><div style='font-size:10px;color:#0f8'>🔮 v865 CRON FIXED: {analysis}</div><div style='font-size:10px;color:#aaa'>ENTRY ${entry:.6f} TP ${tp_price:.6f} ({tp:.2f}%) = ${net_target:.2f} NET SL ${sl_price:.6f} ({sl:.2f}%) PEAK {peak_gross:.2f}% FUTURE {future_change:+.2f}% CONF {confidence:.0f}% INV {invested:.0f}/{cap:.0f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:10px;padding:6px 10px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:8px 0;text-align:center'><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div><div id='live-change-{sym}' style='font-size:10px'>{tr.get('pct_gross',0):+.3f}% PEAK {peak_gross:.2f}%</div><div id='live-dot-{sym}' style='font-size:8px;color:#0f8'>● V865 FUTURE {future_change:+.2f}% CRON FIXED</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>PNL FAKE</div><div id='live-pnl-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f} / ${net_target:.2f}</div><div style='font-size:10px'>CONF {confidence:.0f}% FUTURE {future_change:+.2f}%</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:13px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div><div style='font-size:10px;color:#0f8'>TP {tp:.2f}% SL {sl:.2f}% CRON FIXED</div></div></div><div style='background:#000;border-radius:12px;padding:6px;border:1px solid #222'><div style='font-size:9px;color:#555'>TURBO GRAPH {side} - v865 CRON FIXED - FUTURE +{future_change}% UP TO TP - YELLOW dotted goes UP to TP (not SL) - REAL slope, not forced - {analysis[:100]} - CRON FIXED WORKS WITH MEM</div><canvas id='chart-{sym}' width='340' height='200' style='width:100%;height:200px;background:#000;border-radius:8px'></canvas></div><div style='font-size:9px;color:#888;margin-top:4px'>{tr.get('reason','')}</div></div>"""
-        chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},'{tr.get('cg_id','bitcoin')}',{json.dumps(future_pred)},{future_change},{confidence});\n"
+        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:16px;padding:12px;margin:10px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:14px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f} {shark_tag}</b><div style='font-size:10px;color:#0f8'>🔮 v865 CRON FIXED: {analysis}</div><div style='font-size:10px;color:#aaa'>ENTRY ${entry:.6f} TP ${tp_price:.6f} ({tp:.2f}%) = ${net_target:.2f} NET SL ${sl_price:.6f} ({sl:.2f}%) PEAK {peak_gross:.2f}% FUTURE {future_change:+.2f}% CONF {confidence:.0f}% INV {invested:.0f}/{cap:.0f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:10px;padding:6px 10px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:8px 0;text-align:center'><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div><div id='live-change-{sym}' style='font-size:10px'>{tr.get('pct_gross',0):+.3f}% PEAK {peak_gross:.2f}%</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>PNL FAKE</div><div id='live-pnl-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f} / ${net_target:.2f}</div><div style='font-size:10px'>CONF {confidence:.0f}%</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:13px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div><div style='font-size:10px;color:#0f8'>TP {tp:.2f}% SL {sl:.2f}%</div></div></div><div style='background:#000;border-radius:12px;padding:6px;border:1px solid #222'><div style='font-size:9px;color:#555'>TURBO GRAPH {side} - 24H & 60S PREDICTION - YELLOW dotted goes UP to TP - REAL slope</div><canvas id='chart-{sym}' width='340' height='200' style='width:100%;height:200px;background:#000;border-radius:8px'></canvas></div></div>"""
+        chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ v865 CRON FIXED - WORKS WITH MEM</b><br>No open trades. Tap CRON FIXED to start scanning.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ v865 CRON SCANNER & PREDICTOR</b><br>No active positions. Tap CRON SCAN & PREDICT to run 60s live map scan and 24h analysis.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -276,7 +273,6 @@ def render(state):
     html += ".h{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;border-radius:12px}"
     html += ".g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:6px 0}"
     html += ".c{background:#1a1a1a;border:1px solid #333;padding:8px;text-align:center;border-radius:10px}"
-    html += ".stats{background:#111;border:2px solid #0f8;padding:10px;margin:6px 0;border-radius:12px}"
     html += ".it{background:#111;border:1px solid #333;padding:10px;margin:6px 0;border-radius:12px}"
     html += ".btn-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}"
     html += ".btn{padding:16px 4px;border-radius:14px;border:0;font-weight:900;font-size:13px;cursor:pointer}"
@@ -287,28 +283,27 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center' id='analyzeTitle'>✅ v865 CRON SCANNER & PREDICTOR</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning map and analyzing future trends...</div><div style='background:#000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SCANNING MAP COINS</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div style='font-size:10px;color:#888'>STEP 2: FUTURE PREDICTIONS (LONG / SHORT)</div><div id='deepAnalysisText' style='color:#fc0;font-size:10px;margin:4px 0;white-space:pre-wrap'>Analyzing graphs...</div><div class='coin-grid'>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center' id='analyzeTitle'>✅ v865 CRON SCANNER & PREDICTOR</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning map and analyzing 24h charts for Long/Short positioning...</div><div style='background:#000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: 24H & 1M MAP SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div style='font-size:10px;color:#888'>STEP 2: FUTURE PREDICTIONS & DIRECTION</div><div class='coin-grid'>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:11px'>Future 1: -</div><canvas id='deepChart0' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Prediction...</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:11px'>Future 2: -</div><canvas id='deepChart1' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Prediction...</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px;white-space:pre-wrap'>Prediction...</div></div>
     </div></div>
     
-    <div style='background:#000;border-radius:12px;padding:8px;margin:8px 0;border:1px solid #333'><div style='font-size:10px;color:#888'>STEP 3: 60s LIVE MAP CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:11px;margin:4px 0'>Monitoring...</div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:18px;font-weight:900;color:#f44'>60s</div><div id='monitorProgress' style='font-size:9px'>0/60s</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:12px;font-weight:900;color:#0f8'>+0.00%</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>CONFIDENCE</div><div id='monitorBatch' style='font-size:9px;font-weight:900;color:#fc0'>-</div></div></div>
+    <div style='background:#000;border-radius:12px;padding:8px;margin:8px 0;border:1px solid #333'><div style='font-size:10px;color:#888'>STEP 3: 60S LIVE MAP CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:11px;margin:4px 0'>Monitoring 60s trend...</div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:18px;font-weight:900;color:#f44'>60s</div><div id='monitorProgress' style='font-size:9px'>0/60s</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:12px;font-weight:900;color:#0f8'>+0.00%</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>CONFIDENCE</div><div id='monitorBatch' style='font-size:9px;font-weight:900;color:#fc0'>-</div></div></div>
     
     <div class='coin-grid' style='margin-top:8px'>
-    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:10px'>Future1: -</div><div id='liveChange0' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart0'>$0</span> LIVE <span id='livePrice0'>$0</span></div><canvas id='liveMonitorChart0' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision0' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>-</div></div>
-    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:10px'>Future2: -</div><div id='liveChange1' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart1'>$0</span> LIVE <span id='livePrice1'>$0</span></div><canvas id='liveMonitorChart1' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision1' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>-</div></div>
-    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin2' style='color:#0f8;font-weight:900;font-size:10px'>Future3: -</div><div id='liveChange2' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart2'>$0</span> LIVE <span id='livePrice2'>$0</span></div><canvas id='liveMonitorChart2' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas><div id='liveDecision2' style='color:#0f8;font-size:9px;font-weight:900;margin-top:2px'>-</div></div>
+    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:10px'>Future1: -</div><div id='liveChange0' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart0'>$0</span> LIVE <span id='livePrice0'>$0</span></div><canvas id='liveMonitorChart0' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas></div>
+    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:10px'>Future2: -</div><div id='liveChange1' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart1'>$0</span> LIVE <span id='livePrice1'>$0</span></div><canvas id='liveMonitorChart1' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas></div>
+    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin2' style='color:#0f8;font-weight:900;font-size:10px'>Future3: -</div><div id='liveChange2' style='color:#0f8;font-size:10px'>+0.00%</div></div><div style='font-size:8px;color:#888'>START <span id='liveStart2'>$0</span> LIVE <span id='livePrice2'>$0</span></div><canvas id='liveMonitorChart2' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas></div>
     </div></div>
     
-    <div style='background:#111;border-radius:12px;padding:8px;margin:8px 0'><div id='finalDecision' style='color:#0f8;font-size:12px;font-weight:900;margin:4px 0;white-space:pre-wrap'>Ready</div></div>
-    <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Scanning in progress...</div><div id='autoErrorLog' style='color:#f44;font-size:9px;margin-top:6px;white-space:pre-wrap;text-align:left;max-height:60px;overflow-y:auto'></div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
+    <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Scanning in progress...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
-    <div class='h'>✅ VENUS v865 CRON FIXED - SCAN #{scan} OFFSET {offset+1}-{offset+SCAN_BATCH}/{TOP_N} - ${cap:.2f} PEAK ${peak:.2f} DD {dd:.1f}% L:{long_open} S:{short_open} FULLx{full_scans} - DAILY <span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span> NEED {trades_needed}x $1.20 INV <span style='color:{cap_safe_color}'>{invested:.0f}/{cap:.0f} {over_msg}</span> POS {POS_PCT:.1f}% x{MAXP} {kv_status}</div>
+    <div class='h'>✅ VENUS v865 CRON SCANNER - SCAN #{scan} OFFSET {offset+1}-{offset+SCAN_BATCH}/{TOP_N} - ${cap:.2f} PEAK ${peak:.2f} DD {dd:.1f}% L:{long_open} S:{short_open} FULLx{full_scans} - DAILY <span style='color:{daily_color}'>${daily:.2f}</span><span style='color:{target_color}'>/$15</span> NEED {trades_needed}x $1.20 INV <span style='color:{cap_safe_color}'>{invested:.0f}/{cap:.0f} {over_msg}</span> POS {POS_PCT:.1f}% x{MAXP} {kv_status}</div>
     
     <div style='background:#000000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #0f8'><div style='font-size:9px;color:#0f8'>EQUITY CURVE (CAP $300 → ${cap:.2f}) PEAK ${peak:.2f} DD {dd:.1f}%</div><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:8px'></canvas></div>
     
-    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()' id='cronBtn'>✅ CRON SCAN & PREDICT<div id='cronStat' style='font-size:10px'>TAP TO SCAN MAP & ANALYZE FUTURE GRAPHS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:10px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:10px'>CLEAN MEM</div></button></div>
+    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()' id='cronBtn'>✅ CRON SCAN & PREDICT<div id='cronStat' style='font-size:10px'>60S MAP SCAN & 24H TREND ANALYSIS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:10px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:10px'>CLEAN MEM</div></button></div>
     
     <div class='g'><div class='c'>FAKE CAP<br><b style='font-size:18px;color:#0f8'>${cap:.2f}</b><br>UNREAL {unreal:+.2f}<br>INV <b style='color:{cap_safe_color}'>${invested:.0f}/{cap:.0f}</b></div><div class='c'>DAILY $15<br><b style='font-size:18px'><span style='color:{daily_color}'>${daily:.2f}</span>/$15</b><br>W:{wins} L:{loss} {winrate}%</div><div class='c' style='border-color:#0f8'><b style='color:#0f8'>CONFIG<br>POS {POS_PCT:.1f}% x{MAXP}</b><br>TP {TP_PCT}% SL {SL_PCT}%</div></div>
     
@@ -318,36 +313,33 @@ def render(state):
     """
     
     for cl in closed[:30]:
-        c="#0f8" if cl.get("net",0)>0 else "#f44"; sym=cl.get("symbol","?"); side=cl.get("side","?"); net=cl.get("net",0); pct=cl.get("pct_net",0); reason=cl.get("reason","")[:100]; age=cl.get("age",0)
+        c="#0f8" if cl.get("net",0)>0 else "#f44"; sym=cl.get("symbol","?"); side=cl.get("side","?"); net=cl.get("net",0); pct=cl.get("pct_net",0); reason=cl.get("reason","")[:100]
         html+=f"<div style='padding:5px 0;border-bottom:1px solid #222;color:{c}'><b>{sym} {side}</b> ${net:+.2f} {pct:+.2f}% | {reason}</div>"
         
     html+=f"""</div>
     <script>
-    const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";const TP_PCT={TP_PCT};const SL_PCT={SL_PCT};const TRAIL_PCT={TRAIL_PCT};let currentAnalysis=null;let timeLeft=60;let retryCount=0;
+    const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";const TP_PCT={TP_PCT};const SL_PCT={SL_PCT};const TRAIL_PCT={TRAIL_PCT};let currentAnalysis=null;let timeLeft=60;
     function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#222'; for(let i=0;i<3;i++){{const y=h*0.1+i*h*0.8/2; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
     function logScan(msg){{const el=document.getElementById('scanLog'); if(el){{ el.innerText+= '\\n'+msg; el.scrollTop=el.scrollHeight; }} console.log(msg); }}
     
     async function startMovingScan(){{
         const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show');
-        document.getElementById('scanLog').innerText=''; document.getElementById('autoErrorLog').innerText='';
+        document.getElementById('scanLog').innerText='';
         currentAnalysis={{coins:[]}};
-        logScan('Scanning map for moving coins...');
+        logScan('Scanning 24h market map & checking moving coins...');
         try {{
             const r=await fetch('/api/scan_most_moving?key='+ADMIN_KEY+'&t='+Date.now());
-            const txt=await r.text(); let j;
-            try {{ j=JSON.parse(txt); }} catch(e) {{ logScan('Scan JSON parse fail'); return; }}
+            const j=await r.json();
             if(!j.ok) {{ logScan('Scan error: '+j.error); document.getElementById('analyzeStatus').innerText='Error: '+j.error; return; }}
-            const movers=j.movers||[];
-            let top3=j.top3||movers.slice(0,3);
-            if(top3.length==0) top3=movers.slice(0,3);
-            currentAnalysis.coins=top3.map(m=>({{symbol:m.symbol, price:m.price, startPrice:m.price, livePrice:m.price, liveChange:0, livePrices:[m.price], deep:m, closes:m.closes||[], finalSide:m.future_side, finalReason:m.reason, moving_score:m.moving_score, future_pred:m.future_pred||[], future_change:m.future_change, confidence:m.confidence, entry_type:m.entry_type}}));
+            const top3=j.top3||[];
+            currentAnalysis.coins=top3.map(m=>({{symbol:m.symbol, price:m.price, startPrice:m.price, livePrice:m.price, liveChange:0, livePrices:[m.price], deep:m, closes:m.closes||[], finalSide:m.future_side, finalReason:m.reason, moving_score:m.moving_score, future_pred:m.future_pred||[], future_change:m.future_change, confidence:m.confidence}}));
             for(let i=0;i<top3.length;i++){{
                 const m=top3[i];
                 document.getElementById('deepCoin'+i).innerText=m.symbol+' - '+m.future_side+' '+m.future_change.toFixed(2)+'%';
-                document.getElementById('deepText'+i).innerText=m.symbol+' slope '+m.slope_pct.toFixed(4)+'% conf '+m.confidence.toFixed(0)+'%';
+                document.getElementById('deepText'+i).innerText=m.symbol+' 24h/1m slope '+m.slope_pct.toFixed(4)+'% conf '+m.confidence.toFixed(0)+'%';
                 drawDeepChartFuture(i, m.closes||[], m, m.future_pred||[]);
             }}
-            document.getElementById('analyzeStatus').innerText='Map scan complete. Starting 60s live confirmation...';
+            document.getElementById('analyzeStatus').innerText='Map scan & 24h analysis complete. Starting 60s live trend confirmation...';
             startMovingLiveMonitor();
         }} catch(e) {{ logScan('Scan err: '+e); }}
     }}
@@ -386,7 +378,7 @@ def render(state):
                 const c=currentAnalysis.coins[i];
                 try{{
                     const r=await fetch('/api/liveprice?symbol='+c.symbol+'&key='+ADMIN_KEY+'&t='+Date.now());
-                    const j=JSON.parse(await r.text());
+                    const j=await r.json();
                     if(j.price && j.price>0){{
                         c.livePrices.push(j.price); c.livePrice=j.price;
                         const change=(j.price-c.startPrice)/c.startPrice*100; c.liveChange=change; totalChange+=change;
@@ -417,18 +409,18 @@ def render(state):
     }}
     
     async function autoConfirm3Trades(){{
-        retryCount++; let successCount=0;
+        let successCount=0;
         for(let i=0;i<currentAnalysis.coins.length;i++){{
             const c=currentAnalysis.coins[i];
             try{{
                 const payload={{symbol:c.symbol, side:c.finalSide, reason:c.finalReason||'Cron scan', livePrice:c.livePrice||c.startPrice, moving_score:c.moving_score, future_change:c.future_change, confidence:c.confidence, future_pred:c.future_pred}};
                 const r=await fetch('/api/open_analyzed?key='+ADMIN_KEY+'&t='+Date.now(), {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(payload)}});
-                const j=JSON.parse(await r.text());
+                const j=await r.json();
                 if(j.ok) successCount++;
             }}catch(e){{}}
-            await new Promise(r=>setTimeout(r,600));
+            await new Promise(r=>setTimeout(r,500));
         }}
-        if(successCount>0){{ setTimeout(()=>{{ closeOverlay(); location.reload(); }},1500); }}
+        if(successCount>0){{ setTimeout(()=>{{ closeOverlay(); location.reload(); }},1200); }}
     }}
     
     function closeOverlay(){{ document.getElementById('analyzeOverlay').classList.remove('show'); currentAnalysis=null; }}
@@ -436,14 +428,14 @@ def render(state):
     async function closeAll(){{if(!confirm('Close all?')) return; await fetch('/api/closeall?key='+ADMIN_KEY); location.reload();}}
     async function closeOne(s){{if(!confirm('Close '+s+'?')) return; await fetch('/api/close?symbol='+s+'&key='+ADMIN_KEY); location.reload();}}
     
-    function initChartFuture(sym,entry,tp,sl,side,openTs,initialAge,cg_id,futurePred,futureChange,confidence){{
+    function initChartFuture(sym,entry,tp,sl,side,openTs,initialAge,futurePred,futureChange,confidence){{
         const cv=document.getElementById('chart-'+sym); if(!cv) return; const ctx=cv.getContext('2d');
         let prices=[]; let liveHistory=[]; let ageSec=initialAge;
         setInterval(()=>{{ ageSec+=1; }},1000);
         async function fetchPrice(){{
             try{{
                 const r=await fetch('/api/liveprice?symbol='+sym+'&key='+ADMIN_KEY+'&t='+Date.now());
-                const j=JSON.parse(await r.text());
+                const j=await r.json();
                 if(j.price && j.price>0){{
                     liveHistory.push(j.price); if(liveHistory.length>60) liveHistory.shift();
                     prices=[...liveHistory]; draw();
