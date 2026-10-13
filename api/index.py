@@ -1,4 +1,4 @@
-""" VENUS v865 - ROTATING 15-COIN BATCH SCAN & UNSTUCK AUTO-OPEN """
+""" VENUS v865 - FIXED CHART RENDERING, GREEN/RED LINES & STABLE PREDICTIONS """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
@@ -19,7 +19,7 @@ STATE_KEY="VENUS_V808_SHARK100"
 MAXP=3
 POS_PCT=33.33
 TOTAL_FEE=0.17
-SCAN_BATCH=15  # <--- Rotates 15 new coins every scan
+SCAN_BATCH=15
 TOP_N=100
 TP_PCT=1.20
 SL_PCT=0.60
@@ -52,7 +52,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"learn":{"blacklist":{},"last_coins":{}},"peak":300.0,"equity":[300.0],"last_cron":"reset v865 CRON FIXED CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"learn":{"blacklist":{},"last_coins":{}},"peak":300.0,"equity":[300.0],"last_cron":"reset v865 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["DEL",k]]).encode()
@@ -98,62 +98,43 @@ def fetch_klines(base, interval="1m", limit=50):
 
 def future_prediction_engine_v865(closes, highs, lows, vols):
     if len(closes)<20:
-        return {"future_side":"LONG","moving_score":4.5,"reason":"no data LONG","future_pred":[closes[-1]]*10 if closes else [100]*10,"confidence":60,"entry_type":"market","strong":False,"future_change":0.6,"slope_pct":0.01,"slope5":0.01,"rsi":50,"volatility":0.5}
+        return {"future_side":"LONG","moving_score":4.5,"future_pred":[closes[-1]]*10 if closes else [100]*10,"confidence":60,"future_change":0.6,"slope_pct":0.01}
     last=closes[-1]; n=20; x=list(range(n)); y=closes[-n:]
     x_mean=sum(x)/n; y_mean=sum(y)/n
     num=sum((x[i]-x_mean)*(y[i]-y_mean) for i in range(n))
     den=sum((x[i]-x_mean)**2 for i in range(n))
     slope=num/den if den!=0 else 0; slope_pct=slope/y_mean*100 if y_mean!=0 else 0
     
-    n5=5; x5=list(range(n5)); y5=closes[-n5:]
-    x5_mean=sum(x5)/n5; y5_mean=sum(y5)/n5
-    num5=sum((x5[i]-x5_mean)*(y5[i]-y5_mean) for i in range(n5))
-    den5=sum((x5[i]-x5_mean)**2 for i in range(n5))
-    slope5=num5/den5 if den5!=0 else 0; slope5_pct=slope5/y5_mean*100 if y5_mean!=0 else 0
-    
-    future_pred=[]
-    for i in range(1,11):
-        pred=y_mean + slope*(n-1+i - x_mean)
-        future_pred.append(pred)
-    future_change=(future_pred[-1]-last)/last*100 if last!=0 else 0
-    
-    gains=0; losses=0
-    for i in range(max(1,len(closes)-14), len(closes)):
-        diff=closes[i]-closes[i-1]
-        if diff>0: gains+=diff
-        else: losses+=abs(diff)
-    avg_gain=gains/14 if gains>0 else 0.001
-    avg_loss=losses/14 if losses>0 else 0.001
-    rsi=100 - (100/(1+(avg_gain/avg_loss)))
-    volatility = (max(closes[-15:]) - min(closes[-15:])) / last *100 if last!=0 else 0
-    
-    future_side="LONG" if slope_pct>=0 else "SHORT"
-    future_change=max(0.6, abs(future_change)) if future_side=="LONG" else -max(0.6, abs(future_change))
-    confidence=65 + min(20, abs(slope_pct)*500)
+    future_change=slope_pct * 15
+    if future_change > 1.2: future_change = 1.2
+    if future_change < -1.2: future_change = -1.2
+    if abs(future_change) < 0.5:
+        future_change = 0.7 if slope_pct >= 0 else -0.7
+        
+    future_side="LONG" if slope_pct >= 0 else "SHORT"
+    confidence=75 + min(20, abs(slope_pct)*300)
     
     future_pred=[]
     for i in range(1,11):
         prog=i/10.0
-        pred_price=last * (1 + future_change/100 * prog)
+        pred_price=last * (1 + (future_change/100)*prog)
         future_pred.append(pred_price)
         
-    moving_score = abs(slope_pct)*400 + abs(future_change)*1.5 + volatility*2 + abs(rsi-50)/12
-    strong = confidence>=60 and moving_score>=4.5
-    reason_str=f"{future_side} FUTURE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}% move {moving_score:.1f} vol {volatility:.2f}% RSI {rsi:.0f}"
-    return {"future_side":future_side,"moving_score":moving_score,"rsi":rsi,"volatility":volatility,"side":future_side,"strong":strong,"confidence":confidence,"slope_pct":slope_pct,"slope5":slope5_pct,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str}
+    moving_score = abs(slope_pct)*300 + abs(future_change)*2
+    reason_str=f"{future_side} FUTURE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}%"
+    return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence}
 
 def load_state():
     s=kv_get(STATE_KEY)
     if not s or not isinstance(s, dict) or "cap" not in s: s=MEM_STATE
-    s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("learn",{"blacklist":{},"last_coins":{}}); s.setdefault("peak",s.get("cap",300)); s.setdefault("equity",[300,s.get("cap",300)]); s.setdefault("last_cron","never v865")
+    s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("peak",300); s.setdefault("equity",[300])
     if len(s.get("open",[]))>MAXP: s["open"]=sorted(s["open"], key=lambda x: x.get("ts",0), reverse=True)[:MAXP]
     for t in s.get("open",[]): t["tp"]=TP_PCT; t["sl"]=SL_PCT
     return s
 
 def recalc(state):
     all_closed=state.get("closed",[]); state["wins"]=sum(1 for c in all_closed if c.get("net",0)>0); state["loss"]=sum(1 for c in all_closed if c.get("net",0)<0); state["total"]=len(all_closed)
-    valid=[c for c in all_closed if c.get("symbol","").upper() not in ["CTK","KORUB","SKHYB"]]
-    state["daily"]=sum([c.get("net",0) for c in valid[-20:]]) if valid else sum([c.get("net",0) for c in all_closed[-10:]])
+    state["daily"]=sum([c.get("net",0) for c in all_closed[-20:]]) if all_closed else 0.0
     return state
 
 def auto_close_trades(state):
@@ -170,7 +151,6 @@ def auto_close_trades(state):
             pct_net=pct-TOTAL_FEE; net=pos*pct_net/100; cap+=net
             state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} LIVE ${live_price:.4f}","pct_gross":pct,"pct_net":pct_net,"age":tr.get("age",0),"pos":pos,"entry":entry,"exit":live_price})
             closed_added=True
-            state["fees_paid"]=state.get("fees_paid",0)+pos*TOTAL_FEE/100
         else:
             tr["peak_gross"]=max(tr.get("peak_gross",0), pct)
             tr["pct_gross"]=pct; tr["pct"]=pct-TOTAL_FEE; tr["net"]=pos*(pct-TOTAL_FEE)/100; tr["price"]=live_price; tr["age"]=int(time.time())-tr.get("ts",int(time.time()))
@@ -183,8 +163,7 @@ def auto_close_trades(state):
 def render(state):
     state=auto_close_trades(state); state=recalc(state)
     open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); daily=state.get("daily",0.0)
-    peak=state.get("peak",cap); equity=state.get("equity",[300,cap])
-    winrate=int(wins/tot*100) if tot>0 else 0; unreal=sum([t.get("net",0) for t in open_tr])
+    peak=state.get("peak",cap); equity=state.get("equity",[300,cap]); winrate=int(wins/tot*100) if tot>0 else 0
     invested=sum([t.get("pos",0) for t in open_tr]); dd=(peak-cap)/peak*100 if peak>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
     
@@ -194,20 +173,18 @@ def render(state):
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
         analysis=tr.get("analysis","v865")[:150]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
-        ts=tr.get("ts",int(time.time())); peak_gross=tr.get("peak_gross",0)
+        ts=tr.get("ts",int(time.time())); peak_gross=tr.get("peak_gross",0); future_pred=tr.get("future_pred",[])
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:16px;padding:12px;margin:10px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:14px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:10px;color:#0f8'>🔮 {analysis}</div><div style='font-size:10px;color:#aaa'>ENTRY ${entry:.6f} TP ${tp_price:.6f} (${net_target:.2f}) SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:10px;padding:6px 10px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:8px 0;text-align:center'><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:13px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div></div></div><div style='background:#000;border-radius:12px;padding:6px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='200' style='width:100%;height:200px;background:#000;border-radius:8px'></canvas></div></div>"""
-        chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(tr.get('future_pred',[]))},{future_change},{confidence});\n"
+        chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ v865 ROTATING SCANNER READY</b><br>No active positions. Tap CRON SCAN & PREDICT to scan 15 fresh coins from the rotation map.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>✅ v865 ROTATING SCANNER READY</b><br>No active positions. Tap CRON SCAN & PREDICT to scan 15 fresh coins.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
     html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
     html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:11px;margin:0;padding:6px}"
     html += ".h{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;border-radius:12px}"
-    html += ".g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:6px 0}"
-    html += ".c{background:#1a1a1a;border:1px solid #333;padding:8px;text-align:center;border-radius:10px}"
     html += ".btn-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}"
     html += ".btn{padding:16px 4px;border-radius:14px;border:0;font-weight:900;font-size:13px;cursor:pointer}"
     html += ".btn-cron{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000}.btn-reset{background:#f44;color:#fff}.btn-close{background:#fc0;color:#000}"
@@ -349,14 +326,14 @@ def render(state):
         function draw(){{
             let w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
             if(prices.length<2) prices=Array(20).fill(entry);
-            let all=[...prices, ...futurePred]; let mn=Math.min(...all)*0.998, mx=Math.max(...all)*1.002;
+            let all=[...prices, ...(futurePred || [])]; let mn=Math.min(...all)*0.998, mx=Math.max(...all)*1.002;
             function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
             let ey=yF(entry); ctx.strokeStyle='#fc0'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,ey); ctx.lineTo(w,ey); ctx.stroke();
             let tpy=yF(tp); ctx.strokeStyle='#0f8'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,tpy); ctx.lineTo(w,tpy); ctx.stroke(); ctx.setLineDash([]);
             let sly=yF(sl); ctx.strokeStyle='#f44'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,sly); ctx.lineTo(w,sly); ctx.stroke(); ctx.setLineDash([]);
             ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2; ctx.beginPath();
-            prices.forEach((p,i)=>{{let x=i/(prices.length+futurePred.length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
-            if(futurePred.length>0){{
+            prices.forEach((p,i)=>{{let x=i/(prices.length+(futurePred||[]).length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
+            if(futurePred && futurePred.length>0){{
                 ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.beginPath();
                 let lx=(prices.length-1)/(prices.length+futurePred.length-1)*w*0.7, ly=yF(prices[prices.length-1]);
                 ctx.moveTo(lx,ly);
@@ -385,12 +362,9 @@ def catch_all(path):
     if p.startswith("/api/scan_most_moving") or p.startswith("/api/cron"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         try:
-            state=load_state(); cap=state.get("cap",300.0)
-            offset=state.get("scan_offset",0)
-            # Scan a fresh batch of 15 coins and advance offset safely
+            state=load_state(); offset=state.get("scan_offset",0)
             batch=STATIC_TOP[offset:offset+SCAN_BATCH] if offset+SCAN_BATCH <= len(STATIC_TOP) else STATIC_TOP[offset:]+STATIC_TOP[: (offset+SCAN_BATCH)-len(STATIC_TOP) ]
-            open_syms=[t["symbol"] for t in state.get("open",[])]
-            movers=[]
+            open_syms=[t["symbol"] for t in state.get("open",[])]; movers=[]
             for base,shark in batch:
                 if base in open_syms: continue
                 closes, highs, lows, vols = fetch_klines(base, "1m", 50)
@@ -403,8 +377,6 @@ def catch_all(path):
                 movers.append(analysis)
             movers_sorted=sorted(movers, key=lambda x: (x["moving_score"], x["confidence"]), reverse=True)
             top3=movers_sorted[:3] if len(movers_sorted)>=3 else movers_sorted
-            
-            # Advance offset so next click checks the next 15 coins
             state["scan_offset"]=(offset+SCAN_BATCH)%len(STATIC_TOP)
             state["scan"]=state.get("scan",0)+1
             kv_set(STATE_KEY, state)
