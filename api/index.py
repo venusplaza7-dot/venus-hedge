@@ -1,10 +1,10 @@
-""" VENUS v865 - PATIENT MULTI-CYCLE TREND SCALPER """
+""" VENUS v900 - ETH 5M MOMENTUM & BREAKOUT SCALPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 PATIENT ANALYSIS"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v900 ETH 5M"}
 
 def env(k):
     for kk in k:
@@ -15,14 +15,14 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V808_SHARK100"
-MAXP=3
-POS_PCT=33.33
+STATE_KEY="VENUS_V900_ETH_EXCLUSIVESTATE"
+MAXP=1  # Focus entirely on ETH high-conviction trades
+POS_PCT=100.0 # Use available capital slot for ETH
 TOTAL_FEE=0.17
 
-TP_PCT=0.55       
-SL_PCT=0.35       
-MAX_AGE_SECONDS = 450
+TP_PCT=0.80       # Wider target for 5m trends
+SL_PCT=0.40       # Controlled risk
+MAX_AGE_SECONDS = 900 # 15 minutes for 5m trends to play out
 
 def kv_get(k):
     global MEM_STATE
@@ -49,7 +49,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v865 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v900 ETH CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -57,30 +57,7 @@ def kv_del(k):
         with urllib.request.urlopen(req, timeout=4) as r: return True
     except: return True
 
-def fetch_fresh_moving_coins(exclude_syms=[]):
-    for b in ["https://data-api.binance.vision","https://api.binance.com"]:
-        try:
-            url=f"{b}/api/v3/ticker/24hr"
-            req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=5) as r:
-                data=json.loads(r.read().decode())
-                movers=[]
-                for item in data:
-                    sym=item.get("symbol","")
-                    if sym.endswith("USDT") and not any(x in sym for x in ["UP","DOWN","BULL","BEAR"]):
-                        base=sym[:-4]
-                        if base in exclude_syms: continue
-                        price_change=float(item.get("priceChangePercent",0))
-                        vol=float(item.get("quoteVolume",0))
-                        if vol > 5000000 and abs(price_change) > 1.0:
-                            movers.append((base, price_change, vol))
-                movers=sorted(movers, key=lambda x: abs(x[1]), reverse=True)
-                if len(movers)>5:
-                    return movers[:40]
-        except: continue
-    return [("BTC",3.0,15000000),("ETH",2.5,12000000),("SOL",4.5,10000000),("ADA",-3.5,8000000),("XRP",3.8,7000000)]
-
-def fetch_live_price_fast(base):
+def fetch_live_price_fast(base="ETH"):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
             url=f"{b}/api/v3/ticker/price?symbol={base}USDT"
@@ -91,7 +68,7 @@ def fetch_live_price_fast(base):
         except: continue
     return None, "fail"
 
-def fetch_klines(base, interval="1m", limit=30):
+def fetch_klines(base="ETH", interval="5m", limit=30):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
             url=f"{b}/api/v3/klines?symbol={base}USDT&interval={interval}&limit={limit}"
@@ -103,12 +80,12 @@ def fetch_klines(base, interval="1m", limit=30):
         except: continue
     return []
 
-def analyze_chart_trend_patient(closes, consecutive_losses=0):
-    """ PATIENT ANALYSIS: Requires deeper multi-candle alignment and stricter validation """
+def analyze_eth_trend(closes):
+    """ ETH 5M MOMENTUM ANALYSIS """
     if not closes or len(closes) < 12:
         return "SKIP", 0.0
     
-    # Analyze multiple sub-windows to ensure trend consistency, not just a single spike
+    # 3-phase sequence check on 5m candles
     c1 = closes[-12:-8]
     c2 = closes[-8:-4]
     c3 = closes[-4:]
@@ -118,13 +95,11 @@ def analyze_chart_trend_patient(closes, consecutive_losses=0):
     avg3 = sum(c3) / len(c3)
     
     net_diff_pct = ((closes[-1] - closes[-12]) / closes[-12]) * 100
-    required_slope = 0.20 + (consecutive_losses * 0.10)
     
-    # Check for strict sequential step-up (Bullish patience)
-    if avg3 > avg2 and avg2 > avg1 and net_diff_pct > required_slope:
+    # Require clean directional movement
+    if avg3 > avg2 and avg2 > avg1 and net_diff_pct > 0.15:
         return "LONG", net_diff_pct
-    # Check for strict sequential step-down (Bearish patience)
-    elif avg3 < avg2 and avg2 < avg1 and net_diff_pct < -required_slope:
+    elif avg3 < avg2 and avg2 < avg1 and net_diff_pct < -0.15:
         return "SHORT", net_diff_pct
         
     return "SKIP", net_diff_pct
@@ -151,80 +126,56 @@ def recalc(state):
     state["daily"]=sum([c.get("net",0) for c in all_closed[-100:]]) if all_closed else 0.0
     return state
 
-def get_consecutive_losses(state):
-    closed = state.get("closed", [])
-    streak = 0
-    for c in closed:
-        if c.get("net", 0) < 0:
-            streak += 1
-        else:
-            break
-    return streak
-
 def fill_missing_slots(state):
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP: return state
     
     cap = state.get("cap", 300.0)
-    open_syms = [t["symbol"] for t in open_tr]
-    recent_closed = [c["symbol"] for c in state.get("closed", [])[:10]]
-    excluded = list(set(open_syms + recent_closed))
     
-    consecutive_losses = get_consecutive_losses(state)
-    market_movers = fetch_fresh_moving_coins(exclude_syms=excluded)
-    added = False
-    for base, change_24h, vol in market_movers:
-        if len(open_tr) >= MAXP: break
-        if base in excluded or base in [t["symbol"] for t in open_tr]: continue
-        
-        closes = fetch_klines(base, "1m", 30)
-        if not closes: continue
-        
-        # Patient Multi-Cycle Analysis
-        side, trend_strength = analyze_chart_trend_patient(closes, consecutive_losses)
-        if side == "SKIP": 
-            continue # Takes its time, skips unconfirmed choppy charts
-            
-        price, src = fetch_live_price_fast(base)
-        if not price or price == 0: price = closes[-1]
-        
-        future_change = 0.55 if side == "LONG" else -0.55
-        future_pred = []
-        for i in range(1, 8):
-            prog = i / 7.0
-            future_pred.append(price * (1 + (future_change / 100) * prog))
-            
-        pos_size = cap * POS_PCT / 100.0
-        adaptive_tag = f" [DEFENSE x{consecutive_losses}]" if consecutive_losses >= 2 else ""
-        tr = {
-            "symbol": base,
-            "side": side,
-            "entry": price,
-            "price": price,
-            "pos": pos_size,
-            "ts": int(time.time()),
-            "peak_gross": 0,
-            "pct_gross": 0,
-            "pct": 0,
-            "net": 0,
-            "age": 0,
-            "tp": TP_PCT,
-            "sl": SL_PCT,
-            "reason": f"PATIENT {side} ({trend_strength:+.2f}%){adaptive_tag}",
-            "analysis": f"Multi-Cycle Confirmed Slope: {trend_strength:+.2f}%",
-            "future_pred": future_pred,
-            "future_change": future_change,
-            "confidence": 99,
-            "closes": closes
-        }
-        open_tr.append(tr)
-        excluded.append(base)
-        added = True
+    # If ETH is already open, don't open duplicate
+    if any(t["symbol"] == "ETH" for t in open_tr): return state
     
-    if added:
-        state["open"] = open_tr
-        state = recalc(state)
-        kv_set(STATE_KEY, state)
+    closes = fetch_klines("ETH", "5m", 30)
+    if not closes: return state
+    
+    side, trend_strength = analyze_eth_trend(closes)
+    if side == "SKIP": return state
+        
+    price, src = fetch_live_price_fast("ETH")
+    if not price or price == 0: price = closes[-1]
+    
+    future_change = 0.80 if side == "LONG" else -0.80
+    future_pred = []
+    for i in range(1, 8):
+        prog = i / 7.0
+        future_pred.append(price * (1 + (future_change / 100) * prog))
+        
+    pos_size = cap * (POS_PCT / 100.0)
+    tr = {
+        "symbol": "ETH",
+        "side": side,
+        "entry": price,
+        "price": price,
+        "pos": pos_size,
+        "ts": int(time.time()),
+        "peak_gross": 0,
+        "pct_gross": 0,
+        "pct": 0,
+        "net": 0,
+        "age": 0,
+        "tp": TP_PCT,
+        "sl": SL_PCT,
+        "reason": f"ETH 5M {side} ({trend_strength:+.2f}%)",
+        "analysis": f"ETH 5m Trend Slope: {trend_strength:+.2f}%",
+        "future_pred": future_pred,
+        "future_change": future_change,
+        "confidence": 99,
+        "closes": closes
+    }
+    open_tr.append(tr)
+    state["open"] = open_tr
+    state = recalc(state)
+    kv_set(STATE_KEY, state)
     return state
 
 def auto_close_trades(state):
@@ -244,7 +195,7 @@ def auto_close_trades(state):
         
         if should_close:
             pct_net=pct-TOTAL_FEE; net=pos*pct_net/100; cap+=net
-            state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} LIVE ${live_price:.4f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
+            state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} LIVE ${live_price:.2f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
             closed_added=True
         else:
             tr["peak_gross"]=max(tr.get("peak_gross",0), pct)
@@ -263,22 +214,20 @@ def render(state):
     equity=state.get("equity",[300,cap])
     winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
-    streak = get_consecutive_losses(state)
-    streak_label = f" | LOSS STREAK: {streak}" if streak > 0 else ""
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",300); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","patient analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","eth 5m analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
-        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.6f} | TP ${tp_price:.6f} (${net_target:.2f}) | SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
+        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.2f} | TP ${tp_price:.2f} (${net_target:.2f}) | SL ${sl_price:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ PATIENT ANALYSIS READY</b><br>Analyzing multi-cycle chart trends before entry...</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ ETH 5M SCALPER READY</b><br>Scanning Ethereum 5-minute candles for breakout trends...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -299,7 +248,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ PATIENT SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b>{streak_label} - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ ETH 5M SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -314,7 +263,7 @@ def render(state):
     <div id='openbox'>{trade_boxes_html}</div>
     
     <div style='background:#151515;border:1px solid #333;border-radius:10px;padding:8px;margin-top:8px'>
-        <div style='font-size:10px;color:#0f8;font-weight:900;margin-bottom:4px;text-align:center'>📊 RECENT CLOSED TRADES & PNL BREAKDOWN</div>
+        <div style='font-size:10px;color:#0f8;font-weight:900;margin-bottom:4px;text-align:center'>📊 ETH CLOSED TRADES & PNL BREAKDOWN</div>
         {closed_html}
     </div>
     
@@ -367,7 +316,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||100;
+        let pos = parseFloat(posStr)||300;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
@@ -389,7 +338,7 @@ def render(state):
                         pnlEl.style.color = netVal>=0 ? '#0f8' : '#f44';
                     }}
                     if(priceEl) {{
-                        priceEl.innerText = '$'+j.price.toFixed(5);
+                        priceEl.innerText = '$'+j.price.toFixed(2);
                         priceEl.style.color = pct>=0 ? '#0f8' : '#f44';
                     }}
                     
