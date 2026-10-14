@@ -1,10 +1,10 @@
-""" VENUS v865 - LIGHTNING FAST SCALPER & 0.25C NET ROTATION ENGINE """
+""" VENUS v865 - INSTANT AUTO-REPLACEMENT SCALPER ENGINE """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 LIGHTNING SCALPER"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 INSTANT AUTO-REPLACEMENT"}
 
 def env(k):
     for kk in k:
@@ -20,8 +20,8 @@ MAXP=3
 POS_PCT=33.33
 TOTAL_FEE=0.17
 SCAN_BATCH=25
-TP_PCT=0.50  # Micro-target for lightning-fast scalps ($0.25+ net after fee)
-SL_PCT=0.40  # Tight stop loss to cut losers instantly
+TP_PCT=0.50
+SL_PCT=0.40
 
 def kv_get(k):
     global MEM_STATE
@@ -70,9 +70,8 @@ def fetch_fast_moving_market_coins():
                         base=sym[:-4]
                         price_change=float(item.get("priceChangePercent",0))
                         vol=float(item.get("quoteVolume",0))
-                        if vol > 2000000: # Active volume filter
+                        if vol > 1000000:
                             movers.append((base, price_change, vol))
-                # Sort by absolute price change velocity (biggest gainers or losers moving fast)
                 movers=sorted(movers, key=lambda x: abs(x[1]), reverse=True)
                 if len(movers)>10:
                     return movers[:50]
@@ -106,11 +105,9 @@ def lightning_scalp_engine(base, change_24h, closes):
     if not closes or len(closes)<5:
         closes = [100.0]*15
     last=closes[-1]
-    
-    # If 24h change is positive or recent candles are up -> LONG, otherwise SHORT for immediate scalp
     recent_diff = closes[-1] - closes[0]
     future_side = "LONG" if recent_diff >= 0 else "SHORT"
-    future_change = 0.60 if future_side == "LONG" else -0.60
+    future_change = 0.50 if future_side == "LONG" else -0.50
     confidence = 95
     
     future_pred=[]
@@ -136,6 +133,59 @@ def recalc(state):
     state["daily"]=sum([c.get("net",0) for c in all_closed[-100:]]) if all_closed else 0.0
     return state
 
+def fill_missing_slots(state):
+    """ Instantly scans and fills open slots if fewer than MAXP are active """
+    open_tr = state.get("open", [])
+    if len(open_tr) >= MAXP:
+        return state
+    
+    cap = state.get("cap", 300.0)
+    open_syms = [t["symbol"] for t in open_tr]
+    market_movers = fetch_fast_moving_market_coins()
+    
+    added = False
+    for base, change_24h, vol in market_movers:
+        if len(open_tr) >= MAXP: break
+        if base in open_syms: continue
+        
+        closes = fetch_klines(base, "1m", 20)
+        if not closes: continue
+        price, src = fetch_live_price_fast(base)
+        if not price or price == 0: price = closes[-1] if closes else 100
+        
+        analysis = lightning_scalp_engine(base, change_24h, closes)
+        pos_size = cap * POS_PCT / 100.0
+        tr = {
+            "symbol": base,
+            "side": analysis["future_side"],
+            "entry": price,
+            "price": price,
+            "pos": pos_size,
+            "ts": int(time.time()),
+            "peak_gross": 0,
+            "pct_gross": 0,
+            "pct": 0,
+            "net": 0,
+            "age": 0,
+            "tp": TP_PCT,
+            "sl": SL_PCT,
+            "reason": analysis["reason"],
+            "analysis": analysis["reason"][:200],
+            "future_pred": analysis["future_pred"],
+            "future_change": analysis["future_change"],
+            "confidence": analysis["confidence"],
+            "closes": closes
+        }
+        open_tr.append(tr)
+        open_syms.append(base)
+        added = True
+    
+    if added:
+        state["open"] = open_tr
+        state = recalc(state)
+        kv_set(STATE_KEY, state)
+    return state
+
 def auto_close_trades(state):
     cap=state.get("cap",300.0); new_open=[]; closed_added=False
     for tr in state.get("open",[]):
@@ -157,10 +207,13 @@ def auto_close_trades(state):
     if closed_added:
         state["open"]=new_open; state["cap"]=cap; state["peak"]=max(state.get("peak",cap), cap)
         state["equity"]=state.get("equity",[300])[-100:] + [cap]; state=recalc(state); kv_set(STATE_KEY, state)
+    
+    # Immediately fill slot if any trade closed
+    state = fill_missing_slots(state)
     return state
 
 def render(state):
-    state=auto_close_trades(state); state=recalc(state)
+    state=auto_close_trades(state); state=fill_missing_slots(state); state=recalc(state)
     open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); daily=state.get("daily",0.0)
     peak=state.get("peak",cap); equity=state.get("equity",[300,cap])
     winrate=int(wins/tot*100) if tot>0 else 0
@@ -178,7 +231,7 @@ def render(state):
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>⚡ LIGHTNING SCALPER READY</b><br>No active positions. Tap CRON SCAN & PREDICT to instantly launch 3 fast-moving scalps.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>⚡ LIGHTNING SCALPER READY</b><br>No active positions. Tap SCAN FAST MOVERS to instantly launch scalps.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -200,7 +253,7 @@ def render(state):
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
     </div></div>
     
-    <div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0;border:1px solid #333'><div style='font-size:10px;color:#888'>STEP 2: 30S LIVE CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:11px;margin:4px 0'>Monitoring momentum...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:18px;font-weight:900;color:#f44'>30s</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:12px;font-weight:900;color:#0f8'>+0.00%</div></div></div>
+    <div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0;border:1px solid #333'><div style='font-size:10px;color:#888'>STEP 2: LIVE CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:11px;margin:4px 0'>Monitoring momentum...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:18px;font-weight:900;color:#f44'>15s</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:12px;font-weight:900;color:#0f8'>+0.00%</div></div></div>
     <div class='coin-grid' style='margin-top:8px'>
     <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:10px'>-</div><div id='liveChange0' style='color:#0f8;font-size:10px'>+0.00%</div></div><canvas id='liveMonitorChart0' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:10px'>-</div><div id='liveChange1' style='color:#0f8;font-size:10px'>+0.00%</div></div><canvas id='liveMonitorChart1' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas></div>
@@ -224,7 +277,7 @@ def render(state):
     <div id='openbox'>{trade_boxes_html}</div>
     
     <script>
-    const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";let currentAnalysis=null;let timeLeft=30;
+    const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";let currentAnalysis=null;let timeLeft=15;
     function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
     function logScan(msg){{const el=document.getElementById('scanLog'); if(el){{ el.innerText+='\\n'+msg; el.scrollTop=el.scrollHeight; }} }}
     
@@ -244,7 +297,7 @@ def render(state):
                 document.getElementById('deepText'+i).innerText='24h Move: '+(m.slope_pct||0).toFixed(2)+'%';
                 drawDeepChart(i, m.closes||[], m.future_pred||[], m.future_side);
             }}
-            document.getElementById('analyzeStatus').innerText='Scan complete. Starting 30s confirmation...';
+            document.getElementById('analyzeStatus').innerText='Scan complete. Starting live confirmation...';
             startLiveMonitor();
         }} catch(e) {{ logScan('Err: '+e); }}
     }}
@@ -266,7 +319,7 @@ def render(state):
     }}
     
     function startLiveMonitor(){{
-        timeLeft=30; document.getElementById('monitorTimeLeft').innerText='30s';
+        timeLeft=15; document.getElementById('monitorTimeLeft').innerText='15s';
         for(let i=0;i<currentAnalysis.coins.length;i++){{
             let c=currentAnalysis.coins[i];
             document.getElementById('liveCoin'+i).innerText=c.symbol+' ('+c.finalSide+')';
@@ -310,7 +363,7 @@ def render(state):
                 let payload={{symbol:c.symbol, side:c.finalSide, reason:c.finalReason, livePrice:c.livePrice||c.startPrice, moving_score:c.moving_score, future_change:c.future_change, confidence:c.confidence, future_pred:c.future_pred, closes:c.closes}};
                 await fetch('/api/open_analyzed?key='+ADMIN_KEY+'&t='+Date.now(), {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(payload)}});
             }}catch(e){{}}
-            await new Promise(r=>setTimeout(r,200));
+            await new Promise(r=>setTimeout(r,150));
         }}
         closeOverlay(); location.reload();
     }}
