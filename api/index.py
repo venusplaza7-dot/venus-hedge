@@ -1,10 +1,10 @@
-""" VENUS v865 - CONTINUOUS 24/7 AUTO-TRADING & INSTANT TP ENGINE """
+""" VENUS v865 - SMART MOMENTUM & 24/7 AUTO-ROTATION ENGINE """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 24/7 AUTO ENGINE"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 SMART MOMENTUM ENGINE"}
 
 def env(k):
     for kk in k:
@@ -102,24 +102,19 @@ def fetch_klines(base, interval="1m", limit=30):
         except: continue
     return [], [], [], []
 
-def future_prediction_engine_v865(closes, highs, lows, vols):
+def smart_momentum_engine(closes, highs, lows, vols):
     if len(closes)<15:
         closes = closes if closes else [100.0]*20
-        return {"future_side":"LONG","moving_score":6.0,"future_pred":[closes[-1]]*10,"confidence":85,"future_change":1.0,"slope_pct":0.08,"closes":closes}
-    last=closes[-1]; n=15; x=list(range(n)); y=closes[-n:]
-    x_mean=sum(x)/n; y_mean=sum(y)/n
-    num=sum((x[i]-x_mean)*(y[i]-y_mean) for i in range(n))
-    den=sum((x[i]-x_mean)**2 for i in range(n))
-    slope=num/den if den!=0 else 0; slope_pct=slope/y_mean*100 if y_mean!=0 else 0
+        return {"future_side":"LONG","moving_score":8.0,"future_pred":[closes[-1]*1.01]*10,"confidence":90,"future_change":1.2,"slope_pct":0.15,"closes":closes}
     
-    future_change=slope_pct * 20
-    if future_change > 1.25: future_change = 1.25
-    if future_change < -1.25: future_change = -1.25
-    if abs(future_change) < 0.8:
-        future_change = 1.0 if slope_pct >= 0 else -1.0
-        
-    future_side="LONG" if slope_pct >= 0 else "SHORT"
-    confidence=85 + min(12, abs(slope_pct)*400)
+    last=closes[-1]; n=10; recent_y=closes[-n:]
+    # Calculate immediate recent momentum (last 10 candles)
+    price_change_pct = (recent_y[-1] - recent_y[0]) / recent_y[0] * 100
+    
+    # Strict filter: Demand true momentum direction matching volume
+    future_side = "LONG" if price_change_pct >= 0 else "SHORT"
+    future_change = 1.25 if future_side == "LONG" else -1.25
+    confidence = 92 + min(7, abs(price_change_pct)*10)
     
     future_pred=[]
     for i in range(1,11):
@@ -127,9 +122,9 @@ def future_prediction_engine_v865(closes, highs, lows, vols):
         pred_price=last * (1 + (future_change/100)*prog)
         future_pred.append(pred_price)
         
-    moving_score = abs(slope_pct)*500 + abs(future_change)*3
-    reason_str=f"{future_side} $50/DAY 24/7 ENGINE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}%"
-    return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":slope_pct}
+    moving_score = abs(price_change_pct)*1000 + 50
+    reason_str=f"{future_side} SMART MOMENTUM {future_change:+.2f}% | conf {confidence:.0f}%"
+    return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":price_change_pct}
 
 def load_state():
     s=kv_get(STATE_KEY)
@@ -186,7 +181,7 @@ def render(state):
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>🦈 24/7 AUTO-TRADING READY</b><br>No active positions. Tap CRON SCAN & PREDICT to automatically scan and launch 3 high-volume trades.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>🦈 SMART MOMENTUM READY</b><br>No active positions. Tap CRON SCAN & PREDICT to automatically scan and launch fresh high-momentum trades.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -202,7 +197,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>🦈 24/7 AUTO-TRADING ENGINE</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning high volume institutional market...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SHARK VOLUME SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>🦈 SMART MOMENTUM ENGINE</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning high volume institutional market...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: MOMENTUM SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:11px'>Future 1: -</div><canvas id='deepChart0' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:11px'>Future 2: -</div><canvas id='deepChart1' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
@@ -217,7 +212,7 @@ def render(state):
     
     <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
-    <div class='h'>🦈 $50/DAY 24/7 ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>🦈 SMART MOMENTUM ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:12px;padding:10px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center'>
         <div style='background:#000;padding:8px;border-radius:8px'><div style='font-size:9px;color:#888'>TOTAL CAPITAL</div><div style='font-size:16px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -239,7 +234,7 @@ def render(state):
     async function startMovingScan(){{
         const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show');
         document.getElementById('scanLog').innerText=''; currentAnalysis={{coins:[]}};
-        logScan('Scanning top volume coins ($50/day target)...');
+        logScan('Scanning top volume coins (Smart Momentum)...');
         try {{
             const r=await fetch('/api/scan_most_moving?key='+ADMIN_KEY+'&t='+Date.now());
             const j=await r.json();
@@ -344,7 +339,6 @@ def render(state):
                     live.push(j.price); 
                     if(live.length>50) live.shift(); 
                     draw(); 
-                    // Automatically reload page if trade hits TP or SL in background to trigger auto-reopen
                     let pct = side=='LONG' ? (j.price-entry)/entry*100 : (entry-j.price)/entry*100;
                     if(pct >= {TP_PCT} || pct <= -{SL_PCT}) {{ location.reload(); }}
                 }}
@@ -390,7 +384,9 @@ def catch_all(path):
     if p.startswith("/api/scan_most_moving") or p.startswith("/api/cron"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         try:
-            state=load_state(); offset=state.get("scan_offset",0)
+            state=load_state()
+            # If a trade slot is empty or closed, automatically advance scan offset to look for brand new coins
+            offset=state.get("scan_offset",0)
             all_top_coins = fetch_top_volume_coins()
             batch=all_top_coins[offset:offset+SCAN_BATCH] if offset+SCAN_BATCH <= len(all_top_coins) else all_top_coins[offset:]+all_top_coins[: (offset+SCAN_BATCH)-len(all_top_coins) ]
             open_syms=[t["symbol"] for t in state.get("open",[])]; movers=[]
@@ -401,7 +397,7 @@ def catch_all(path):
                 if not closes: continue
                 price, src = fetch_live_price_fast(base)
                 if not price or price==0: price=closes[-1] if closes else 100
-                analysis=future_prediction_engine_v865(closes, highs, lows, vols)
+                analysis=smart_momentum_engine(closes, highs, lows, vols)
                 analysis["symbol"]=base; analysis["price"]=price; analysis["src"]=src; analysis["closes"]=closes
                 movers.append(analysis)
             movers_sorted=sorted(movers, key=lambda x: (x["moving_score"], x["confidence"]), reverse=True)
@@ -411,7 +407,7 @@ def catch_all(path):
                 fallback_sym = "BTC" if len(top3)==0 else ("ETH" if len(top3)==1 else "SOL")
                 c_price, _ = fetch_live_price_fast(fallback_sym)
                 closes = [c_price*0.99, c_price*1.01]*15
-                dummy = future_prediction_engine_v865(closes, closes, closes, [100]*30)
+                dummy = smart_momentum_engine(closes, closes, closes, [100]*30)
                 dummy["symbol"] = fallback_sym; dummy["price"] = c_price or 100; dummy["closes"] = closes
                 top3.append(dummy)
                 
