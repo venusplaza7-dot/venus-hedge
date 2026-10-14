@@ -1,10 +1,10 @@
-""" VENUS v910 - DUAL BTC & ETH 5M FAST SCALPER """
+""" VENUS v915 - EAGER DUAL BTC & ETH 5M SCALPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v910 DUAL BTC ETH"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v915 DUAL BALANCED"}
 
 def env(k):
     for kk in k:
@@ -15,13 +15,13 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V910_DUAL_BTC_ETH_STATE"
-MAXP=2  # One slot for BTC, one slot for ETH
-POS_PCT=50.0 # 50% capital per asset ($150 each)
+STATE_KEY="VENUS_V915_DUAL_BALANCED_STATE"
+MAXP=2  # Exactly 2 slots: 1 for BTC ($150), 1 for ETH ($150)
+POS_PCT=50.0 
 TOTAL_FEE=0.17
 
-TP_PCT=0.45       # Faster, earlier take-profit triggers
-SL_PCT=0.35       # Controlled risk
+TP_PCT=0.45       
+SL_PCT=0.35       
 MAX_AGE_SECONDS = 900 
 
 def kv_get(k):
@@ -49,7 +49,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v910 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v915 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -91,9 +91,10 @@ def analyze_trend(closes):
     avg3 = sum(c3) / len(c3)
     net_diff_pct = ((closes[-1] - closes[-12]) / closes[-12]) * 100
     
-    if avg3 > avg2 and avg2 > avg1 and net_diff_pct > 0.10:
+    # Lowered threshold to 0.05% so both BTC and ETH trigger trades more eagerly
+    if avg3 > avg2 and avg2 > avg1 and net_diff_pct > 0.05:
         return "LONG", net_diff_pct
-    elif avg3 < avg2 and avg2 < avg1 and net_diff_pct < -0.10:
+    elif avg3 < avg2 and avg2 < avg1 and net_diff_pct < -0.05:
         return "SHORT", net_diff_pct
     return "SKIP", net_diff_pct
 
@@ -125,7 +126,7 @@ def fill_missing_slots(state):
     cap = state.get("cap", 300.0)
     open_syms = [t["symbol"] for t in open_tr]
     
-    # Target both BTC and ETH
+    # Check both BTC and ETH independently
     targets = ["BTC", "ETH"]
     added = False
     
@@ -229,7 +230,7 @@ def render(state):
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ DUAL BTC & ETH SCALPER READY</b><br>Scanning Bitcoin and Ethereum 5m charts...</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ DUAL BALANCED SCALPER READY</b><br>Scanning Bitcoin and Ethereum 5m charts...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -250,7 +251,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ DUAL BTC & ETH SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ DUAL BALANCED SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
