@@ -1,10 +1,10 @@
-""" VENUS v865 - INSTANT AUTO-REPLACEMENT SCALPER ENGINE """
+""" VENUS v865 - COMPACT SCALPER & INSTANT AUTO-REPLACEMENT ENGINE """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 INSTANT AUTO-REPLACEMENT"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 COMPACT SCALPER"}
 
 def env(k):
     for kk in k:
@@ -134,7 +134,6 @@ def recalc(state):
     return state
 
 def fill_missing_slots(state):
-    """ Instantly scans and fills open slots if fewer than MAXP are active """
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP:
         return state
@@ -208,7 +207,6 @@ def auto_close_trades(state):
         state["open"]=new_open; state["cap"]=cap; state["peak"]=max(state.get("peak",cap), cap)
         state["equity"]=state.get("equity",[300])[-100:] + [cap]; state=recalc(state); kv_set(STATE_KEY, state)
     
-    # Immediately fill slot if any trade closed
     state = fill_missing_slots(state)
     return state
 
@@ -224,57 +222,70 @@ def render(state):
         sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","scalp")[:150]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","scalp")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
-        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:16px;padding:12px;margin:10px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:14px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:10px;color:#0f8'>⚡ {analysis}</div><div style='font-size:10px;color:#aaa'>ENTRY ${entry:.6f} TP ${tp_price:.6f} (${net_target:.2f}) SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:10px;padding:6px 10px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:8px 0;text-align:center'><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:13px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div></div></div><div style='background:#000;border-radius:12px;padding:6px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='200' style='width:100%;height:200px;background:#000;border-radius:8px'></canvas></div></div>"""
+        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.6f} | TP ${tp_price:.6f} (${net_target:.2f}) | SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>⚡ LIGHTNING SCALPER READY</b><br>No active positions. Tap SCAN FAST MOVERS to instantly launch scalps.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ LIGHTNING SCALPER READY</b><br>No active positions. Tap SCAN FAST MOVERS to instantly launch scalps.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
+    # Build detailed closed trade history for bottom win/loss breakdown
+    closed_html = ""
+    for c in closed[:10]:
+        c_col = "#0f8" if c.get("net",0) >= 0 else "#f44"
+        closed_html += f"<div style='display:flex;justify-content:space-between;background:#111;padding:5px 8px;margin:3px 0;border-radius:6px;font-size:9px;'><b style='color:{c_col}'>{c.get('symbol')} {c.get('side')}</b><span>Net: <b style='color:{c_col}'>${c.get('net'):+.2f}</b> ({c.get('pct_net'):+.2f}%)</span><span style='color:#aaa'>{c.get('reason')}</span></div>"
+    if not closed_html:
+        closed_html = "<div style='color:#666;text-align:center;font-size:9px;padding:4px'>No closed trades yet today.</div>"
+
     html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
     html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:11px;margin:0;padding:6px}"
-    html += ".h{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;text-align:center;font-weight:900;font-size:11px;border-radius:12px}"
-    html += ".btn-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}"
-    html += ".btn{padding:16px 4px;border-radius:14px;border:0;font-weight:900;font-size:13px;cursor:pointer}"
+    html += ".h{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:10px;text-align:center;font-weight:900;font-size:11px;border-radius:10px}"
+    html += ".btn-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:6px 0}"
+    html += ".btn{padding:12px 4px;border-radius:10px;border:0;font-weight:900;font-size:12px;cursor:pointer}"
     html += ".btn-cron{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000}.btn-reset{background:#f44;color:#fff}.btn-close{background:#fc0;color:#000}"
-    html += ".badge{padding:2px 6px;border-radius:10px;font-size:9px;font-weight:900}.long{background:#0f8;color:#000}.short{background:#f44;color:#fff}"
+    html += ".badge{padding:2px 5px;border-radius:8px;font-size:8px;font-weight:900}.long{background:#0f8;color:#000}.short{background:#f44;color:#fff}"
     html += ".overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.95);z-index:9999;display:none;flex-direction:column;padding:10px;overflow-y:auto}.overlay.show{display:flex}"
-    html += ".coin-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}@media(max-width:600px){.coin-grid{grid-template-columns:1fr}}"
+    html += ".coin-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}@media(max-width:600px){.coin-grid{grid-template-columns:1fr}}"
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>⚡ LIGHTNING SCALPER ENGINE</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning top velocity movers...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: VELOCITY SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
-    <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:11px'>Future 1: -</div><canvas id='deepChart0' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px'>-</div></div>
-    <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:11px'>Future 2: -</div><canvas id='deepChart1' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px'>-</div></div>
-    <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:14px;padding:10px'><div style='color:#0f8;font-weight:900;font-size:13px;text-align:center'>⚡ LIGHTNING SCALPER ENGINE</div><div style='color:#0f8;font-size:10px;text-align:center;margin:4px 0' id='analyzeStatus'>Scanning top velocity movers...</div><div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0'><div style='font-size:9px;color:#888'>STEP 1: VELOCITY SCAN</div><div id='scanLog' style='color:#0f8;font-size:8px;white-space:pre-wrap;max-height:70px;overflow-y:auto;background:#0a0a0a;padding:5px;border-radius:6px;margin:4px 0'></div><div class='coin-grid'>
+    <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:10px'>Future 1: -</div><canvas id='deepChart0' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px'>-</div></div>
+    <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:10px'>Future 2: -</div><canvas id='deepChart1' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px'>-</div></div>
+    <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:10px'>Future 3: -</div><canvas id='deepChart2' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
     </div></div>
     
-    <div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0;border:1px solid #333'><div style='font-size:10px;color:#888'>STEP 2: LIVE CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:11px;margin:4px 0'>Monitoring momentum...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:18px;font-weight:900;color:#f44'>15s</div></div><div style='background:#111;padding:6px;border-radius:8px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:12px;font-weight:900;color:#0f8'>+0.00%</div></div></div>
-    <div class='coin-grid' style='margin-top:8px'>
-    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:10px'>-</div><div id='liveChange0' style='color:#0f8;font-size:10px'>+0.00%</div></div><canvas id='liveMonitorChart0' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas></div>
-    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:10px'>-</div><div id='liveChange1' style='color:#0f8;font-size:10px'>+0.00%</div></div><canvas id='liveMonitorChart1' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas></div>
-    <div style='background:#111;border-radius:10px;padding:6px'><div style='display:flex;justify-content:space-between'><div id='liveCoin2' style='color:#0f8;font-weight:900;font-size:10px'>-</div><div id='liveChange2' style='color:#0f8;font-size:10px'>+0.00%</div></div><canvas id='liveMonitorChart2' width='200' height='120' style='width:100%;height:120px;background:#000;border-radius:8px;margin-top:4px'></canvas></div>
+    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #333'><div style='font-size:9px;color:#888'>STEP 2: LIVE CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:10px;margin:3px 0'>Monitoring momentum...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:16px;font-weight:900;color:#f44'>15s</div></div><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:11px;font-weight:900;color:#0f8'>+0.00%</div></div></div>
+    <div class='coin-grid' style='margin-top:6px'>
+    <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange0' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart0' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
+    <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange1' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart1' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
+    <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin2' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange2' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart2' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
     </div></div>
     
-    <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>⚡ FORCE OPEN SCALPS</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
+    <div style='background:#000;padding:8px;border-radius:8px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:11px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:10px;border-radius:8px;border:0;font-weight:900'>⚡ FORCE OPEN SCALPS</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:10px;border-radius:8px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
     <div class='h'>⚡ LIGHTNING SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
     
-    <div style='background:#111;border:2px solid #0f8;border-radius:12px;padding:10px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center'>
-        <div style='background:#000;padding:8px;border-radius:8px'><div style='font-size:9px;color:#888'>TOTAL CAPITAL</div><div style='font-size:16px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
-        <div style='background:#000;padding:8px;border-radius:8px'><div style='font-size:9px;color:#888'>WINS / LOSSES</div><div style='font-size:16px;font-weight:900;color:#0f8'>{wins}W / {loss}L ({winrate}%)</div></div>
-        <div style='background:#000;padding:8px;border-radius:8px'><div style='font-size:9px;color:#888'>NET PNL (DAILY)</div><div style='font-size:16px;font-weight:900;color:{daily_color}'>${daily:+.2f}</div></div>
+    <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
+        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
+        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>WINS / LOSSES</div><div style='font-size:14px;font-weight:900;color:#0f8'><span style='color:#0f8'>{wins}W</span> / <span style='color:#f44'>{loss}L</span> ({winrate}%)</div></div>
+        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>NET PNL (DAILY)</div><div style='font-size:14px;font-weight:900;color:{daily_color}'>${daily:+.2f}</div></div>
     </div>
     
-    <div style='background:#000000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:8px'></canvas></div>
+    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='70' style='width:100%;height:70px;background:#000;border-radius:6px'></canvas></div>
     
-    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()'>⚡ SCAN FAST MOVERS<div style='font-size:10px'>TARGET TOP VELOCITY COINS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:10px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:10px'>CLEAN MEM</div></button></div>
+    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()'>⚡ SCAN FAST MOVERS<div style='font-size:9px'>TARGET TOP VELOCITY COINS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:9px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:9px'>CLEAN MEM</div></button></div>
     
     <div id='openbox'>{trade_boxes_html}</div>
+    
+    <div style='background:#151515;border:1px solid #333;border-radius:10px;padding:8px;margin-top:8px'>
+        <div style='font-size:10px;color:#0f8;font-weight:900;margin-bottom:4px;text-align:center'>📊 RECENT CLOSED TRADES & PNL BREAKDOWN</div>
+        {closed_html}
+    </div>
     
     <script>
     const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";let currentAnalysis=null;let timeLeft=15;
