@@ -1,10 +1,10 @@
-""" VENUS v865 - TRUE BREAKOUT & HIGH ACCURACY SCALPER """
+""" VENUS v865 - HIGH ACCURACY SHORT-BIASED BREAKOUT SCALPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 BREAKOUT ENGINE"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 SHORT BIAS"}
 
 def env(k):
     for kk in k:
@@ -19,9 +19,9 @@ STATE_KEY="VENUS_V808_SHARK100"
 MAXP=3
 POS_PCT=33.33
 TOTAL_FEE=0.17
-TP_PCT=0.50
+TP_PCT=0.45
 SL_PCT=0.35
-MAX_AGE_SECONDS = 240  # Faster 4-minute expiry to exit stagnant trades instantly
+MAX_AGE_SECONDS = 200
 
 def kv_get(k):
     global MEM_STATE
@@ -102,27 +102,22 @@ def fetch_klines(base, interval="1m", limit=30):
         except: continue
     return []
 
-def strict_breakout_engine(base, change_24h, closes):
+def high_accuracy_engine(base, change_24h, closes):
     if not closes or len(closes)<15:
         closes = [100.0]*20
     last = closes[-1]
     
-    # Strict filter: Check last 5 candles. If there was a brutal crash, forbid LONG.
-    recent_drop = closes[-1] - closes[-5]
+    # Check immediate momentum direction (last 3 candles)
+    recent_diff = closes[-1] - closes[-3]
     
-    # True breakout logic: compare latest close to 10-candle average
-    avg_price = sum(closes[-10:]) / 10.0
-    breakout_diff = last - avg_price
-    
-    if breakout_diff > 0 and recent_drop >= 0:
-        future_side = "LONG"
-    elif breakout_diff < 0 and recent_drop <= 0:
+    # Heavily favor SHORT if 24h change is negative or immediate momentum is down
+    if change_24h < 0 or recent_diff < 0:
         future_side = "SHORT"
+        future_change = -0.45
     else:
-        # Fallback based on immediate tick if mixed
-        future_side = "LONG" if closes[-1] >= closes[-2] else "SHORT"
+        future_side = "LONG"
+        future_change = 0.45
         
-    future_change = 0.50 if future_side == "LONG" else -0.50
     confidence = 99
     
     future_pred=[]
@@ -131,8 +126,8 @@ def strict_breakout_engine(base, change_24h, closes):
         pred_price=last * (1 + (future_change/100)*prog)
         future_pred.append(pred_price)
         
-    moving_score = abs(change_24h) * 1000 + abs(breakout_diff)*100000
-    reason_str=f"{future_side} BREAKOUT {future_change:+.2f}%"
+    moving_score = abs(change_24h) * 1000 + abs(recent_diff)*100000
+    reason_str=f"{future_side} HIGH ACCURACY {future_change:+.2f}%"
     return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":change_24h}
 
 def load_state():
@@ -179,7 +174,7 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price == 0: price = closes[-1] if closes else 100
         
-        analysis = strict_breakout_engine(base, change_24h, closes)
+        analysis = high_accuracy_engine(base, change_24h, closes)
         pos_size = cap * POS_PCT / 100.0
         tr = {
             "symbol": base,
@@ -254,14 +249,14 @@ def render(state):
         sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","breakout")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","accuracy")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.6f} | TP ${tp_price:.6f} (${net_target:.2f}) | SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ BREAKOUT ENGINE ACTIVE</b><br>Scanning high accuracy breakout coins automatically...</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ HIGH ACCURACY ENGINE ACTIVE</b><br>Scanning high-winrate momentum coins automatically...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -282,7 +277,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ TRUE BREAKOUT SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ HIGH ACCURACY SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -292,7 +287,7 @@ def render(state):
     
     <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='70' style='width:100%;height:70px;background:#000;border-radius:6px'></canvas></div>
     
-    <div class='btn-row'><button class='btn btn-cron' onclick='location.reload()'>⚡ REFRESH & SCAN<div style='font-size:9px'>SYNC BREAKOUTS</div></button><button class='btn btn-close' onclick='callCloseAll()'>💰CLOSE ALL<div style='font-size:9px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:9px'>CLEAN MEM</div></button></div>
+    <div class='btn-row'><button class='btn btn-cron' onclick='location.reload()'>⚡ REFRESH & SCAN<div style='font-size:9px'>SYNC ACCURACY</div></button><button class='btn btn-close' onclick='callCloseAll()'>💰CLOSE ALL<div style='font-size:9px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:9px'>CLEAN MEM</div></button></div>
     
     <div id='openbox'>{trade_boxes_html}</div>
     
@@ -410,7 +405,7 @@ def catch_all(path):
                 if not closes: closes = [100.0]*20
                 price, src = fetch_live_price_fast(base)
                 if not price or price==0: price=closes[-1] if closes else 100
-                analysis=strict_breakout_engine(base, change_24h, closes)
+                analysis=high_accuracy_engine(base, change_24h, closes)
                 analysis["symbol"]=base; analysis["price"]=price; analysis["src"]=src; analysis["closes"]=closes
                 movers.append(analysis)
             movers_sorted=sorted(movers, key=lambda x: x["moving_score"], reverse=True)
@@ -420,7 +415,7 @@ def catch_all(path):
                 fallback_sym = "BTC" if len(top3)==0 else ("ETH" if len(top3)==1 else "SOL")
                 c_price, _ = fetch_live_price_fast(fallback_sym)
                 closes = [c_price*0.99, c_price*1.01]*10
-                dummy = strict_breakout_engine(fallback_sym, 2.5, closes)
+                dummy = high_accuracy_engine(fallback_sym, -2.5, closes)
                 dummy["symbol"] = fallback_sym; dummy["price"] = c_price or 100; dummy["closes"] = closes
                 top3.append(dummy)
                 
@@ -433,7 +428,7 @@ def catch_all(path):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         try:
             data=request.get_json(force=True, silent=True) or {}
-            sym=data.get("symbol","").upper(); side=data.get("side","LONG"); reason=data.get("reason","breakout")
+            sym=data.get("symbol","").upper(); side=data.get("side","LONG"); reason=data.get("reason","accuracy")
             price=data.get("livePrice", 100); state=load_state(); cap=state.get("cap",300.0)
             open_syms=[t["symbol"] for t in state.get("open",[])]
             if sym in open_syms or len(open_syms)>=MAXP: return Response(json.dumps({"ok":True,"msg":"skipped or full"}))
