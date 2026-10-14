@@ -1,10 +1,10 @@
-""" VENUS v865 - PROFIT, WIN/LOSS & $50/DAY METRICS DASHBOARD """
+""" VENUS v865 - CONTINUOUS 24/7 AUTO-TRADING & INSTANT TP ENGINE """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 METRICS ENGINE"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 24/7 AUTO ENGINE"}
 
 def env(k):
     for kk in k:
@@ -72,7 +72,7 @@ def fetch_top_volume_coins():
                         pairs.append((base, vol))
                 pairs=sorted(pairs, key=lambda x: x[1], reverse=True)
                 if len(pairs)>10:
-                    return [p[0] for p in pairs[:60]]
+                    return [p[0] for p in pairs[:80]]
         except: continue
     return ["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","AVAX","LINK","SUI","NEAR","PEPE","RENDER","INJ","OP","ARB","APT","JUP","PENDLE","CYBER"]
 
@@ -128,7 +128,7 @@ def future_prediction_engine_v865(closes, highs, lows, vols):
         future_pred.append(pred_price)
         
     moving_score = abs(slope_pct)*500 + abs(future_change)*3
-    reason_str=f"{future_side} $50/DAY SHARK ENGINE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}%"
+    reason_str=f"{future_side} $50/DAY 24/7 ENGINE {future_change:+.2f}% slope {slope_pct:.4f}% | conf {confidence:.0f}%"
     return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":slope_pct}
 
 def load_state():
@@ -141,7 +141,7 @@ def load_state():
 
 def recalc(state):
     all_closed=state.get("closed",[]); state["wins"]=sum(1 for c in all_closed if c.get("net",0)>0); state["loss"]=sum(1 for c in all_closed if c.get("net",0)<0); state["total"]=len(all_closed)
-    state["daily"]=sum([c.get("net",0) for c in all_closed[-30:]]) if all_closed else 0.0
+    state["daily"]=sum([c.get("net",0) for c in all_closed[-50:]]) if all_closed else 0.0
     return state
 
 def auto_close_trades(state):
@@ -171,7 +171,6 @@ def render(state):
     state=auto_close_trades(state); state=recalc(state)
     open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); daily=state.get("daily",0.0)
     peak=state.get("peak",cap); equity=state.get("equity",[300,cap])
-    invested=sum([t.get("pos",0) for t in open_tr]); unreal=sum([t.get("net",0) for t in open_tr])
     winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
     
@@ -187,7 +186,7 @@ def render(state):
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>🦈 $50/DAY PROFIT ENGINE READY</b><br>No active positions. Tap CRON SCAN to scan highest volume institutional coins.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8'><b>🦈 24/7 AUTO-TRADING READY</b><br>No active positions. Tap CRON SCAN & PREDICT to automatically scan and launch 3 high-volume trades.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -203,7 +202,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>🦈 $50/DAY PROFIT ENGINE</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning high volume institutional market...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SHARK VOLUME SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:16px;padding:12px'><div style='color:#0f8;font-weight:900;font-size:14px;text-align:center'>🦈 24/7 AUTO-TRADING ENGINE</div><div style='color:#0f8;font-size:11px;text-align:center;margin:6px 0' id='analyzeStatus'>Scanning high volume institutional market...</div><div style='background:#000000;border-radius:12px;padding:8px;margin:8px 0'><div style='font-size:10px;color:#888'>STEP 1: SHARK VOLUME SCAN</div><div id='scanLog' style='color:#0f8;font-size:9px;white-space:pre-wrap;max-height:80px;overflow-y:auto;background:#0a0a0a;padding:6px;border-radius:8px;margin:4px 0'></div><div class='coin-grid'>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:11px'>Future 1: -</div><canvas id='deepChart0' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:11px'>Future 2: -</div><canvas id='deepChart1' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:10px;padding:6px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:11px'>Future 3: -</div><canvas id='deepChart2' width='200' height='160' style='width:100%;height:160px;background:#000;border-radius:8px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
@@ -218,7 +217,7 @@ def render(state):
     
     <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
-    <div class='h'>🦈 $50/DAY ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>🦈 $50/DAY 24/7 ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:12px;padding:10px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center'>
         <div style='background:#000;padding:8px;border-radius:8px'><div style='font-size:9px;color:#888'>TOTAL CAPITAL</div><div style='font-size:16px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -345,6 +344,9 @@ def render(state):
                     live.push(j.price); 
                     if(live.length>50) live.shift(); 
                     draw(); 
+                    // Automatically reload page if trade hits TP or SL in background to trigger auto-reopen
+                    let pct = side=='LONG' ? (j.price-entry)/entry*100 : (entry-j.price)/entry*100;
+                    if(pct >= {TP_PCT} || pct <= -{SL_PCT}) {{ location.reload(); }}
                 }}
             }}catch(e){{}}
         }}
