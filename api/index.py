@@ -1,10 +1,10 @@
-""" VENUS v865 - AGGRESSIVE ROTATION & 15M EXPIRY SCALPER """
+""" VENUS v865 - INSTANT AUTO-START & ROTATION ENGINE """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 AGGRESSIVE ROTATION"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 INSTANT AUTO-START"}
 
 def env(k):
     for kk in k:
@@ -21,7 +21,7 @@ POS_PCT=33.33
 TOTAL_FEE=0.17
 TP_PCT=0.55
 SL_PCT=0.45
-MAX_AGE_SECONDS = 900  # Automatically drop any trade older than 15 minutes to keep capital moving
+MAX_AGE_SECONDS = 600  # 10-minute expiry to keep trades moving fast
 
 def kv_get(k):
     global MEM_STATE
@@ -71,7 +71,7 @@ def fetch_fresh_moving_coins(exclude_syms=[]):
                         if base in exclude_syms: continue
                         price_change=float(item.get("priceChangePercent",0))
                         vol=float(item.get("quoteVolume",0))
-                        if vol > 3000000 and abs(price_change) > 2.0: # Must have real volume & volatility
+                        if vol > 2000000 and abs(price_change) > 1.5:
                             movers.append((base, price_change, vol))
                 movers=sorted(movers, key=lambda x: abs(x[1]), reverse=True)
                 if len(movers)>5:
@@ -106,8 +106,6 @@ def aggressive_scalp_engine(base, change_24h, closes):
     if not closes or len(closes)<5:
         closes = [100.0]*15
     last=closes[-1]
-    
-    # Use immediate candle direction for high probability scalp
     recent_diff = closes[-1] - closes[-2]
     future_side = "LONG" if recent_diff >= 0 else "SHORT"
     future_change = 0.55 if future_side == "LONG" else -0.55
@@ -120,7 +118,7 @@ def aggressive_scalp_engine(base, change_24h, closes):
         future_pred.append(pred_price)
         
     moving_score = abs(change_24h) * 1000 + abs(recent_diff)*10000
-    reason_str=f"{future_side} AGGRESSIVE ROTATION {future_change:+.2f}% | 24h {change_24h:+.2f}%"
+    reason_str=f"{future_side} AUTO ROTATION {future_change:+.2f}% | 24h {change_24h:+.2f}%"
     return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":change_24h}
 
 def load_state():
@@ -220,8 +218,8 @@ def auto_close_trades(state):
 
 def render(state):
     state=auto_close_trades(state); state=fill_missing_slots(state); state=recalc(state)
-    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); daily=state.get("daily",0.0)
-    peak=state.get("peak",cap); equity=state.get("equity",[300,cap])
+    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
+    equity=state.get("equity",[300,cap])
     winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
     
@@ -237,7 +235,7 @@ def render(state):
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ ROTATION ENGINE READY</b><br>No active positions. Tap SCAN ROTATION to instantly launch fresh trades.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ AUTO-TRADING ACTIVE</b><br>Scanning and launching fresh trades automatically...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -260,22 +258,22 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:14px;padding:10px'><div style='color:#0f8;font-weight:900;font-size:13px;text-align:center'>⚡ ROTATION ENGINE</div><div style='color:#0f8;font-size:10px;text-align:center;margin:4px 0' id='analyzeStatus'>Scanning fresh moving coins...</div><div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0'><div style='font-size:9px;color:#888'>STEP 1: ROTATION SCAN</div><div id='scanLog' style='color:#0f8;font-size:8px;white-space:pre-wrap;max-height:70px;overflow-y:auto;background:#0a0a0a;padding:5px;border-radius:6px;margin:4px 0'></div><div class='coin-grid'>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:14px;padding:10px'><div style='color:#0f8;font-weight:900;font-size:13px;text-align:center'>⚡ AUTO-TRADING ENGINE</div><div style='color:#0f8;font-size:10px;text-align:center;margin:4px 0' id='analyzeStatus'>Scanning fresh moving coins...</div><div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0'><div style='font-size:9px;color:#888'>STEP 1: AUTO SCAN</div><div id='scanLog' style='color:#0f8;font-size:8px;white-space:pre-wrap;max-height:70px;overflow-y:auto;background:#0a0a0a;padding:5px;border-radius:6px;margin:4px 0'></div><div class='coin-grid'>
     <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:10px'>Future 1: -</div><canvas id='deepChart0' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:10px'>Future 2: -</div><canvas id='deepChart1' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:10px'>Future 3: -</div><canvas id='deepChart2' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
     </div></div>
     
-    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #333'><div style='font-size:9px;color:#888'>STEP 2: LIVE CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:10px;margin:3px 0'>Monitoring rotation...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:16px;font-weight:900;color:#f44'>15s</div></div><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:11px;font-weight:900;color:#0f8'>+0.00%</div></div></div>
+    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #333'><div style='font-size:9px;color:#888'>STEP 2: LIVE CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:10px;margin:3px 0'>Monitoring auto-trades...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:16px;font-weight:900;color:#f44'>5s</div></div><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:11px;font-weight:900;color:#0f8'>+0.00%</div></div></div>
     <div class='coin-grid' style='margin-top:6px'>
     <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange0' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart0' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
     <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange1' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart1' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
     <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin2' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange2' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart2' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
     </div></div>
     
-    <div style='background:#000;padding:8px;border-radius:8px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:11px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:10px;border-radius:8px;border:0;font-weight:900'>⚡ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:10px;border-radius:8px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
+    <div style='background:#000;padding:8px;border-radius:8px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:11px;font-weight:900'>Auto-launching...</div></div></div></div>
     
-    <div class='h'>⚡ ROTATION ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ AUTO SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -295,98 +293,31 @@ def render(state):
     </div>
     
     <script>
-    const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";let currentAnalysis=null;let timeLeft=15;
-    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
+    const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";let currentAnalysis=null;let timeLeft=5;
+    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!Equity.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
     function logScan(msg){{const el=document.getElementById('scanLog'); if(el){{ el.innerText+='\\n'+msg; el.scrollTop=el.scrollHeight; }} }}
     
-    async function startMovingScan(){{
-        const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show');
-        document.getElementById('scanLog').innerText=''; currentAnalysis={{coins:[]}};
-        logScan('Scanning fresh dynamic coins...');
+    async function autoStartScan(){{
         try {{
             const r=await fetch('/api/scan_most_moving?key='+ADMIN_KEY+'&t='+Date.now());
             const j=await r.json();
-            if(!j.ok) {{ logScan('Error: '+j.error); return; }}
-            const top3=j.top3||[];
-            currentAnalysis.coins=top3.map(m=>({{symbol:m.symbol, price:m.price, startPrice:m.price, livePrice:m.price, livePrices:[m.price], finalSide:m.future_side, finalReason:m.reason, moving_score:m.moving_score, future_change:m.future_change, confidence:m.confidence, future_pred:m.future_pred||[], closes:m.closes||[]}}));
-            for(let i=0;i<top3.length;i++){{
-                const m=top3[i];
-                document.getElementById('deepCoin'+i).innerText=m.symbol+' - '+m.future_side+' '+(m.future_change||0).toFixed(2)+'%';
-                document.getElementById('deepText'+i).innerText='24h Move: '+(m.slope_pct||0).toFixed(2)+'%';
-                drawDeepChart(i, m.closes||[], m.future_pred||[], m.future_side);
+            if(j.ok && j.top3) {{
+                for(let i=0; i<j.top3.length; i++) {{
+                    let c=j.top3[i];
+                    let payload={{symbol:c.symbol, side:c.future_side, reason:c.reason, livePrice:c.price, moving_score:c.moving_score, future_change:c.future_change, confidence:c.confidence, future_pred:c.future_pred, closes:c.closes}};
+                    await fetch('/api/open_analyzed?key='+ADMIN_KEY+'&t='+Date.now(), {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(payload)}});
+                }}
+                location.reload();
             }}
-            document.getElementById('analyzeStatus').innerText='Scan complete. Starting live confirmation...';
-            startLiveMonitor();
-        }} catch(e) {{ logScan('Err: '+e); }}
+        }} catch(e){{}}
     }}
     
-    function drawDeepChart(idx, closes, futurePred, side){{
-        const cv=document.getElementById('deepChart'+idx); if(!cv) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
-        if(!closes || closes.length<2) return;
-        let all=[...closes, ...futurePred]; let mn=Math.min(...all)*0.998, mx=Math.max(...all)*1.002;
-        function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
-        ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=1.5; ctx.beginPath();
-        closes.forEach((p,i)=>{{const x=i/(closes.length+futurePred.length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
-        if(futurePred.length>0){{
-            ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.beginPath();
-            let lx=(closes.length-1)/(closes.length+futurePred.length-1)*w*0.7, ly=yF(closes[closes.length-1]);
-            ctx.moveTo(lx,ly);
-            futurePred.forEach((p,i)=>{{let x=(closes.length+i)/(closes.length+futurePred.length-1)*w*0.85; ctx.lineTo(x, yF(p));}});
-            ctx.stroke(); ctx.setLineDash([]);
-        }}
+    async function startMovingScan(){{
+        const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show');
+        document.getElementById('scanLog'].innerText='';
+        await autoStartScan();
     }}
     
-    function startLiveMonitor(){{
-        timeLeft=15; document.getElementById('monitorTimeLeft').innerText='15s';
-        for(let i=0;i<currentAnalysis.coins.length;i++){{
-            let c=currentAnalysis.coins[i];
-            document.getElementById('liveCoin'+i).innerText=c.symbol+' ('+c.finalSide+')';
-            c.livePrices=[c.startPrice]; drawLiveChart(i);
-        }}
-        const interval=setInterval(async()=>{{
-            timeLeft--; document.getElementById('monitorTimeLeft').innerText=timeLeft+'s';
-            let tot=0;
-            for(let i=0;i<currentAnalysis.coins.length;i++){{
-                let c=currentAnalysis.coins[i];
-                try{{
-                    let r=await fetch('/api/liveprice?symbol='+c.symbol+'&key='+ADMIN_KEY+'&t='+Date.now());
-                    let j=await r.json();
-                    if(j.price>0){{
-                        c.livePrices.push(j.price); c.livePrice=j.price;
-                        let chg=(j.price-c.startPrice)/c.startPrice*100; tot+=chg;
-                        document.getElementById('liveChange'+i).innerText=(chg>=0?'+':'')+chg.toFixed(3)+'%';
-                        drawLiveChart(i);
-                    }}
-                }}catch(e){{}}
-            }}
-            document.getElementById('monitorTotalMove').innerText=(tot/currentAnalysis.coins.length).toFixed(3)+'%';
-            if(timeLeft<=0){{ clearInterval(interval); autoConfirm3Trades(); }}
-        }},1000);
-    }}
-    
-    function drawLiveChart(idx){{
-        let c=currentAnalysis.coins[idx]; if(!c || c.livePrices.length<2) return;
-        let cv=document.getElementById('liveMonitorChart'+idx); if(!cv) return; let ctx=cv.getContext('2d'); let w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
-        let mn=Math.min(...c.livePrices)*0.9995, mx=Math.max(...c.livePrices)*1.0005;
-        function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
-        ctx.strokeStyle=c.livePrices[c.livePrices.length-1]>=c.startPrice?'#0f8':'#f44'; ctx.lineWidth=1.5; ctx.beginPath();
-        c.livePrices.forEach((p,i)=>{{let x=i/(c.livePrices.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
-    }}
-    
-    async function autoConfirm3Trades(){{
-        document.getElementById('autoStatus').innerText='Opening trades...';
-        for(let i=0;i<currentAnalysis.coins.length;i++){{
-            let c=currentAnalysis.coins[i];
-            try{{
-                let payload={{symbol:c.symbol, side:c.finalSide, reason:c.finalReason, livePrice:c.livePrice||c.startPrice, moving_score:c.moving_score, future_change:c.future_change, confidence:c.confidence, future_pred:c.future_pred, closes:c.closes}};
-                await fetch('/api/open_analyzed?key='+ADMIN_KEY+'&t='+Date.now(), {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(payload)}});
-            }}catch(e){{}}
-            await new Promise(r=>setTimeout(r,150));
-        }}
-        closeOverlay(); location.reload();
-    }}
-    
-    function closeOverlay(){{ document.getElementById('analyzeOverlay').classList.remove('show'); }}
     async function callReset(){{if(!confirm('RESET $300?')) return; await fetch('/api/reset?key='+ADMIN_KEY); location.reload();}}
     async function closeAll(){{if(!confirm('Close all?')) return; await fetch('/api/closeall?key='+ADMIN_KEY); location.reload();}}
     async function closeOne(s){{if(!confirm('Close '+s+'?')) return; await fetch('/api/close?symbol='+s+'&key='+ADMIN_KEY); location.reload();}}
