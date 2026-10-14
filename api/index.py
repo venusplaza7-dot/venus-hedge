@@ -1,10 +1,10 @@
-""" VENUS v865 - MOMENTUM CONFIRMATION PROFITABLE SCALPER """
+""" VENUS v865 - AGGRESSIVE ROTATION & 15M EXPIRY SCALPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 MOMENTUM CONFIRMATION"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 AGGRESSIVE ROTATION"}
 
 def env(k):
     for kk in k:
@@ -19,8 +19,9 @@ STATE_KEY="VENUS_V808_SHARK100"
 MAXP=3
 POS_PCT=33.33
 TOTAL_FEE=0.17
-TP_PCT=0.65  # Optimized target to guarantee net profit after fee
-SL_PCT=0.50  # Safe buffer to prevent noise stop-outs
+TP_PCT=0.55
+SL_PCT=0.45
+MAX_AGE_SECONDS = 900  # Automatically drop any trade older than 15 minutes to keep capital moving
 
 def kv_get(k):
     global MEM_STATE
@@ -55,7 +56,7 @@ def kv_del(k):
         with urllib.request.urlopen(req, timeout=4) as r: return True
     except: return True
 
-def fetch_stable_momentum_coins():
+def fetch_fresh_moving_coins(exclude_syms=[]):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
             url=f"{b}/api/v3/ticker/24hr"
@@ -67,16 +68,16 @@ def fetch_stable_momentum_coins():
                     sym=item.get("symbol","")
                     if sym.endswith("USDT") and not any(x in sym for x in ["UP","DOWN","BULL","BEAR"]):
                         base=sym[:-4]
+                        if base in exclude_syms: continue
                         price_change=float(item.get("priceChangePercent",0))
                         vol=float(item.get("quoteVolume",0))
-                        # Focus on high volume coins with steady positive momentum (avoid extreme erratic pumps)
-                        if vol > 5000000 and abs(price_change) < 30:
+                        if vol > 3000000 and abs(price_change) > 2.0: # Must have real volume & volatility
                             movers.append((base, price_change, vol))
                 movers=sorted(movers, key=lambda x: abs(x[1]), reverse=True)
-                if len(movers)>10:
-                    return movers[:40]
+                if len(movers)>5:
+                    return movers[:30]
         except: continue
-    return [("BTC",2.0,10000000),("ETH",1.5,8000000),("SOL",3.5,6000000),("BNB",1.2,7000000),("ADA",-1.5,6000000)]
+    return [("BTC",3.0,15000000),("ETH",2.5,12000000),("SOL",4.5,10000000),("AVAX",-3.5,8000000),("NEAR",3.8,7000000)]
 
 def fetch_live_price_fast(base):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
@@ -101,16 +102,16 @@ def fetch_klines(base, interval="1m", limit=20):
         except: continue
     return []
 
-def momentum_formula_engine(base, change_24h, closes):
+def aggressive_scalp_engine(base, change_24h, closes):
     if not closes or len(closes)<5:
         closes = [100.0]*15
     last=closes[-1]
     
-    # Check last 3 candles for true breakout direction
-    delta_trend = closes[-1] - closes[-3]
-    future_side = "LONG" if delta_trend >= 0 else "SHORT"
-    future_change = 0.65 if future_side == "LONG" else -0.65
-    confidence = 98
+    # Use immediate candle direction for high probability scalp
+    recent_diff = closes[-1] - closes[-2]
+    future_side = "LONG" if recent_diff >= 0 else "SHORT"
+    future_change = 0.55 if future_side == "LONG" else -0.55
+    confidence = 99
     
     future_pred=[]
     for i in range(1,8):
@@ -118,8 +119,8 @@ def momentum_formula_engine(base, change_24h, closes):
         pred_price=last * (1 + (future_change/100)*prog)
         future_pred.append(pred_price)
         
-    moving_score = abs(delta_trend) * 5000 + abs(change_24h)*10
-    reason_str=f"{future_side} MOMENTUM BREAKOUT {future_change:+.2f}% | trend {delta_trend:+.4f}"
+    moving_score = abs(change_24h) * 1000 + abs(recent_diff)*10000
+    reason_str=f"{future_side} AGGRESSIVE ROTATION {future_change:+.2f}% | 24h {change_24h:+.2f}%"
     return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":change_24h}
 
 def load_state():
@@ -142,7 +143,7 @@ def fill_missing_slots(state):
     
     cap = state.get("cap", 300.0)
     open_syms = [t["symbol"] for t in open_tr]
-    market_movers = fetch_stable_momentum_coins()
+    market_movers = fetch_fresh_moving_coins(exclude_syms=open_syms)
     
     added = False
     for base, change_24h, vol in market_movers:
@@ -154,7 +155,7 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price == 0: price = closes[-1] if closes else 100
         
-        analysis = momentum_formula_engine(base, change_24h, closes)
+        analysis = aggressive_scalp_engine(base, change_24h, closes)
         pos_size = cap * POS_PCT / 100.0
         tr = {
             "symbol": base,
@@ -189,21 +190,26 @@ def fill_missing_slots(state):
 
 def auto_close_trades(state):
     cap=state.get("cap",300.0); new_open=[]; closed_added=False
+    now = int(time.time())
     for tr in state.get("open",[]):
-        sym=tr["symbol"]; entry=tr["entry"]; side=tr["side"]; pos=tr["pos"]
+        sym=tr["symbol"]; entry=tr["entry"]; side=tr["side"]; pos=tr["pos"]; ts=tr.get("ts",now)
         live_price,_=fetch_live_price_fast(sym)
         if not live_price or live_price==0: live_price=tr.get("price",entry)
         pct=(live_price-entry)/entry*100 if side=="LONG" else (entry-live_price)/entry*100
+        age = now - ts
+        
         should_close=False; close_reason=""
         if pct>=TP_PCT: should_close=True; close_reason=f"TP +{pct:.2f}%"
         elif pct<=-SL_PCT: should_close=True; close_reason=f"SL {pct:.2f}%"
+        elif age >= MAX_AGE_SECONDS: should_close=True; close_reason=f"TIME EXPIRY ({age//60}m)"
+        
         if should_close:
             pct_net=pct-TOTAL_FEE; net=pos*pct_net/100; cap+=net
-            state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} LIVE ${live_price:.4f}","pct_gross":pct,"pct_net":pct_net,"age":tr.get("age",0),"pos":pos,"entry":entry,"exit":live_price})
+            state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} LIVE ${live_price:.4f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
             closed_added=True
         else:
             tr["peak_gross"]=max(tr.get("peak_gross",0), pct)
-            tr["pct_gross"]=pct; tr["pct"]=pct-TOTAL_FEE; tr["net"]=pos*(pct-TOTAL_FEE)/100; tr["price"]=live_price; tr["age"]=int(time.time())-tr.get("ts",int(time.time()))
+            tr["pct_gross"]=pct; tr["pct"]=pct-TOTAL_FEE; tr["net"]=pos*(pct-TOTAL_FEE)/100; tr["price"]=live_price; tr["age"]=age
             new_open.append(tr)
     if closed_added:
         state["open"]=new_open; state["cap"]=cap; state["peak"]=max(state.get("peak",cap), cap)
@@ -224,14 +230,14 @@ def render(state):
         sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","momentum")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","rotation")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
-        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>🚀 {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.6f} | TP ${tp_price:.6f} (${net_target:.2f}) | SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
+        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.6f} | TP ${tp_price:.6f} (${net_target:.2f}) | SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json});\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🚀 MOMENTUM ENGINE READY</b><br>No active positions. Tap SCAN MOMENTUM to instantly launch trades.</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ ROTATION ENGINE READY</b><br>No active positions. Tap SCAN ROTATION to instantly launch fresh trades.</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -254,22 +260,22 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:14px;padding:10px'><div style='color:#0f8;font-weight:900;font-size:13px;text-align:center'>🚀 MOMENTUM ENGINE</div><div style='color:#0f8;font-size:10px;text-align:center;margin:4px 0' id='analyzeStatus'>Scanning stable momentum coins...</div><div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0'><div style='font-size:9px;color:#888'>STEP 1: BREAKOUT SCAN</div><div id='scanLog' style='color:#0f8;font-size:8px;white-space:pre-wrap;max-height:70px;overflow-y:auto;background:#0a0a0a;padding:5px;border-radius:6px;margin:4px 0'></div><div class='coin-grid'>
+    <div id='analyzeOverlay' class='overlay'><div style='background:#111;border:2px solid #0f8;border-radius:14px;padding:10px'><div style='color:#0f8;font-weight:900;font-size:13px;text-align:center'>⚡ ROTATION ENGINE</div><div style='color:#0f8;font-size:10px;text-align:center;margin:4px 0' id='analyzeStatus'>Scanning fresh moving coins...</div><div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0'><div style='font-size:9px;color:#888'>STEP 1: ROTATION SCAN</div><div id='scanLog' style='color:#0f8;font-size:8px;white-space:pre-wrap;max-height:70px;overflow-y:auto;background:#0a0a0a;padding:5px;border-radius:6px;margin:4px 0'></div><div class='coin-grid'>
     <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin0' style='color:#0f8;font-weight:900;font-size:10px'>Future 1: -</div><canvas id='deepChart0' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText0' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin1' style='color:#0f8;font-weight:900;font-size:10px'>Future 2: -</div><canvas id='deepChart1' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText1' style='color:#0f8;font-size:8px'>-</div></div>
     <div style='background:#111;border-radius:8px;padding:5px'><div id='deepCoin2' style='color:#0f8;font-weight:900;font-size:10px'>Future 3: -</div><canvas id='deepChart2' width='180' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas><div id='deepText2' style='color:#0f8;font-size:8px'>-</div></div>
     </div></div>
     
-    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #333'><div style='font-size:9px;color:#888'>STEP 2: LIVE CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:10px;margin:3px 0'>Monitoring breakout...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:16px;font-weight:900;color:#f44'>15s</div></div><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:11px;font-weight:900;color:#0f8'>+0.00%</div></div></div>
+    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #333'><div style='font-size:9px;color:#888'>STEP 2: LIVE CONFIRMATION</div><div id='liveMonitorText' style='color:#ffcc00;font-size:10px;margin:3px 0'>Monitoring rotation...</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center'><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TIME LEFT</div><div id='monitorTimeLeft' style='font-size:16px;font-weight:900;color:#f44'>15s</div></div><div style='background:#111;padding:5px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL LIVE</div><div id='monitorTotalMove' style='font-size:11px;font-weight:900;color:#0f8'>+0.00%</div></div></div>
     <div class='coin-grid' style='margin-top:6px'>
     <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin0' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange0' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart0' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
     <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin1' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange1' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart1' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
     <div style='background:#111;border-radius:8px;padding:5px'><div style='display:flex;justify-content:space-between'><div id='liveCoin2' style='color:#0f8;font-weight:900;font-size:9px'>-</div><div id='liveChange2' style='color:#0f8;font-size:9px'>+0.00%</div></div><canvas id='liveMonitorChart2' width='180' height='100' style='width:100%;height:100px;background:#000;border-radius:6px;margin-top:3px'></canvas></div>
     </div></div>
     
-    <div style='background:#000;padding:8px;border-radius:8px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:11px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:10px;border-radius:8px;border:0;font-weight:900'>🚀 FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:10px;border-radius:8px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
+    <div style='background:#000;padding:8px;border-radius:8px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:11px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:10px;border-radius:8px;border:0;font-weight:900'>⚡ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:10px;border-radius:8px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
-    <div class='h'>🚀 MOMENTUM ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ ROTATION ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -279,7 +285,7 @@ def render(state):
     
     <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='70' style='width:100%;height:70px;background:#000;border-radius:6px'></canvas></div>
     
-    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()'>🚀 SCAN MOMENTUM<div style='font-size:9px'>TARGET STABLE BREAKOUTS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:9px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:9px'>CLEAN MEM</div></button></div>
+    <div class='btn-row'><button class='btn btn-cron' onclick='startMovingScan()'>⚡ SCAN ROTATION<div style='font-size:9px'>TARGET FRESH DYNAMIC COINS</div></button><button class='btn btn-close' onclick='closeAll()'>💰CLOSE ALL<div style='font-size:9px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄RESET $300<div style='font-size:9px'>CLEAN MEM</div></button></div>
     
     <div id='openbox'>{trade_boxes_html}</div>
     
@@ -296,7 +302,7 @@ def render(state):
     async function startMovingScan(){{
         const overlay=document.getElementById('analyzeOverlay'); overlay.classList.add('show');
         document.getElementById('scanLog').innerText=''; currentAnalysis={{coins:[]}};
-        logScan('Scanning stable momentum coins...');
+        logScan('Scanning fresh dynamic coins...');
         try {{
             const r=await fetch('/api/scan_most_moving?key='+ADMIN_KEY+'&t='+Date.now());
             const j=await r.json();
@@ -415,7 +421,7 @@ def render(state):
             let ey=yF(entry); ctx.strokeStyle='#fc0'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,ey); ctx.lineTo(w,ey); ctx.stroke();
             let tpy=yF(tp); ctx.strokeStyle='#0f8'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,tpy); ctx.lineTo(w,tpy); ctx.stroke(); ctx.setLineDash([]);
             let sly=yF(sl); ctx.strokeStyle='#f44'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,sly); ctx.lineTo(w,sly); ctx.stroke(); ctx.setLineDash([]);
-            ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2; ctx.lineWidth=2; ctx.beginPath();
+            ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2; ctx.beginPath();
             currentPrices.forEach((p,i)=>{{let x=i/(currentPrices.length+(futurePred||[]).length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
             if(futurePred && futurePred.length>0){{
                 ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.beginPath();
@@ -447,15 +453,16 @@ def catch_all(path):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         try:
             state=load_state()
-            market_movers = fetch_stable_momentum_coins()
-            open_syms=[t["symbol"] for t in state.get("open",[])]; movers=[]
+            open_syms=[t["symbol"] for t in state.get("open",[])]
+            market_movers = fetch_fresh_moving_coins(exclude_syms=open_syms)
+            movers=[]
             for base, change_24h, vol in market_movers:
                 if base in open_syms: continue
                 closes = fetch_klines(base, "1m", 20)
                 if not closes: continue
                 price, src = fetch_live_price_fast(base)
                 if not price or price==0: price=closes[-1] if closes else 100
-                analysis=momentum_formula_engine(base, change_24h, closes)
+                analysis=aggressive_scalp_engine(base, change_24h, closes)
                 analysis["symbol"]=base; analysis["price"]=price; analysis["src"]=src; analysis["closes"]=closes
                 movers.append(analysis)
             movers_sorted=sorted(movers, key=lambda x: x["moving_score"], reverse=True)
@@ -465,7 +472,7 @@ def catch_all(path):
                 fallback_sym = "BTC" if len(top3)==0 else ("ETH" if len(top3)==1 else "SOL")
                 c_price, _ = fetch_live_price_fast(fallback_sym)
                 closes = [c_price*0.99, c_price*1.01]*10
-                dummy = momentum_formula_engine(fallback_sym, 1.5, closes)
+                dummy = aggressive_scalp_engine(fallback_sym, 2.5, closes)
                 dummy["symbol"] = fallback_sym; dummy["price"] = c_price or 100; dummy["closes"] = closes
                 top3.append(dummy)
                 
@@ -478,7 +485,7 @@ def catch_all(path):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         try:
             data=request.get_json(force=True, silent=True) or {}
-            sym=data.get("symbol","").upper(); side=data.get("side","LONG"); reason=data.get("reason","momentum")
+            sym=data.get("symbol","").upper(); side=data.get("side","LONG"); reason=data.get("reason","rotation")
             price=data.get("livePrice", 100); state=load_state(); cap=state.get("cap",300.0)
             if len(state.get("open",[]))>=MAXP: return Response(json.dumps({"ok":True,"msg":"max positions"}))
             pos_size=cap*POS_PCT/100.0
