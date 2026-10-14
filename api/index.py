@@ -1,10 +1,10 @@
-""" VENUS v920 - PATIENT MULTI-CYCLE DUAL SCALPER """
+""" VENUS v930 - FAST VOLUME MULTI-ASSET SCALPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v920 PATIENT DUAL"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v930 FAST VOLUME"}
 
 def env(k):
     for kk in k:
@@ -15,14 +15,14 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V920_PATIENT_DUAL_STATE"
-MAXP=2  # Dual slots: BTC and ETH
-POS_PCT=50.0 
+STATE_KEY="VENUS_V930_FAST_VOLUME_STATE"
+MAXP=3  # Allow up to 3 concurrent active trades for faster action
+POS_PCT=33.33 # 33% capital per trade (~$100 each)
 TOTAL_FEE=0.17
 
-TP_PCT=0.50       
+TP_PCT=0.45       
 SL_PCT=0.35       
-MAX_AGE_SECONDS = 900 
+MAX_AGE_SECONDS = 600 # Shorter 10-minute expiry for rapid turnover
 
 def kv_get(k):
     global MEM_STATE
@@ -49,13 +49,40 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v920 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v930 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
         req=urllib.request.Request(f"{KV_URL}/pipeline", data=body, headers={"Authorization":f"Bearer {KV_TOKEN}","Content-Type":"application/json"})
         with urllib.request.urlopen(req, timeout=4) as r: return True
     except: return True
+
+def fetch_top_volume_movers(exclude_syms=[]):
+    """ Fetches BTC, ETH, and top high-volume altcoins actively moving right now """
+    core = ["BTC", "ETH"]
+    movers = []
+    for b in ["https://data-api.binance.vision","https://api.binance.com"]:
+        try:
+            url=f"{b}/api/v3/ticker/24hr"
+            req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data=json.loads(r.read().decode())
+                alt_list=[]
+                for item in data:
+                    sym=item.get("symbol","")
+                    if sym.endswith("USDT") and not any(x in sym for x in ["UP","DOWN","BULL","BEAR"]):
+                        base=sym[:-4]
+                        if base in core or base in exclude_syms: continue
+                        vol=float(item.get("quoteVolume",0))
+                        change=float(item.get("priceChangePercent",0))
+                        if vol > 10000000 and abs(change) > 1.5:
+                            alt_list.append((base, abs(change)))
+                alt_list=sorted(alt_list, key=lambda x: x[1], reverse=True)
+                for a, _ in alt_list[:3]:
+                    if a not in core: core.append(a)
+                break
+        except: continue
+    return core
 
 def fetch_live_price_fast(base):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
@@ -76,31 +103,24 @@ def fetch_klines(base, interval="5m", limit=30):
             with urllib.request.urlopen(req, timeout=5) as r:
                 data=json.loads(r.read().decode())
                 closes=[float(k[4]) for k in data if len(k)>4]
-                if len(closes)>=15: return closes
+                if len(closes)>=12: return closes
         except: continue
     return []
 
-def analyze_trend_patient(closes):
-    """ Requires strict multi-candle progression to prevent hair-trigger entries """
-    if not closes or len(closes) < 15:
+def analyze_trend_fast(closes):
+    """ Balanced 5m momentum check for faster action """
+    if not closes or len(closes) < 10:
         return "SKIP", 0.0
-    
-    c1 = closes[-15:-10]
-    c2 = closes[-10:-5]
-    c3 = closes[-5:]
-    
+    c1 = closes[-10:-5]
+    c2 = closes[-5:]
     avg1 = sum(c1) / len(c1)
     avg2 = sum(c2) / len(c2)
-    avg3 = sum(c3) / len(c3)
+    net_diff_pct = ((closes[-1] - closes[-10]) / closes[-10]) * 100
     
-    net_diff_pct = ((closes[-1] - closes[-15]) / closes[-15]) * 100
-    
-    # Strict sequential check: requires clear step-by-step commitment across blocks
-    if avg3 > avg2 and avg2 > avg1 and net_diff_pct > 0.18:
+    if avg2 > avg1 and net_diff_pct > 0.10:
         return "LONG", net_diff_pct
-    elif avg3 < avg2 and avg2 < avg1 and net_diff_pct < -0.18:
+    elif avg2 < avg1 and net_diff_pct < -0.10:
         return "SHORT", net_diff_pct
-        
     return "SKIP", net_diff_pct
 
 def load_state():
@@ -130,8 +150,10 @@ def fill_missing_slots(state):
     
     cap = state.get("cap", 300.0)
     open_syms = [t["symbol"] for t in open_tr]
+    recent_closed = [c["symbol"] for c in state.get("closed", [])[:5]]
+    excluded = list(set(open_syms + recent_closed))
     
-    targets = ["BTC", "ETH"]
+    targets = fetch_top_volume_movers(exclude_syms=excluded)
     added = False
     
     for base in targets:
@@ -141,8 +163,8 @@ def fill_missing_slots(state):
         closes = fetch_klines(base, "5m", 30)
         if not closes: continue
         
-        side, trend_strength = analyze_trend_patient(closes)
-        if side == "SKIP": continue # Patiently waits for confirmed multi-candle alignment
+        side, trend_strength = analyze_trend_fast(closes)
+        if side == "SKIP": continue
             
         price, src = fetch_live_price_fast(base)
         if not price or price == 0: price = closes[-1]
@@ -168,8 +190,8 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"PATIENT {base} 5M {side} ({trend_strength:+.2f}%)",
-            "analysis": f"{base} Confirmed Slope: {trend_strength:+.2f}%",
+            "reason": f"FAST {base} 5M {side} ({trend_strength:+.2f}%)",
+            "analysis": f"{base} 5m Slope: {trend_strength:+.2f}%",
             "future_pred": future_pred,
             "future_change": future_change,
             "confidence": 99,
@@ -224,17 +246,17 @@ def render(state):
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",150); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","patient analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","fast analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.2f} | TP ${tp_price:.2f} (${net_target:.2f}) | SL ${sl_price:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ PATIENT DUAL SCALPER READY</b><br>Patiently analyzing multi-cycle 5m trends for BTC & ETH...</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ FAST VOLUME SCALPER READY</b><br>Scanning BTC, ETH, and top volume altcoin movers...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -255,7 +277,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ PATIENT DUAL SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ FAST VOLUME SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -276,7 +298,7 @@ def render(state):
     
     <script>
     const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";
-    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
+    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(Equity_length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
     
     setInterval(()=>{{
         document.querySelectorAll('[data-ts]').forEach(el=>{{
@@ -323,7 +345,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||150;
+        let pos = parseFloat(posStr)||100;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
@@ -397,7 +419,6 @@ def catch_all(path):
     if p.startswith("/api/closeall") or p == "/closeall":
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         state=load_state(); state["open"]=[]; kv_set(STATE_KEY, state)
-        return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
     if p.startswith("/api/close"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         sym=request.args.get("symbol",""); state=load_state()
