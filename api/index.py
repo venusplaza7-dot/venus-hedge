@@ -1,10 +1,10 @@
-""" VENUS v930 - FAST VOLUME MULTI-ASSET SCALPER """
+""" VENUS v931 - FAST VOLUME SCALPER (CHART FIX) """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v930 FAST VOLUME"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v931 CHART FIX"}
 
 def env(k):
     for kk in k:
@@ -15,14 +15,14 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V930_FAST_VOLUME_STATE"
-MAXP=3  # Allow up to 3 concurrent active trades for faster action
-POS_PCT=33.33 # 33% capital per trade (~$100 each)
+STATE_KEY="VENUS_V931_CHART_FIX_STATE"
+MAXP=3  
+POS_PCT=33.33 
 TOTAL_FEE=0.17
 
 TP_PCT=0.45       
 SL_PCT=0.35       
-MAX_AGE_SECONDS = 600 # Shorter 10-minute expiry for rapid turnover
+MAX_AGE_SECONDS = 600 
 
 def kv_get(k):
     global MEM_STATE
@@ -49,7 +49,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v930 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v931 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -58,9 +58,7 @@ def kv_del(k):
     except: return True
 
 def fetch_top_volume_movers(exclude_syms=[]):
-    """ Fetches BTC, ETH, and top high-volume altcoins actively moving right now """
     core = ["BTC", "ETH"]
-    movers = []
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
             url=f"{b}/api/v3/ticker/24hr"
@@ -108,7 +106,6 @@ def fetch_klines(base, interval="5m", limit=30):
     return []
 
 def analyze_trend_fast(closes):
-    """ Balanced 5m momentum check for faster action """
     if not closes or len(closes) < 10:
         return "SKIP", 0.0
     c1 = closes[-10:-5]
@@ -298,7 +295,7 @@ def render(state):
     
     <script>
     const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";
-    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(Equity_length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
+    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
     
     setInterval(()=>{{
         document.querySelectorAll('[data-ts]').forEach(el=>{{
@@ -419,6 +416,7 @@ def catch_all(path):
     if p.startswith("/api/closeall") or p == "/closeall":
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         state=load_state(); state["open"]=[]; kv_set(STATE_KEY, state)
+        return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
     if p.startswith("/api/close"):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         sym=request.args.get("symbol",""); state=load_state()
