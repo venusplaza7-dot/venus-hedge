@@ -1,10 +1,10 @@
-""" VENUS v865 - ULTIMATE SHARK VOLUME & $50/DAY PROFIT ENGINE """
+""" VENUS v865 - PROFIT, WIN/LOSS & $50/DAY METRICS DASHBOARD """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 ULTIMATE PROFIT ENGINE"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 METRICS ENGINE"}
 
 def env(k):
     for kk in k:
@@ -20,7 +20,7 @@ MAXP=3
 POS_PCT=33.33
 TOTAL_FEE=0.17
 SCAN_BATCH=15
-TP_PCT=1.20  # Fast target lock for high frequency wins
+TP_PCT=1.20
 SL_PCT=0.60
 
 def kv_get(k):
@@ -87,7 +87,7 @@ def fetch_live_price_fast(base):
         except: continue
     return None, "fail"
 
-def fetch_klines(base, interval="1m", limit=50):
+def fetch_klines(base, interval="1m", limit=30):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
             url=f"{b}/api/v3/klines?symbol={base}USDT&interval={interval}&limit={limit}"
@@ -103,17 +103,16 @@ def fetch_klines(base, interval="1m", limit=50):
     return [], [], [], []
 
 def future_prediction_engine_v865(closes, highs, lows, vols):
-    if len(closes)<20:
+    if len(closes)<15:
         closes = closes if closes else [100.0]*20
         return {"future_side":"LONG","moving_score":6.0,"future_pred":[closes[-1]]*10,"confidence":85,"future_change":1.0,"slope_pct":0.08,"closes":closes}
-    last=closes[-1]; n=20; x=list(range(n)); y=closes[-n:]
+    last=closes[-1]; n=15; x=list(range(n)); y=closes[-n:]
     x_mean=sum(x)/n; y_mean=sum(y)/n
     num=sum((x[i]-x_mean)*(y[i]-y_mean) for i in range(n))
     den=sum((x[i]-x_mean)**2 for i in range(n))
     slope=num/den if den!=0 else 0; slope_pct=slope/y_mean*100 if y_mean!=0 else 0
     
-    # $50/Day High-Frequency Momentum Formula
-    future_change=slope_pct * 25
+    future_change=slope_pct * 20
     if future_change > 1.25: future_change = 1.25
     if future_change < -1.25: future_change = -1.25
     if abs(future_change) < 0.8:
@@ -172,7 +171,8 @@ def render(state):
     state=auto_close_trades(state); state=recalc(state)
     open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); scan=state.get("scan",0); offset=state.get("scan_offset",0); daily=state.get("daily",0.0)
     peak=state.get("peak",cap); equity=state.get("equity",[300,cap])
-    invested=sum([t.get("pos",0) for t in open_tr]); dd=(peak-cap)/peak*100 if peak>0 else 0
+    invested=sum([t.get("pos",0) for t in open_tr]); unreal=sum([t.get("net",0) for t in open_tr])
+    winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
     
     trade_boxes_html=""; chart_js_init=""
@@ -182,7 +182,7 @@ def render(state):
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
         analysis=tr.get("analysis","v865")[:150]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); peak_gross=tr.get("peak_gross",0); future_pred=tr.get("future_pred",[])
-        closes_json = json.dumps(tr.get("closes", [entry]*20))
+        closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:16px;padding:12px;margin:10px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:14px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:10px;color:#0f8'>🔮 {analysis}</div><div style='font-size:10px;color:#aaa'>ENTRY ${entry:.6f} TP ${tp_price:.6f} (${net_target:.2f}) SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:10px;padding:6px 10px'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:8px 0;text-align:center'><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:15px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:7px;border-radius:10px'><div style='font-size:9px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:13px;font-weight:900'>{int(tr.get('age',0)//60)}m {int(tr.get('age',0)%60)}s</div></div></div><div style='background:#000;border-radius:12px;padding:6px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='200' style='width:100%;height:200px;background:#000;border-radius:8px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json});\n"
         
@@ -218,7 +218,13 @@ def render(state):
     
     <div style='background:#000;padding:10px;border-radius:10px;text-align:center'><div id='autoStatus' style='color:#0f8;font-size:12px;font-weight:900'>Ready</div><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px'><button onclick='autoConfirm3Trades()' id='forceOpenBtn' style='background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:12px;border-radius:10px;border:0;font-weight:900'>✅ FORCE OPEN TRADES</button><button onclick='closeOverlay()' style='background:#333;color:#fff;padding:12px;border-radius:10px;border:0;font-weight:900'>❌ CLOSE</button></div></div></div></div>
     
-    <div class='h'>🦈 $50/DAY ENGINE - SCAN #{scan} OFFSET {offset+1} - ${cap:.2f} PEAK ${peak:.2f} DAILY <span style='color:{daily_color}'>${daily:.2f}</span></div>
+    <div class='h'>🦈 $50/DAY ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
+    
+    <div style='background:#111;border:2px solid #0f8;border-radius:12px;padding:10px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center'>
+        <div style='background:#000;padding:8px;border-radius:8px'><div style='font-size:9px;color:#888'>TOTAL CAPITAL</div><div style='font-size:16px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
+        <div style='background:#000;padding:8px;border-radius:8px'><div style='font-size:9px;color:#888'>WINS / LOSSES</div><div style='font-size:16px;font-weight:900;color:#0f8'>{wins}W / {loss}L ({winrate}%)</div></div>
+        <div style='background:#000;padding:8px;border-radius:8px'><div style='font-size:9px;color:#888'>NET PNL (DAILY)</div><div style='font-size:16px;font-weight:900;color:{daily_color}'>${daily:+.2f}</div></div>
+    </div>
     
     <div style='background:#000000;border-radius:12px;padding:8px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:8px'></canvas></div>
     
@@ -325,8 +331,11 @@ def render(state):
     
     function initChartFuture(sym,entry,tp,sl,side,ts,age,futurePred,futureChange,conf,closes){{
         let cv=document.getElementById('chart-'+sym); if(!cv) return; let ctx=cv.getContext('2d'); 
-        let prices = (closes && closes.length > 0) ? [...closes] : Array(20).fill(entry);
-        let live=[];
+        let baseCloses = (closes && closes.length > 0) ? [...closes] : Array(15).fill(entry);
+        let lastClose = baseCloses[baseCloses.length-1] || entry;
+        let scaleFactor = entry / (lastClose || entry);
+        let normalizedCloses = baseCloses.map(p => p * scaleFactor);
+        let live=[entry];
         
         async function fetchP(){{
             try{{
@@ -334,27 +343,27 @@ def render(state):
                 let j=await r.json();
                 if(j.price>0){{ 
                     live.push(j.price); 
-                    if(live.length>60) live.shift(); 
-                    prices = [...closes, ...live]; 
+                    if(live.length>50) live.shift(); 
                     draw(); 
                 }}
             }}catch(e){{}}
         }}
         function draw(){{
             let w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
-            if(!prices || prices.length<2) prices=[entry, entry];
-            let all=[...prices, ...(futurePred || [])]; let mn=Math.min(...all)*0.998, mx=Math.max(...all)*1.002;
+            let currentPrices = [...normalizedCloses, ...live];
+            if(currentPrices.length<2) currentPrices=[entry, entry];
+            let all=[...currentPrices, ...(futurePred || [])]; let mn=Math.min(...all)*0.999, mx=Math.max(...all)*1.001;
             function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
             let ey=yF(entry); ctx.strokeStyle='#fc0'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,ey); ctx.lineTo(w,ey); ctx.stroke();
             let tpy=yF(tp); ctx.strokeStyle='#0f8'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,tpy); ctx.lineTo(w,tpy); ctx.stroke(); ctx.setLineDash([]);
             let sly=yF(sl); ctx.strokeStyle='#f44'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,sly); ctx.lineTo(w,sly); ctx.stroke(); ctx.setLineDash([]);
             ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2; ctx.beginPath();
-            prices.forEach((p,i)=>{{let x=i/(prices.length+(futurePred||[]).length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
+            currentPrices.forEach((p,i)=>{{let x=i/(currentPrices.length+(futurePred||[]).length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
             if(futurePred && futurePred.length>0){{
                 ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.beginPath();
-                let lx=(prices.length-1)/(prices.length+futurePred.length-1)*w*0.7, ly=yF(prices[prices.length-1]);
+                let lx=(currentPrices.length-1)/(currentPrices.length+futurePred.length-1)*w*0.7, ly=yF(currentPrices[currentPrices.length-1]);
                 ctx.moveTo(lx,ly);
-                futurePred.forEach((fp,i)=>{{let x=(prices.length+i)/(prices.length+futurePred.length-1)*w*0.9; ctx.lineTo(x, yF(fp));}});
+                futurePred.forEach((fp,i)=>{{let x=(currentPrices.length+i)/(currentPrices.length+futurePred.length-1)*w*0.9; ctx.lineTo(x, yF(fp));}});
                 ctx.stroke(); ctx.setLineDash([]);
             }}
         }}
@@ -385,8 +394,8 @@ def catch_all(path):
             open_syms=[t["symbol"] for t in state.get("open",[])]; movers=[]
             for base in batch:
                 if base in open_syms: continue
-                closes, highs, lows, vols = fetch_klines(base, "1m", 50)
-                if not closes: closes, highs, lows, vols = fetch_klines(base, "5m", 50)
+                closes, highs, lows, vols = fetch_klines(base, "1m", 30)
+                if not closes: closes, highs, lows, vols = fetch_klines(base, "5m", 30)
                 if not closes: continue
                 price, src = fetch_live_price_fast(base)
                 if not price or price==0: price=closes[-1] if closes else 100
