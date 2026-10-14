@@ -1,10 +1,10 @@
-""" VENUS v865 - ASYMMETRIC RISK/REWARD SCALPER """
+""" VENUS v865 - CHART TREND ANALYSIS SCALPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 ASYMMETRIC RR"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v865 TREND ANALYSIS"}
 
 def env(k):
     for kk in k:
@@ -103,29 +103,28 @@ def fetch_klines(base, interval="1m", limit=30):
         except: continue
     return []
 
-def high_accuracy_engine(base, change_24h, closes):
-    if not closes or len(closes)<15:
-        closes = [100.0]*20
-    last = closes[-1]
-    recent_diff = closes[-1] - closes[-3]
+def analyze_chart_trend(closes):
+    """ Analyzes kline chart trend to determine if it's safe to enter """
+    if not closes or len(closes) < 10:
+        return "SKIP", 0.0
     
-    if change_24h < 0 or recent_diff < 0:
-        future_side = "SHORT"
-        future_change = -0.55
-    else:
-        future_side = "LONG"
-        future_change = 0.55
-        
-    confidence = 99
-    future_pred=[]
-    for i in range(1,8):
-        prog=i/7.0
-        pred_price=last * (1 + (future_change/100)*prog)
-        future_pred.append(pred_price)
-        
-    moving_score = abs(change_24h) * 1000 + abs(recent_diff)*100000
-    reason_str=f"{future_side} ASYMMETRIC RR {future_change:+.2f}%"
-    return {"future_side":future_side,"moving_score":moving_score,"future_change":future_change,"future_pred":future_pred,"closes":closes,"reason":reason_str,"confidence":confidence,"slope_pct":change_24h}
+    # Calculate short-term moving average vs recent price action
+    recent = closes[-5:]
+    older = closes[-10:-5]
+    
+    avg_recent = sum(recent) / len(recent)
+    avg_older = sum(older) / len(older)
+    
+    # Check slope consistency (trend check)
+    net_diff_pct = ((recent[-1] - closes[-10]) / closes[-10]) * 100
+    
+    # Require clear directional momentum to avoid choppy sideways trading
+    if avg_recent > avg_older and net_diff_pct > 0.15:
+        return "LONG", net_diff_pct
+    elif avg_recent < avg_older and net_diff_pct < -0.15:
+        return "SHORT", net_diff_pct
+    
+    return "SKIP", net_diff_pct
 
 def load_state():
     s=kv_get(STATE_KEY)
@@ -165,15 +164,26 @@ def fill_missing_slots(state):
         if base in excluded or base in [t["symbol"] for t in open_tr]: continue
         
         closes = fetch_klines(base, "1m", 30)
-        if not closes: closes = [100.0]*20
-        price, src = fetch_live_price_fast(base)
-        if not price or price == 0: price = closes[-1] if closes else 100
+        if not closes: continue
         
-        analysis = high_accuracy_engine(base, change_24h, closes)
+        # CHART ANALYSIS: Skip if chart is choppy or lacks clean trend
+        side, trend_strength = analyze_chart_trend(closes)
+        if side == "SKIP": 
+            continue # Skip this coin and check the next one
+            
+        price, src = fetch_live_price_fast(base)
+        if not price or price == 0: price = closes[-1]
+        
+        future_change = 0.55 if side == "LONG" else -0.55
+        future_pred = []
+        for i in range(1, 8):
+            prog = i / 7.0
+            future_pred.append(price * (1 + (future_change / 100) * prog))
+            
         pos_size = cap * POS_PCT / 100.0
         tr = {
             "symbol": base,
-            "side": analysis["future_side"],
+            "side": side,
             "entry": price,
             "price": price,
             "pos": pos_size,
@@ -185,11 +195,11 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": analysis["reason"],
-            "analysis": analysis["reason"][:200],
-            "future_pred": analysis["future_pred"],
-            "future_change": analysis["future_change"],
-            "confidence": analysis["confidence"],
+            "reason": f"CHART ANALYZED {side} ({trend_strength:+.2f}%)",
+            "analysis": f"Verified trend slope: {trend_strength:+.2f}%",
+            "future_pred": future_pred,
+            "future_change": future_change,
+            "confidence": 99,
             "closes": closes
         }
         open_tr.append(tr)
@@ -244,14 +254,14 @@ def render(state):
         sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","asymmetric rr")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","chart analyzed")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.6f} | TP ${tp_price:.6f} (${net_target:.2f}) | SL ${sl_price:.6f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.5f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ ASYMMETRIC RR ENGINE READY</b><br>Scanning market automatically...</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ CHART TREND ANALYSIS READY</b><br>Analyzing charts before entry...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -272,7 +282,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ ASYMMETRIC SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ TREND ANALYSIS SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - TOTAL PNL: <b>${daily:+.2f}</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
