@@ -1,10 +1,10 @@
-""" VENUS v931 - FAST VOLUME SCALPER (CHART FIX) """
+""" VENUS v940 - SHARK VOLUME & REVERSAL SCALPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v931 CHART FIX"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"mem v940 SHARK REVERSAL"}
 
 def env(k):
     for kk in k:
@@ -15,14 +15,14 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V931_CHART_FIX_STATE"
+STATE_KEY="VENUS_V940_SHARK_REVERSAL_STATE"
 MAXP=3  
 POS_PCT=33.33 
 TOTAL_FEE=0.17
 
-TP_PCT=0.45       
-SL_PCT=0.35       
-MAX_AGE_SECONDS = 600 
+TP_PCT=0.60       # Wider target for shark-driven momentum
+SL_PCT=0.40       # Controlled risk for high-volatility spikes
+MAX_AGE_SECONDS = 900 
 
 def kv_get(k):
     global MEM_STATE
@@ -49,7 +49,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v931 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v940 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -57,30 +57,29 @@ def kv_del(k):
         with urllib.request.urlopen(req, timeout=4) as r: return True
     except: return True
 
-def fetch_top_volume_movers(exclude_syms=[]):
-    core = ["BTC", "ETH"]
+def fetch_shark_movers(exclude_syms=[]):
+    """ Scans for extreme volume expansion and aggressive price swings (shark footprint) """
+    candidates = []
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
             url=f"{b}/api/v3/ticker/24hr"
             req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=5) as r:
                 data=json.loads(r.read().decode())
-                alt_list=[]
                 for item in data:
                     sym=item.get("symbol","")
                     if sym.endswith("USDT") and not any(x in sym for x in ["UP","DOWN","BULL","BEAR"]):
                         base=sym[:-4]
-                        if base in core or base in exclude_syms: continue
+                        if base in exclude_syms: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        if vol > 10000000 and abs(change) > 1.5:
-                            alt_list.append((base, abs(change)))
-                alt_list=sorted(alt_list, key=lambda x: x[1], reverse=True)
-                for a, _ in alt_list[:3]:
-                    if a not in core: core.append(a)
-                break
+                        # Hunt coins with heavy volume (>20M) and massive volatility (>3%)
+                        if vol > 20000000 and abs(change) > 3.0:
+                            candidates.append((base, abs(change), vol))
+                candidates=sorted(candidates, key=lambda x: x[1], reverse=True)
+                return [c[0] for c in candidates[:8]]
         except: continue
-    return core
+    return ["BTC", "ETH", "SOL"]
 
 def fetch_live_price_fast(base):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
@@ -105,19 +104,28 @@ def fetch_klines(base, interval="5m", limit=30):
         except: continue
     return []
 
-def analyze_trend_fast(closes):
-    if not closes or len(closes) < 10:
+def analyze_shark_signal(closes):
+    """ Detects shark momentum markup or exhaustion/reversal """
+    if not closes or len(closes) < 12:
         return "SKIP", 0.0
-    c1 = closes[-10:-5]
-    c2 = closes[-5:]
+    
+    c1 = closes[-12:-6]
+    c2 = closes[-6:]
     avg1 = sum(c1) / len(c1)
     avg2 = sum(c2) / len(c2)
-    net_diff_pct = ((closes[-1] - closes[-10]) / closes[-10]) * 100
+    net_diff_pct = ((closes[-1] - closes[-12]) / closes[-12]) * 100
+    recent_spike = ((closes[-1] - closes[-3]) / closes[-3]) * 100
     
-    if avg2 > avg1 and net_diff_pct > 0.10:
+    # Exhaustion Reversal Check: If price pumped too hard (+1.5% in last 3 bars) but is starting to curl down, SHORT the dump
+    if recent_spike > 1.5 and closes[-1] < closes[-2]:
+        return "SHORT", -recent_spike
+    # Standard Shark Markup LONG
+    elif avg2 > avg1 and net_diff_pct > 0.20:
         return "LONG", net_diff_pct
-    elif avg2 < avg1 and net_diff_pct < -0.10:
+    # Standard Shark Dump SHORT
+    elif avg2 < avg1 and net_diff_pct < -0.20:
         return "SHORT", net_diff_pct
+        
     return "SKIP", net_diff_pct
 
 def load_state():
@@ -147,10 +155,10 @@ def fill_missing_slots(state):
     
     cap = state.get("cap", 300.0)
     open_syms = [t["symbol"] for t in open_tr]
-    recent_closed = [c["symbol"] for c in state.get("closed", [])[:5]]
+    recent_closed = [c["symbol"] for c in state.get("closed", [])[:4]]
     excluded = list(set(open_syms + recent_closed))
     
-    targets = fetch_top_volume_movers(exclude_syms=excluded)
+    targets = fetch_shark_movers(exclude_syms=excluded)
     added = False
     
     for base in targets:
@@ -160,7 +168,7 @@ def fill_missing_slots(state):
         closes = fetch_klines(base, "5m", 30)
         if not closes: continue
         
-        side, trend_strength = analyze_trend_fast(closes)
+        side, trend_strength = analyze_shark_signal(closes)
         if side == "SKIP": continue
             
         price, src = fetch_live_price_fast(base)
@@ -187,8 +195,8 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"FAST {base} 5M {side} ({trend_strength:+.2f}%)",
-            "analysis": f"{base} 5m Slope: {trend_strength:+.2f}%",
+            "reason": f"SHARK {base} 5M {side} ({trend_strength:+.2f}%)",
+            "analysis": f"Shark Footprint Signal: {trend_strength:+.2f}%",
             "future_pred": future_pred,
             "future_change": future_change,
             "confidence": 99,
@@ -246,14 +254,14 @@ def render(state):
         sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","fast analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","shark analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.2f} | TP ${tp_price:.2f} (${net_target:.2f}) | SL ${sl_price:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ FAST VOLUME SCALPER READY</b><br>Scanning BTC, ETH, and top volume altcoin movers...</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ SHARK VOLUME & REVERSAL BOT READY</b><br>Hunting institutional volume footprints & exhaustion dumps...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -274,7 +282,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ FAST VOLUME SCALPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ SHARK REVERSAL BOT - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
