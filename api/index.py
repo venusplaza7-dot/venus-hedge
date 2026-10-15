@@ -1,10 +1,10 @@
-""" VENUS v1070 - HYPER-VOLATILITY SPEED SNIPER """
+""" VENUS v1080 - FAST $0.50 TARGET & WIDE BUFFER SNIPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"daily_target_reached":False,"last_cron":"mem v1070 HYPER VOLATILITY"}
+MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"daily_target_reached":False,"last_cron":"mem v1080 FAST TARGET"}
 
 def env(k):
     for kk in k:
@@ -15,12 +15,14 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V1070_HYPER_VOLATILITY_STATE"
+STATE_KEY="VENUS_V1080_FAST_TARGET_STATE"
 MAXP=3  
 POS_PCT=33.3 
 TOTAL_FEE=0.17
 
-TP_PCT=0.60       # Step-up profit target (~$1.30 net win per position)
+# Adjusted for a quick ~$0.50 net profit target on a ~$100 position slot
+# Net Profit % = TP_PCT - TOTAL_FEE => To get ~$0.50 on $100 (~0.50%), TP_PCT needs to be ~0.67% gross.
+TP_PCT=0.67       
 SL_PCT=3.85       # Wide ~$10 risk buffer breathing room
 DAILY_PROFIT_GOAL = 10.0 
 MAX_AGE_SECONDS = 86400 # 24 hours (unlimited time)
@@ -50,7 +52,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"daily_target_reached":False,"last_cron":"reset v1070 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"daily_target_reached":False,"last_cron":"reset v1080 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -59,7 +61,6 @@ def kv_del(k):
     except: return True
 
 def fetch_hyper_volatile_targets(exclude_syms=[]):
-    """Scans explicitly for extreme 24h percentage change and high volume runners."""
     candidates = []
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
@@ -74,10 +75,8 @@ def fetch_hyper_volatile_targets(exclude_syms=[]):
                         if base in exclude_syms or base in ["PUMP", "DUMMY"]: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        # Stricter hyper-velocity criteria: substantial volume & high absolute movement (>4%)
-                        if vol > 20000000 and abs(change) > 4.0:
+                        if vol > 20000000 and abs(change) > 3.0:
                             candidates.append((base, abs(change), vol))
-                # Sort strictly by highest absolute percentage change to target fastest movers
                 candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
                 return [c[0] for c in candidates[:15]]
         except: continue
@@ -109,7 +108,6 @@ def fetch_klines(base, interval="5m", limit=30):
     return []
 
 def analyze_signal(closes):
-    """Deep chart analysis paired with high momentum delta requirements."""
     if not closes or len(closes) < 15:
         return "SKIP", 0.0
     ma_short = sum(closes[-5:]) / 5
@@ -117,10 +115,9 @@ def analyze_signal(closes):
     ma_long = sum(closes[-15:]) / 15
     momentum_delta = ((closes[-1] - closes[-5]) / closes[-5]) * 100
     
-    # Require strong momentum delta for instant velocity
-    if ma_short > ma_mid and momentum_delta > 0.35:
+    if ma_short > ma_mid and momentum_delta > 0.20:
         return "LONG", momentum_delta
-    elif ma_short < ma_mid and momentum_delta < -0.35:
+    elif ma_short < ma_mid and momentum_delta < -0.20:
         return "SHORT", momentum_delta
     return "SKIP", momentum_delta
 
@@ -197,8 +194,8 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"HYPER-VOLATILITY SNIPER {base} 5M {side} ({trend_strength:+.2f}%)",
-            "analysis": f"High Velocity (~$1.30 Net Win / -$10 Risk)",
+            "reason": f"FAST TARGET SNIPER {base} 5M {side} ({trend_strength:+.2f}%)",
+            "analysis": f"Target: +$0.50 Net Win / Risk: -$10",
             "future_pred": future_pred,
             "future_change": future_change,
             "confidence": 99,
@@ -231,9 +228,9 @@ def auto_close_trades(state):
         
         should_close=False; close_reason=""
         if pct >= TP_PCT: 
-            should_close=True; close_reason=f"TP HIT +{pct:.2f}%"
+            should_close=True; close_reason=f"TP HIT +{pct:.2f}% (~$0.50)"
         elif pct <= -SL_PCT: 
-            should_close=True; close_reason=f"SL BUFFER HIT ({pct:.2f}%)"
+            should_close=True; close_reason=f"SL BUFFER HIT (-$10 / {pct:.2f}%)"
         elif age >= MAX_AGE_SECONDS: 
             should_close=True; close_reason=f"EXPIRY (24h reached)"
         
@@ -264,7 +261,7 @@ def render(state):
         sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",100); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","hyper volatility analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","fast target analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.2f} | TP ${tp_price:.2f} (${net_target:.2f}) | SL ${sl_price:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
@@ -274,7 +271,7 @@ def render(state):
         if target_reached:
             trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and unplugged for today. Great job!</div>"
         else:
-            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ HYPER-VOLATILITY SNIPER READY</b><br>Scanning for explosive high-velocity movers...</div>"
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ FAST TARGET SNIPER READY</b><br>Scanning high-velocity movers for +$0.50 targets...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -295,7 +292,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ HYPER-VOLATILITY SNIPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ FAST TARGET SNIPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
