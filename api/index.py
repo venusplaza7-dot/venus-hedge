@@ -1,10 +1,10 @@
-""" VENUS v980 - INVERSE HAWK SNIPER (FADING THE TRAPS) """
+""" VENUS v990 - TRAILING PROFIT & BREAKBEVEN LOCK SNIPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":290.97,"daily":-9.03,"fees_paid":0.0,"wins":1,"loss":5,"total":6,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0, 290.97],"last_cron":"mem v980 INVERSE"}
+MEM_STATE={"cap":284.65,"daily":-15.35,"fees_paid":0.0,"wins":0,"loss":6,"total":6,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0, 284.65],"last_cron":"mem v990 TRAILING LOCK"}
 
 def env(k):
     for kk in k:
@@ -15,13 +15,13 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V980_INVERSE_STATE"
+STATE_KEY="VENUS_V990_TRAILING_LOCK_STATE"
 MAXP=1  
 POS_PCT=100.0 
 TOTAL_FEE=0.17
 
-TP_PCT=0.55       
-SL_PCT=0.30       
+TP_PCT=0.50       
+SL_PCT=0.25       
 MAX_AGE_SECONDS = 360 
 
 def kv_get(k):
@@ -49,7 +49,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v980 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v990 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -104,21 +104,17 @@ def fetch_klines(base, interval="5m", limit=30):
         except: continue
     return []
 
-def analyze_inverse_signal(closes):
-    """ FADE THE BREAKOUT: Inverts standard momentum logic to catch reversals """
+def analyze_signal(closes):
     if not closes or len(closes) < 15:
         return "SKIP", 0.0
-    
     ma_short = sum(closes[-5:]) / 5
     ma_long = sum(closes[-15:]) / 15
     momentum_delta = ((closes[-1] - closes[-5]) / closes[-5]) * 100
     
-    # INVERTED LOGIC: If standard engine says LONG, we SHORT (Fade the pump). If SHORT, we LONG (Catch the dip).
     if ma_short > ma_long and momentum_delta > 0.30:
-        return "SHORT", -momentum_delta  # Fading the overextended pump
+        return "SHORT", -momentum_delta
     elif ma_short < ma_long and momentum_delta < -0.30:
-        return "LONG", -momentum_delta   # Fading the panic dump (buying support)
-        
+        return "LONG", -momentum_delta
     return "SKIP", momentum_delta
 
 def load_state():
@@ -134,7 +130,10 @@ def load_state():
             seen_syms.add(sym)
             unique_open.append(tr)
     s["open"] = unique_open[:MAXP]
-    for t in s.get("open",[]): t["tp"]=TP_PCT; t["sl"]=SL_PCT
+    for t in s.get("open",[]): 
+        t.setdefault("peak_gross", 0.0)
+        t.setdefault("breakeven_locked", False)
+        t["tp"]=TP_PCT; t["sl"]=SL_PCT
     return s
 
 def recalc(state):
@@ -161,7 +160,7 @@ def fill_missing_slots(state):
         closes = fetch_klines(base, "5m", 30)
         if not closes: continue
         
-        side, trend_strength = analyze_inverse_signal(closes)
+        side, trend_strength = analyze_signal(closes)
         if side == "SKIP": continue
             
         price, src = fetch_live_price_fast(base)
@@ -181,15 +180,16 @@ def fill_missing_slots(state):
             "price": price,
             "pos": pos_size,
             "ts": int(time.time()),
-            "peak_gross": 0,
+            "peak_gross": 0.0,
+            "breakeven_locked": False,
             "pct_gross": 0,
             "pct": 0,
             "net": 0,
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"INVERSE TRAP-FADE {base} 5M {side} ({trend_strength:+.2f}%)",
-            "analysis": f"Fading Market Trap: {trend_strength:+.2f}%",
+            "reason": f"TRAILING LOCK {base} 5M {side} ({trend_strength:+.2f}%)",
+            "analysis": f"Dynamic Profit Capture: {trend_strength:+.2f}%",
             "future_pred": future_pred,
             "future_change": future_change,
             "confidence": 99,
@@ -217,17 +217,36 @@ def auto_close_trades(state):
         pct=(live_price-entry)/entry*100 if side=="LONG" else (entry-live_price)/entry*100
         age = now - ts
         
+        # Track peak profit reached during trade lifetime
+        peak = max(tr.get("peak_gross", 0.0), pct)
+        tr["peak_gross"] = peak
+        
+        # Instant Breakeven Lock: Once trade hits +0.25% gross, secure stop-loss at entry fee-free line
+        if peak >= 0.25 and not tr.get("breakeven_locked", False):
+            tr["breakeven_locked"] = True
+            
         should_close=False; close_reason=""
-        if pct >= TP_PCT: should_close=True; close_reason=f"TP HIT +{pct:.2f}%"
-        elif pct <= -SL_PCT: should_close=True; close_reason=f"SL {pct:.2f}%"
-        elif age >= MAX_AGE_SECONDS: should_close=True; close_reason=f"EXPIRY ({age//60}m)"
+        if pct >= TP_PCT: 
+            should_close=True; close_reason=f"TP HIT +{pct:.2f}%"
+        elif pct <= -SL_PCT: 
+            if tr.get("breakeven_locked", False):
+                should_close=True; close_reason=f"BREAKEVEN LOCK PROTECT (+{peak:.2f}% peak)"
+            else:
+                should_close=True; close_reason=f"SL {pct:.2f}%"
+        # Trailing Profit Exit: If trade hit over +0.35% peak profit but dropped back down by 35% of its peak, lock it in!
+        elif peak >= 0.35 and pct <= (peak * 0.65):
+            should_close=True; close_reason=f"TRAILING PROFIT LOCK (+{peak:.2f}% peak)"
+        elif age >= MAX_AGE_SECONDS: 
+            if peak >= 0.20:
+                should_close=True; close_reason=f"EXPIRY PROFIT SECURED (+{peak:.2f}% peak)"
+            else:
+                should_close=True; close_reason=f"EXPIRY ({age//60}m)"
         
         if should_close:
             pct_net=pct-TOTAL_FEE; net=pos*pct_net/100; cap+=net
             state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} LIVE ${live_price:.2f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
             closed_added=True
         else:
-            tr["peak_gross"]=max(tr.get("peak_gross",0), pct)
             tr["pct_gross"]=pct; tr["pct"]=pct-TOTAL_FEE; tr["net"]=pos*(pct-TOTAL_FEE)/100; tr["price"]=live_price; tr["age"]=age
             new_open.append(tr)
     if closed_added:
@@ -246,17 +265,17 @@ def render(state):
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",290); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",284); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","inverse analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","trailing analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.2f} | TP ${tp_price:.2f} (${net_target:.2f}) | SL ${sl_price:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🔄 INVERSE TRAP-FADER READY</b><br>Waiting to fade overextended pumps and panics...</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🛡️ TRAILING LOCK SNIPER READY</b><br>Scanning for breakouts to lock in green profits automatically...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -277,7 +296,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>🔄 INVERSE TRAP-FADER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>🛡️ TRAILING LOCK SNIPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -298,7 +317,7 @@ def render(state):
     
     <script>
     const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";
-    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(Equity.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
+    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
     
     setInterval(()=>{{
         document.querySelectorAll('[data-ts]').forEach(el=>{{
@@ -345,7 +364,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||290;
+        let pos = parseFloat(posStr)||284;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
