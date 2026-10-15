@@ -1,10 +1,10 @@
-""" VENUS v950 - INSTITUTIONAL SHARK & MAJOR ASSET SCALPER """
+""" VENUS v950.1 - INSTITUTIONAL SHARK & MAJOR ASSET SCALPER (FAST EXPIRY) """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":271.89,"daily":0.0,"fees_paid":0.0,"wins":34,"loss":78,"total":112,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0, 271.89],"last_cron":"mem v950 INSTITUTIONAL SHARK"}
+MEM_STATE={"cap":299.65,"daily":-0.35,"fees_paid":0.0,"wins":6,"loss":8,"total":14,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0, 299.65],"last_cron":"mem v950.1 FAST EXPIRY"}
 
 def env(k):
     for kk in k:
@@ -15,14 +15,14 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V950_INSTITUTIONAL_SHARK_STATE"
+STATE_KEY="VENUS_V950_FAST_EXPIRY_STATE"
 MAXP=2  # Focused dual slots on top majors
 POS_PCT=50.0 
 TOTAL_FEE=0.17
 
 TP_PCT=0.55       
 SL_PCT=0.35       
-MAX_AGE_SECONDS = 900 
+MAX_AGE_SECONDS = 480 # Quick 8-minute expiry to flush stagnant trades
 
 def kv_get(k):
     global MEM_STATE
@@ -49,7 +49,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v950 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v950.1 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -94,7 +94,6 @@ def analyze_institutional_signal(closes):
     net_diff_pct = ((closes[-1] - closes[-12]) / closes[-12]) * 100
     recent_spike = ((closes[-1] - closes[-3]) / closes[-3]) * 100
     
-    # Reversal short on sudden blow-off top
     if recent_spike > 1.2 and closes[-1] < closes[-2]:
         return "SHORT", -recent_spike
     elif avg2 > avg1 and net_diff_pct > 0.15:
@@ -132,7 +131,6 @@ def fill_missing_slots(state):
     cap = state.get("cap", 300.0)
     open_syms = [t["symbol"] for t in open_tr]
     
-    # Strict whitelist of top institutional liquid assets
     targets = ["BTC", "ETH", "SOL", "XRP"]
     added = False
     
@@ -238,7 +236,7 @@ def render(state):
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ INSTITUTIONAL SHARK BOT READY</b><br>Scanning BTC, ETH, SOL, and XRP for major capital trends...</div>"
+        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ FAST EXPIRY SHARK BOT READY</b><br>Scanning majors for quick momentum rotation...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -259,7 +257,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ INSTITUTIONAL SHARK BOT - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ FAST EXPIRY SHARK BOT - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
