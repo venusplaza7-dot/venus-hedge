@@ -1,10 +1,10 @@
-""" VENUS v1020 - STEP-UP TARGET & $10 RISK BUFFER SNIPER """
+""" VENUS v1030 - FAST-VELOCITY MOMENTUM SNIPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":261.03,"daily":-38.97,"fees_paid":0.0,"wins":0,"loss":3,"total":3,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0, 261.03],"daily_target_reached":False,"last_cron":"mem v1020 STEP TARGET"}
+MEM_STATE={"cap":262.68,"daily":-37.32,"fees_paid":0.0,"wins":1,"loss":0,"total":1,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0, 261.03, 262.68],"daily_target_reached":False,"last_cron":"mem v1030 FAST MOMENTUM"}
 
 def env(k):
     for kk in k:
@@ -15,13 +15,13 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V1020_STEP_TARGET_STATE"
+STATE_KEY="VENUS_V1030_FAST_MOMENTUM_STATE"
 MAXP=1  
 POS_PCT=100.0 
 TOTAL_FEE=0.17
 
-TP_PCT=0.60       # Scaled to target ~$1.30 net profit per win ($261 * 0.60% = $1.56 gross - $0.17 fee = ~$1.39 net)
-SL_PCT=3.85       # Wide $10 risk buffer breathing room
+TP_PCT=0.60       # Step-up profit target (~$1.30 net win)
+SL_PCT=3.85       # Wide ~$10 risk buffer breathing room
 DAILY_PROFIT_GOAL = 10.0 
 MAX_AGE_SECONDS = 86400 # 24 hours (unlimited time)
 
@@ -50,7 +50,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"daily_target_reached":False,"last_cron":"reset v1020 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"daily_target_reached":False,"last_cron":"reset v1030 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -58,7 +58,8 @@ def kv_del(k):
         with urllib.request.urlopen(req, timeout=4) as r: return True
     except: return True
 
-def fetch_all_market_movers(exclude_syms=[]):
+def fetch_fast_market_movers(exclude_syms=[]):
+    """Filters specifically for high-velocity, high-volume coins to cut out slow movers."""
     candidates = []
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
@@ -73,9 +74,10 @@ def fetch_all_market_movers(exclude_syms=[]):
                         if base in exclude_syms or base in ["PUMP", "DUMMY"]: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        if vol > 10000000 and abs(change) > 1.5:
+                        # Stricter momentum threshold for faster action
+                        if vol > 15000000 and abs(change) > 2.2:
                             candidates.append((base, abs(change), vol))
-                candidates=sorted(candidates, key=lambda x: x[2], reverse=True)
+                candidates=sorted(candidates, key=lambda x: x[1], reverse=True) # Prioritize highest volatility percentage
                 return [c[0] for c in candidates[:15]]
         except: continue
     return ["BTC", "ETH", "SOL"]
@@ -112,9 +114,9 @@ def analyze_signal(closes):
     ma_long = sum(closes[-15:]) / 15
     momentum_delta = ((closes[-1] - closes[-5]) / closes[-5]) * 100
     
-    if ma_short > ma_long and momentum_delta > 0.30:
+    if ma_short > ma_long and momentum_delta > 0.40:
         return "SHORT", -momentum_delta
-    elif ma_short < ma_long and momentum_delta < -0.30:
+    elif ma_short < ma_long and momentum_delta < -0.40:
         return "LONG", -momentum_delta
     return "SKIP", momentum_delta
 
@@ -149,12 +151,12 @@ def fill_missing_slots(state):
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP: return state
     
-    cap = state.get("cap", 261.03)
+    cap = state.get("cap", 262.68)
     open_syms = [t["symbol"] for t in open_tr]
     recent_closed = [c["symbol"] for c in state.get("closed", [])[:3]]
     excluded = list(set(open_syms + recent_closed))
     
-    targets = fetch_all_market_movers(exclude_syms=excluded)
+    targets = fetch_fast_market_movers(exclude_syms=excluded)
     added = False
     
     for base in targets:
@@ -191,8 +193,8 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"STEP TARGET SNIPER {base} 5M {side} ({trend_strength:+.2f}%)",
-            "analysis": f"Targeting ~$1.30 Net Win / -$10 Risk",
+            "reason": f"FAST MOMENTUM SNIPER {base} 5M {side} ({trend_strength:+.2f}%)",
+            "analysis": f"Fast Target (~$1.30 Net Win / -$10 Risk)",
             "future_pred": future_pred,
             "future_change": future_change,
             "confidence": 99,
@@ -209,7 +211,7 @@ def fill_missing_slots(state):
     return state
 
 def auto_close_trades(state):
-    cap=state.get("cap",261.03); new_open=[]; closed_added=False
+    cap=state.get("cap",262.68); new_open=[]; closed_added=False
     now = int(time.time())
     for tr in state.get("open",[]):
         sym=tr["symbol"]; entry=tr["entry"]; side=tr["side"]; pos=tr["pos"]; ts=tr.get("ts",now)
@@ -247,7 +249,7 @@ def auto_close_trades(state):
 
 def render(state):
     state=auto_close_trades(state); state=fill_missing_slots(state); state=recalc(state)
-    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",261.03); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
+    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",262.68); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
     equity=state.get("equity",[300,cap])
     winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
@@ -255,10 +257,10 @@ def render(state):
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",261); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",262); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","step target analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","fast momentum analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.2f} | TP ${tp_price:.2f} (${net_target:.2f}) | SL ${sl_price:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
@@ -268,7 +270,7 @@ def render(state):
         if target_reached:
             trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and unplugged for today. Great job!</div>"
         else:
-            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🚀 STEP-UP TARGET SNIPER READY</b><br>Scanning for setups targeting ~$1.30 wins...</div>"
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ FAST MOMENTUM SNIPER READY</b><br>Scanning for high-velocity movers...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -289,7 +291,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>🚀 STEP-UP TARGET SNIPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ FAST MOMENTUM SNIPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -357,7 +359,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||261;
+        let pos = parseFloat(posStr)||262;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
