@@ -1,10 +1,10 @@
-""" VENUS v990 - TRAILING PROFIT & BREAKBEVEN LOCK SNIPER """
+""" VENUS v1000 - DAILY PROFIT TARGET LOCK & TRAILING HAWK """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":284.65,"daily":-15.35,"fees_paid":0.0,"wins":0,"loss":6,"total":6,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0, 284.65],"last_cron":"mem v990 TRAILING LOCK"}
+MEM_STATE={"cap":264.10,"daily":-35.90,"fees_paid":0.0,"wins":9,"loss":26,"total":35,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0, 264.10],"daily_target_reached":False,"last_cron":"mem v1000 DAILY LOCK"}
 
 def env(k):
     for kk in k:
@@ -15,13 +15,14 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V990_TRAILING_LOCK_STATE"
+STATE_KEY="VENUS_V1000_DAILY_LOCK_STATE"
 MAXP=1  
 POS_PCT=100.0 
 TOTAL_FEE=0.17
 
-TP_PCT=0.50       
-SL_PCT=0.25       
+TP_PCT=0.45       
+SL_PCT=2.00       # Wide buffer breathing room as requested
+DAILY_PROFIT_GOAL = 10.0 # Unplugs/locks for the day once this profit is hit
 MAX_AGE_SECONDS = 360 
 
 def kv_get(k):
@@ -49,7 +50,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"last_cron":"reset v990 CLEAN"}
+    MEM_STATE={"cap":300.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":300.0,"equity":[300.0],"daily_target_reached":False,"last_cron":"reset v1000 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -121,6 +122,7 @@ def load_state():
     s=kv_get(STATE_KEY)
     if not s or not isinstance(s, dict) or "cap" not in s: s=MEM_STATE
     s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("peak",300); s.setdefault("equity",[300])
+    s.setdefault("daily_target_reached", False)
     
     unique_open=[]
     seen_syms=set()
@@ -132,16 +134,18 @@ def load_state():
     s["open"] = unique_open[:MAXP]
     for t in s.get("open",[]): 
         t.setdefault("peak_gross", 0.0)
-        t.setdefault("breakeven_locked", False)
         t["tp"]=TP_PCT; t["sl"]=SL_PCT
     return s
 
 def recalc(state):
     all_closed=state.get("closed",[]); state["wins"]=sum(1 for c in all_closed if c.get("net",0)>0); state["loss"]=sum(1 for c in all_closed if c.get("net",0)<0); state["total"]=len(all_closed)
     state["daily"]=sum([c.get("net",0) for c in all_closed[-100:]]) if all_closed else 0.0
+    if state["daily"] >= DAILY_PROFIT_GOAL:
+        state["daily_target_reached"] = True
     return state
 
 def fill_missing_slots(state):
+    if state.get("daily_target_reached", False): return state
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP: return state
     
@@ -181,15 +185,14 @@ def fill_missing_slots(state):
             "pos": pos_size,
             "ts": int(time.time()),
             "peak_gross": 0.0,
-            "breakeven_locked": False,
             "pct_gross": 0,
             "pct": 0,
             "net": 0,
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"TRAILING LOCK {base} 5M {side} ({trend_strength:+.2f}%)",
-            "analysis": f"Dynamic Profit Capture: {trend_strength:+.2f}%",
+            "reason": f"DAILY LOCK SNIPER {base} 5M {side} ({trend_strength:+.2f}%)",
+            "analysis": f"Targeting +${DAILY_PROFIT_GOAL:.0f} Daily Goal",
             "future_pred": future_pred,
             "future_change": future_change,
             "confidence": 99,
@@ -206,7 +209,7 @@ def fill_missing_slots(state):
     return state
 
 def auto_close_trades(state):
-    cap=state.get("cap",300.0); new_open=[]; closed_added=False
+    cap=state.get("cap",264.10); new_open=[]; closed_added=False
     now = int(time.time())
     for tr in state.get("open",[]):
         sym=tr["symbol"]; entry=tr["entry"]; side=tr["side"]; pos=tr["pos"]; ts=tr.get("ts",now)
@@ -217,23 +220,14 @@ def auto_close_trades(state):
         pct=(live_price-entry)/entry*100 if side=="LONG" else (entry-live_price)/entry*100
         age = now - ts
         
-        # Track peak profit reached during trade lifetime
         peak = max(tr.get("peak_gross", 0.0), pct)
         tr["peak_gross"] = peak
         
-        # Instant Breakeven Lock: Once trade hits +0.25% gross, secure stop-loss at entry fee-free line
-        if peak >= 0.25 and not tr.get("breakeven_locked", False):
-            tr["breakeven_locked"] = True
-            
         should_close=False; close_reason=""
         if pct >= TP_PCT: 
             should_close=True; close_reason=f"TP HIT +{pct:.2f}%"
         elif pct <= -SL_PCT: 
-            if tr.get("breakeven_locked", False):
-                should_close=True; close_reason=f"BREAKEVEN LOCK PROTECT (+{peak:.2f}% peak)"
-            else:
-                should_close=True; close_reason=f"SL {pct:.2f}%"
-        # Trailing Profit Exit: If trade hit over +0.35% peak profit but dropped back down by 35% of its peak, lock it in!
+            should_close=True; close_reason=f"SL BUFFER {pct:.2f}%"
         elif peak >= 0.35 and pct <= (peak * 0.65):
             should_close=True; close_reason=f"TRAILING PROFIT LOCK (+{peak:.2f}% peak)"
         elif age >= MAX_AGE_SECONDS: 
@@ -258,24 +252,28 @@ def auto_close_trades(state):
 
 def render(state):
     state=auto_close_trades(state); state=fill_missing_slots(state); state=recalc(state)
-    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",300.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
+    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",264.10); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
     equity=state.get("equity",[300,cap])
     winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
+    target_reached = state.get("daily_target_reached", False)
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",284); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",264); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","trailing analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        analysis=tr.get("analysis","daily target analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.2f} | TP ${tp_price:.2f} (${net_target:.2f}) | SL ${sl_price:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
-        trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🛡️ TRAILING LOCK SNIPER READY</b><br>Scanning for breakouts to lock in green profits automatically...</div>"
+        if target_reached:
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and unplugged for today. Great job!</div>"
+        else:
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🎯 DAILY LOCK SNIPER READY</b><br>Scanning for setups with wide breathing room...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
@@ -296,7 +294,7 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>🛡️ TRAILING LOCK SNIPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>🎯 DAILY TARGET LOCK - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
@@ -364,7 +362,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||284;
+        let pos = parseFloat(posStr)||264;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
