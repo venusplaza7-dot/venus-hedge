@@ -1,4 +1,4 @@
-""" VENUS v1080 - FAST $0.50 TARGET & WIDE BUFFER SNIPER ($1000 SCALED) """
+""" VENUS v1080 - SCALED $1000 FAST TARGET & PROPORTIONAL RISK SNIPER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
@@ -21,8 +21,8 @@ POS_PCT=33.3333
 TOTAL_FEE=0.17
 
 TP_PCT=0.67       
-SL_PCT=3.85       
-DAILY_PROFIT_GOAL = 30.0 
+SL_PCT=10.50      # Scaled proportionally: ~10.5% on a $333.33 slot equals roughly -$35 max risk per slot
+DAILY_PROFIT_GOAL = 50.0 
 MAX_AGE_SECONDS = 86400 
 
 def kv_get(k):
@@ -59,6 +59,7 @@ def kv_del(k):
     except: return True
 
 def fetch_hyper_volatile_targets(exclude_syms=[]):
+    """Continuously scans and scrapes the most active, high-volume volatile coins moving in real-time."""
     candidates = []
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
@@ -193,7 +194,7 @@ def fill_missing_slots(state):
             "tp": TP_PCT,
             "sl": SL_PCT,
             "reason": f"FAST TARGET SNIPER {base} 5M {side} ({trend_strength:+.2f}%)",
-            "analysis": f"Target: +$0.50 Net Win / Risk: -$10",
+            "analysis": f"Target: +$0.50 Net Win / Risk: -$35",
             "future_pred": future_pred,
             "future_change": future_change,
             "confidence": 99,
@@ -228,7 +229,7 @@ def auto_close_trades(state):
         if pct >= TP_PCT: 
             should_close=True; close_reason=f"TP HIT +{pct:.2f}% (~$0.50)"
         elif pct <= -SL_PCT: 
-            should_close=True; close_reason=f"SL BUFFER HIT (-$10 / {pct:.2f}%)"
+            should_close=True; close_reason=f"SL BUFFER HIT (-$35 / {pct:.2f}%)"
         elif age >= MAX_AGE_SECONDS: 
             should_close=True; close_reason=f"EXPIRY (24h reached)"
         
