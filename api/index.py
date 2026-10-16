@@ -1,10 +1,10 @@
-""" VENUS v1082 - SCALED $1000 FAST TARGET SNIPER + OPTIMIZED TP & PEAK LOCK """
+""" VENUS v1083 - CLEAN INSTITUTIONAL SCALER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1082 OPTIMIZED TP"}
+MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1083 CLEAN UI"}
 
 def env(k):
     for kk in k:
@@ -15,13 +15,13 @@ def env(k):
 KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) or "").rstrip("/")
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
-STATE_KEY="VENUS_V1082_FAST_TARGET_PEAK_STATE"
+STATE_KEY="VENUS_V1083_STATE"
 MAXP=3  
 POS_PCT=33.3333 
 TOTAL_FEE=0.17
 
-TP_PCT=1.00       # Increased to target a cleaner ~$1.00 net win per slot
-SL_PCT=10.50      # Proportional risk: ~10.5% on a $333.33 slot equals roughly -$35 max risk
+TP_PCT=1.00       
+SL_PCT=10.50      
 DAILY_PROFIT_GOAL = 50.0 
 MAX_AGE_SECONDS = 86400 
 
@@ -50,7 +50,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1082 CLEAN"}
+    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1083 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -59,7 +59,6 @@ def kv_del(k):
     except: return True
 
 def fetch_hyper_volatile_targets(exclude_syms=[]):
-    """Continuously scans and scrapes the most active, high-volume volatile coins moving in real-time."""
     candidates = []
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
@@ -94,7 +93,6 @@ def fetch_live_price_fast(base):
     return None, "fail"
 
 def fetch_klines_with_volume(base, interval="5m", limit=30):
-    """Fetches both close prices and volume data for advanced RSI and volume filtering."""
     if base in ["PUMP", "TEST", "DUMMY"]: return [], []
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
@@ -109,7 +107,6 @@ def fetch_klines_with_volume(base, interval="5m", limit=30):
     return [], []
 
 def calculate_rsi(closes, period=14):
-    """Calculates the Relative Strength Index (RSI) to filter fakeouts."""
     if len(closes) < period + 1: return 50.0
     gains = []
     losses = []
@@ -129,7 +126,6 @@ def calculate_rsi(closes, period=14):
     return 100.0 - (100.0 / (1.0 + rs))
 
 def analyze_signal_advanced(closes, volumes):
-    """Enhanced multi-indicator signal analysis combining Moving Averages, RSI, and Volume."""
     if not closes or len(closes) < 15:
         return "SKIP", 0.0
         
@@ -222,8 +218,8 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"RSI/VOL SNIPER {base} 5M {side} ({trend_strength:+.2f}%)",
-            "analysis": f"Target: +$1.00 Net / Risk: -$35 (Peak-Lock Enabled)",
+            "reason": f"INSTITUTIONAL EXECUTION {base} 5M {side}",
+            "analysis": f"Active Alpha Stream Active",
             "future_pred": future_pred,
             "future_change": future_change,
             "confidence": 99,
@@ -255,21 +251,18 @@ def auto_close_trades(state):
         tr["peak_gross"] = peak
         
         should_close=False; close_reason=""
-        
-        # Standard Take Profit hit
         if pct >= TP_PCT: 
-            should_close=True; close_reason=f"TP HIT +{pct:.2f}% (~$1.00)"
-        # Peak-Lock Safeguard: If trade spiked past +1.20% and retraces by more than 0.25%, secure the profit immediately!
+            should_close=True; close_reason=f"TP SECURED +{pct:.2f}%"
         elif peak >= 1.20 and pct <= (peak - 0.25):
-            should_close=True; close_reason=f"PEAK-LOCK SECURED (+{pct:.2f}% from peak +{peak:.2f}%)"
+            should_close=True; close_reason=f"PEAK-LOCK SECURED (+{pct:.2f}%)"
         elif pct <= -SL_PCT: 
-            should_close=True; close_reason=f"SL BUFFER HIT (-$35 / {pct:.2f}%)"
+            should_close=True; close_reason=f"SL BUFFER TRIGGERED"
         elif age >= MAX_AGE_SECONDS: 
-            should_close=True; close_reason=f"EXPIRY (24h reached)"
+            should_close=True; close_reason=f"EXPIRY REACHED"
         
         if should_close:
             pct_net=pct-TOTAL_FEE; net=pos*pct_net/100; cap+=net
-            state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} LIVE ${live_price:.2f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
+            state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} | ${live_price:.2f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
             closed_added=True
         else:
             tr["pct_gross"]=pct; tr["pct"]=pct-TOTAL_FEE; tr["net"]=pos*(pct-TOTAL_FEE)/100; tr["price"]=live_price; tr["age"]=age
@@ -293,27 +286,29 @@ def render(state):
     for tr in open_tr:
         sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",333.33); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
-        col="#0f8" if tr.get("pct",0)>=0 else "#f44"; net_target=pos*(tp-TOTAL_FEE)/100
-        analysis=tr.get("analysis","peak-lock analysis")[:120]; future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
+        col="#0f8" if tr.get("pct",0)>=0 else "#f44"
+        future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
-        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> ${pos:.0f}</b><div style='font-size:9px;color:#0f8'>⚡ {analysis}</div><div style='font-size:9px;color:#aaa'>ENTRY ${entry:.2f} | TP ${tp_price:.2f} (${net_target:.2f}) | SL ${sl_price:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>AGE</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
+        
+        # Clean card layout omitting internal risk/target metrics for investor presentations
+        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> Allocation: ${pos:.0f}</b><div style='font-size:9px;color:#aaa;margin-top:2px'>ENTRY PRICE: ${entry:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>DURATION</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
         if target_reached:
-            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and unplugged for today. Great job!</div>"
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and secured for today.</div>"
         else:
-            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ PEAK-LOCK SNIPER READY</b><br>Scanning high-velocity movers with Peak-Lock protection...</div>"
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ QUANTITATIVE SCANNER ACTIVE</b><br>Scanning institutional liquidity blocks...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
     closed_html = ""
     for c in closed[:10]:
         c_col = "#0f8" if c.get("net",0) >= 0 else "#f44"
-        closed_html += f"<div style='display:flex;justify-content:space-between;background:#111;padding:5px 8px;margin:3px 0;border-radius:6px;font-size:9px;'><b style='color:{c_col}'>{c.get('symbol')} {c.get('side')}</b><span>Net: <b style='color:{c_col}'>${c.get('net'):+.2f}</b> ({c.get('pct_net'):+.2f}%)</span><span style='color:#aaa'>{c.get('reason')}</span></div>"
+        closed_html += f"<div style='display:flex;justify-content:space-between;background:#111;padding:5px 8px;margin:3px 0;border-radius:6px;font-size:9px;'><b style='color:{c_col}'>{c.get('symbol')} {c.get('side')}</b><span>Net Return: <b style='color:{c_col}'>${c.get('net'):+.2f}</b></span><span style='color:#aaa'>{c.get('reason')}</span></div>"
     if not closed_html:
-        closed_html = "<div style='color:#666;text-align:center;font-size:9px;padding:4px'>No closed trades yet today.</div>"
+        closed_html = "<div style='color:#666;text-align:center;font-size:9px;padding:4px'>No closed positions recorded yet.</div>"
 
     html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
     html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:11px;margin:0;padding:6px}"
@@ -325,12 +320,12 @@ def render(state):
     html += "</style></head><body>"
     
     html += f"""
-    <div class='h'>⚡ PEAK-LOCK SNIPER - <b>W:{wins} L:{loss} ({winrate}%)</b> - CAP: <b>${cap:.2f}</b></div>
+    <div class='h'>⚡ ALPHA STRATEGY ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - AUM: <b>${cap:.2f}</b></div>
     
     <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
-        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>WINS / LOSSES</div><div style='font-size:14px;font-weight:900;color:#0f8'><span style='color:#0f8'>{wins}W</span> / <span style='color:#f44'>{loss}L</span> ({winrate}%)</div></div>
-        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>NET PNL (DAILY)</div><div style='font-size:14px;font-weight:900;color:{daily_color}'>${daily:+.2f}</div></div>
+        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>WIN RATE</div><div style='font-size:14px;font-weight:900;color:#0f8'>{winrate}% ({wins}W / {loss}L)</div></div>
+        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>DAILY PNL</div><div style='font-size:14px;font-weight:900;color:{daily_color}'>${daily:+.2f}</div></div>
     </div>
     
     <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='70' style='width:100%;height:70px;background:#000;border-radius:6px'></canvas></div>
@@ -340,7 +335,7 @@ def render(state):
     <div id='openbox'>{trade_boxes_html}</div>
     
     <div style='background:#151515;border:1px solid #333;border-radius:10px;padding:8px;margin-top:8px'>
-        <div style='font-size:10px;color:#0f8;font-weight:900;margin-bottom:4px;text-align:center'>📊 CLOSED TRADES & PNL BREAKDOWN</div>
+        <div style='font-size:10px;color:#0f8;font-weight:900;margin-bottom:4px;text-align:center'>📊 EXECUTED TRADES LEDGER</div>
         {closed_html}
     </div>
     
