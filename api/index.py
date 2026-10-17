@@ -1,10 +1,10 @@
-""" VENUS v1084 - COMPACT INSTITUTIONAL SCALER """
+""" VENUS v1085 - ULTRA-CLEAN INSTITUTIONAL PNL GRID """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1084 COMPACT UI"}
+MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1085 GRID"}
 
 def env(k):
     for kk in k:
@@ -22,7 +22,7 @@ TOTAL_FEE=0.17
 
 TP_PCT=1.00       
 SL_PCT=10.50      
-DAILY_PROFIT_GOAL = 500.0 # Uncapped higher to stress-test 24h potential
+DAILY_PROFIT_GOAL = 500.0 
 MAX_AGE_SECONDS = 86400 
 
 def kv_get(k):
@@ -50,7 +50,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1084 CLEAN"}
+    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1085 GRID"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -277,7 +277,6 @@ def auto_close_trades(state):
 def render(state):
     state=auto_close_trades(state); state=fill_missing_slots(state); state=recalc(state)
     open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",1000.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
-    equity=state.get("equity",[1000,cap])
     winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
     target_reached = state.get("daily_target_reached", False)
@@ -291,8 +290,7 @@ def render(state):
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         
-        # Compact Card Layout (Chart height scaled down to 80px, targets and internal risk text completely omitted for clean investor presentation)
-        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:10px;padding:6px;margin:6px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:12px'>{sym} <span class='badge {side.lower()}'>{side}</span> Allocation: ${pos:.0f}</b><div style='font-size:8px;color:#aaa;margin-top:1px'>ENTRY PRICE: ${entry:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:6px;padding:2px 6px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:4px 0;text-align:center'><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>DURATION</div><div id='live-age-{sym}' style='font-size:10px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:8px;padding:2px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:4px'></canvas></div></div>"""
+        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:10px;padding:6px;margin:6px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:12px'>{sym} <span class='badge {side.lower()}'>{side}</span> Allocation: ${pos:.0f}</b><div style='font-size:8px;color:#aaa;margin-top:1px'>ENTRY PRICE: ${entry:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:6px;padding:2px 6px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:4px 0;text-align:center'><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>DURATION</div><div id='live-age-{sym}' style='font-size:10px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:8px;padding:2px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='75' style='width:100%;height:75px;background:#000;border-radius:4px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
@@ -301,47 +299,47 @@ def render(state):
         else:
             trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:10px;border:2px solid #0f8;border-radius:10px'><b>⚡ QUANTITATIVE SCANNER ACTIVE</b><br>Scanning institutional liquidity blocks...</div>"
         
-    equity_js=json.dumps(equity[-80:])
-    
+    # Multi-column grid layout for up to 50 closed trades
     closed_html = ""
-    for c in closed:
+    for c in closed[:50]:
         c_col = "#0f8" if c.get("net",0) >= 0 else "#f44"
-        closed_html += f"<div style='display:flex;justify-content:space-between;background:#111;padding:5px 8px;margin:3px 0;border-radius:6px;font-size:9px;'><b style='color:{c_col}'>{c.get('symbol')} {c.get('side')}</b><span>Net Return: <b style='color:{c_col}'>${c.get('net'):+.2f}</b></span><span style='color:#aaa'>{c.get('reason')}</span></div>"
+        closed_html += f"<div style='background:#111;padding:5px 6px;border-radius:6px;font-size:8px;border-left:3px solid {c_col}'><div style='display:flex;justify-content:space-between'><b>{c.get('symbol')} {c.get('side')}</b><b style='color:{c_col}'>${c.get('net'):+.2f}</b></div><div style='color:#888;font-size:7px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>{c.get('reason')}</div></div>"
     if not closed_html:
-        closed_html = "<div style='color:#666;text-align:center;font-size:9px;padding:4px'>No closed positions recorded yet.</div>"
+        closed_html = "<div style='color:#666;text-align:center;font-size:9px;padding:6px;grid-column: span 5'>No closed positions recorded yet.</div>"
 
     html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
     html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:11px;margin:0;padding:6px}"
-    html += ".h{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:10px;text-align:center;font-weight:900;font-size:11px;border-radius:10px}"
+    html += ".h{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:8px;text-align:center;font-weight:900;font-size:11px;border-radius:8px}"
     html += ".btn-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:6px 0}"
-    html += ".btn{padding:10px 4px;border-radius:10px;border:0;font-weight:900;font-size:11px;cursor:pointer}"
+    html += ".btn{padding:8px 4px;border-radius:8px;border:0;font-weight:900;font-size:11px;cursor:pointer}"
     html += ".btn-cron{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000}.btn-reset{background:#f44;color:#fff}.btn-close{background:#fc0;color:#000}"
     html += ".badge{padding:2px 5px;border-radius:8px;font-size:8px;font-weight:900}.long{background:#0f8;color:#000}.short{background:#f44;color:#fff}"
+    html += ".ledger-grid{display:grid;grid-template-columns:repeat(5, 1fr);gap:4px;margin-top:4px}"
+    html += "@media(max-width:768px){.ledger-grid{grid-template-columns:repeat(2, 1fr);}}"
     html += "</style></head><body>"
     
     html += f"""
     <div class='h'>⚡ ALPHA STRATEGY ENGINE - <b>W:{wins} L:{loss} ({winrate}%)</b> - AUM: <b>${cap:.2f}</b></div>
     
-    <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:8px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
-        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>TOTAL CAPITAL</div><div style='font-size:14px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
-        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>WIN RATE</div><div style='font-size:14px;font-weight:900;color:#0f8'>{winrate}% ({wins}W / {loss}L)</div></div>
-        <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>DAILY PNL</div><div style='font-size:14px;font-weight:900;color:{daily_color}'>${daily:+.2f}</div></div>
+    <div style='background:#111;border:2px solid #0f8;border-radius:10px;padding:6px;margin:6px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center'>
+        <div style='background:#000;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>TOTAL CAPITAL</div><div style='font-size:13px;font-weight:900;color:#0f8'>${cap:.2f}</div></div>
+        <div style='background:#000;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>WIN RATE</div><div style='font-size:13px;font-weight:900;color:#0f8'>{winrate}% ({wins}W/{loss}L)</div></div>
+        <div style='background:#000;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>DAILY PNL</div><div style='font-size:13px;font-weight:900;color:{daily_color}'>${daily:+.2f}</div></div>
     </div>
     
-    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='60' style='width:100%;height:60px;background:#000;border-radius:6px'></canvas></div>
-    
-    <div class='btn-row'><button class='btn btn-cron' onclick='location.reload()'>⚡ REFRESH<div style='font-size:8px'>SYNC STATE</div></button><button class='btn btn-close' onclick='callCloseAll()'>💰 CLOSE ALL<div style='font-size:8px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄 RESET $1000<div style='font-size:8px'>WIPE DATA</div></button></div>
+    <div class='btn-row'><button class='btn btn-cron' onclick='location.reload()'>⚡ SYNC STATE</button><button class='btn btn-close' onclick='callCloseAll()'>💰 CLOSE ALL ({len(open_tr)})</button><button class='btn btn-reset' onclick='callReset()'>🔄 WIPE DATA</button></div>
     
     <div id='openbox'>{trade_boxes_html}</div>
     
     <div style='background:#151515;border:1px solid #333;border-radius:10px;padding:8px;margin-top:8px'>
-        <div style='font-size:10px;color:#0f8;font-weight:900;margin-bottom:4px;text-align:center'>📊 EXECUTED TRADES LEDGER ({len(closed)} TOTAL)</div>
-        {closed_html}
+        <div style='font-size:9px;color:#0f8;font-weight:900;margin-bottom:6px;text-align:center'>📊 EXECUTED WINNING TRADES LEDGER (UP TO 50 MONITORED)</div>
+        <div class='ledger-grid'>
+            {closed_html}
+        </div>
     </div>
     
     <script>
-    const EQUITY = {equity_js};const ADMIN_KEY="{ADMIN_KEY}";
-    function drawEquity(){{const cv=document.getElementById('equityChart'); if(!cv||!EQUITY.length) return; const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h); const mn=Math.min(...EQUITY)*0.999, mx=Math.max(...EQUITY)*1.001, rg=mx-mn||1; function yF(p){{return h*0.9-((p-mn)/rg)*h*0.8;}} ctx.strokeStyle='#0f8'; ctx.lineWidth=2; ctx.beginPath(); EQUITY.forEach((p,i)=>{{const x=i/(EQUITY.length-1)*w, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();}}
+    const ADMIN_KEY="{ADMIN_KEY}";
     
     setInterval(()=>{{
         document.querySelectorAll('[data-ts]').forEach(el=>{{
@@ -439,7 +437,7 @@ def render(state):
         }}
         draw(); fetchP(); setInterval(fetchP, 6000);
     }}
-    window.addEventListener('load',()=>{{drawEquity(); {chart_js_init}}});
+    window.addEventListener('load',()=>{{{chart_js_init}}});
     </script></body></html>"""
     return html
 
