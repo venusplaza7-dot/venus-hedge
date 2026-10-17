@@ -1,10 +1,10 @@
-""" VENUS v1083 - CLEAN INSTITUTIONAL SCALER """
+""" VENUS v1084 - COMPACT INSTITUTIONAL SCALER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1083 CLEAN UI"}
+MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1084 COMPACT UI"}
 
 def env(k):
     for kk in k:
@@ -22,7 +22,7 @@ TOTAL_FEE=0.17
 
 TP_PCT=1.00       
 SL_PCT=10.50      
-DAILY_PROFIT_GOAL = 500.0 
+DAILY_PROFIT_GOAL = 500.0 # Uncapped higher to stress-test 24h potential
 MAX_AGE_SECONDS = 86400 
 
 def kv_get(k):
@@ -50,7 +50,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1083 CLEAN"}
+    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1084 CLEAN"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -291,20 +291,20 @@ def render(state):
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         
-        # Clean card layout omitting internal risk/target metrics for investor presentations
-        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:12px;padding:8px;margin:8px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:13px'>{sym} <span class='badge {side.lower()}'>{side}</span> Allocation: ${pos:.0f}</b><div style='font-size:9px;color:#aaa;margin-top:2px'>ENTRY PRICE: ${entry:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px 8px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:6px 0;text-align:center'><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:13px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:5px;border-radius:8px'><div style='font-size:8px;color:#888'>DURATION</div><div id='live-age-{sym}' style='font-size:11px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:10px;padding:4px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='130' style='width:100%;height:130px;background:#000;border-radius:6px'></canvas></div></div>"""
+        # Compact Card Layout (Chart height scaled down to 80px, targets and internal risk text completely omitted for clean investor presentation)
+        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:10px;padding:6px;margin:6px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:12px'>{sym} <span class='badge {side.lower()}'>{side}</span> Allocation: ${pos:.0f}</b><div style='font-size:8px;color:#aaa;margin-top:1px'>ENTRY PRICE: ${entry:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:6px;padding:2px 6px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:4px 0;text-align:center'><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>DURATION</div><div id='live-age-{sym}' style='font-size:10px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:8px;padding:2px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='80' style='width:100%;height:80px;background:#000;border-radius:4px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
         if target_reached:
-            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and secured for today.</div>"
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:10px;border:2px solid #0f8;border-radius:10px'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and secured for today.</div>"
         else:
-            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8'><b>⚡ QUANTITATIVE SCANNER ACTIVE</b><br>Scanning institutional liquidity blocks...</div>"
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:10px;border:2px solid #0f8;border-radius:10px'><b>⚡ QUANTITATIVE SCANNER ACTIVE</b><br>Scanning institutional liquidity blocks...</div>"
         
     equity_js=json.dumps(equity[-80:])
     
     closed_html = ""
-    for c in closed[:10]:
+    for c in closed:
         c_col = "#0f8" if c.get("net",0) >= 0 else "#f44"
         closed_html += f"<div style='display:flex;justify-content:space-between;background:#111;padding:5px 8px;margin:3px 0;border-radius:6px;font-size:9px;'><b style='color:{c_col}'>{c.get('symbol')} {c.get('side')}</b><span>Net Return: <b style='color:{c_col}'>${c.get('net'):+.2f}</b></span><span style='color:#aaa'>{c.get('reason')}</span></div>"
     if not closed_html:
@@ -314,7 +314,7 @@ def render(state):
     html += "body{background:#0a0a0a;color:#eee;font-family:monospace;font-size:11px;margin:0;padding:6px}"
     html += ".h{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000;padding:10px;text-align:center;font-weight:900;font-size:11px;border-radius:10px}"
     html += ".btn-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:6px 0}"
-    html += ".btn{padding:12px 4px;border-radius:10px;border:0;font-weight:900;font-size:12px;cursor:pointer}"
+    html += ".btn{padding:10px 4px;border-radius:10px;border:0;font-weight:900;font-size:11px;cursor:pointer}"
     html += ".btn-cron{background:linear-gradient(90deg,#0f8,#00d4ff);color:#000}.btn-reset{background:#f44;color:#fff}.btn-close{background:#fc0;color:#000}"
     html += ".badge{padding:2px 5px;border-radius:8px;font-size:8px;font-weight:900}.long{background:#0f8;color:#000}.short{background:#f44;color:#fff}"
     html += "</style></head><body>"
@@ -328,14 +328,14 @@ def render(state):
         <div style='background:#000;padding:6px;border-radius:6px'><div style='font-size:8px;color:#888'>DAILY PNL</div><div style='font-size:14px;font-weight:900;color:{daily_color}'>${daily:+.2f}</div></div>
     </div>
     
-    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='70' style='width:100%;height:70px;background:#000;border-radius:6px'></canvas></div>
+    <div style='background:#000000;border-radius:10px;padding:6px;margin:6px 0;border:1px solid #0f8'><canvas id='equityChart' width='340' height='60' style='width:100%;height:60px;background:#000;border-radius:6px'></canvas></div>
     
-    <div class='btn-row'><button class='btn btn-cron' onclick='location.reload()'>⚡ REFRESH<div style='font-size:9px'>SYNC STATE</div></button><button class='btn btn-close' onclick='callCloseAll()'>💰 CLOSE ALL<div style='font-size:9px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄 RESET $1000<div style='font-size:9px'>WIPE DATA</div></button></div>
+    <div class='btn-row'><button class='btn btn-cron' onclick='location.reload()'>⚡ REFRESH<div style='font-size:8px'>SYNC STATE</div></button><button class='btn btn-close' onclick='callCloseAll()'>💰 CLOSE ALL<div style='font-size:8px'>{len(open_tr)} OPEN</div></button><button class='btn btn-reset' onclick='callReset()'>🔄 RESET $1000<div style='font-size:8px'>WIPE DATA</div></button></div>
     
     <div id='openbox'>{trade_boxes_html}</div>
     
     <div style='background:#151515;border:1px solid #333;border-radius:10px;padding:8px;margin-top:8px'>
-        <div style='font-size:10px;color:#0f8;font-weight:900;margin-bottom:4px;text-align:center'>📊 EXECUTED TRADES LEDGER</div>
+        <div style='font-size:10px;color:#0f8;font-weight:900;margin-bottom:4px;text-align:center'>📊 EXECUTED TRADES LEDGER ({len(closed)} TOTAL)</div>
         {closed_html}
     </div>
     
