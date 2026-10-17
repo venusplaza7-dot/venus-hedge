@@ -1,10 +1,10 @@
-""" VENUS v1085 - ULTRA-CLEAN INSTITUTIONAL PNL GRID """
+""" VENUS v1086 - ULTRA-CLEAN INSTITUTIONAL PNL GRID WITH PULSING SCANNER """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1085 GRID"}
+MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1086 GRID"}
 
 def env(k):
     for kk in k:
@@ -50,7 +50,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1085 GRID"}
+    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1086 GRID"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -295,11 +295,23 @@ def render(state):
         
     if not open_tr:
         if target_reached:
-            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:10px;border:2px solid #0f8;border-radius:10px'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and secured for today.</div>"
+            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:12px;border:2px solid #0f8;border-radius:10px'><b>🎯 DAILY PROFIT TARGET REACHED</b><br>Session locked and secured for today.</div>"
         else:
-            trade_boxes_html="<div class='it' style='text-align:center;color:#0f8;padding:10px;border:2px solid #0f8;border-radius:10px'><b>⚡ QUANTITATIVE SCANNER ACTIVE</b><br>Scanning institutional liquidity blocks...</div>"
+            trade_boxes_html="""
+            <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
+                <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
+                <b style='font-size:11px;letter-spacing:1px'>QUANTITATIVE SCANNER ACTIVE</b>
+                <div style='font-size:8px;color:#888;margin-top:4px'>Analyzing order books, 5M volume & RSI filters...</div>
+            </div>
+            <style>
+            @keyframes blink {
+                0% { opacity: 0.2; transform: scale(0.8); }
+                50% { opacity: 1.0; transform: scale(1.2); box-shadow: 0 0 16px #0f8; }
+                100% { opacity: 0.2; transform: scale(0.8); }
+            }
+            </style>
+            """
         
-    # Multi-column grid layout for up to 50 closed trades
     closed_html = ""
     for c in closed[:50]:
         c_col = "#0f8" if c.get("net",0) >= 0 else "#f44"
