@@ -84,13 +84,15 @@ KV_URL=(env(["KV_REST_API_URL","UPSTASH_REDIS_REST_URL","KV_URL","REDIS_URL"]) o
 KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_ONLY_TOKEN","KV_TOKEN"])
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
 STATE_KEY="VENUS_V1083_STATE"
-MAXP=3  
-POS_PCT=28.88     # Adjusted to land precisely near ~$10.00 USDT position size per trade out of ~$34.62 total capital
+
+# --- SINGLE COIN FULL ALLOCATION ENGINE CONFIG ---
+MAXP=1         # Restricted to 1 single position at a time
+POS_PCT=98.0   # Allocates ~ $34.00 of your total balance into the single coin
 TOTAL_FEE=0.17
 
 TP_PCT=1.00       
 SL_PCT=10.50      
-DOLLAR_PROFIT_LOCK = 2.50  
+DOLLAR_PROFIT_LOCK = 0.50  # Target $0.50 net profit win to clear fees and lock gain
 DAILY_PROFIT_GOAL = 500.0 
 MAX_AGE_SECONDS = 86400 
 
@@ -143,7 +145,6 @@ def fetch_hyper_volatile_targets(exclude_syms=[]):
                         if base in exclude_syms or base in ["PUMP", "DUMMY"]: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        # Relaxed volume & change filters slightly to ensure target acquisition
                         if vol > 5000000 and abs(change) > 1.5:
                             candidates.append((base, abs(change), vol))
                 candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
@@ -206,7 +207,6 @@ def analyze_signal_advanced(closes, volumes):
     
     rsi = calculate_rsi(closes)
     
-    # Relaxed signal rules to trigger trades faster without getting stuck on strict barriers
     if ma_short >= ma_mid and rsi < 80:
         return "LONG", momentum_delta
     elif ma_short < ma_mid and rsi > 20:
@@ -272,9 +272,8 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price <= 0: continue
         
-        pos_size = cap * (POS_PCT / 100.0)  # Rounded to target ~$10.00 each
+        pos_size = cap * (POS_PCT / 100.0)  # Allocates ~$34 into single trade
         
-        # Fire actual live order to Binance exchange
         success, order_res = execute_binance_market_order(base, side, pos_size)
         if not success:
             continue  
@@ -299,7 +298,7 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"BINANCE EXCHANGE EXECUTION {base} 5M {side}",
+            "reason": f"BINANCE FULL ALLOCATION {base} 5M {side}",
             "analysis": f"Active Alpha Stream Active",
             "future_pred": future_pred,
             "future_change": future_change,
@@ -336,10 +335,10 @@ def auto_close_trades(state):
         
         should_close=False; close_reason=""
         if net_val >= DOLLAR_PROFIT_LOCK:
-            should_close=True; close_reason=f"$2.50+ PROFIT SECURED (+${net_val:.2f})"
+            should_close=True; close_reason=f"${DOLLAR_PROFIT_LOCK} PROFIT TARGET SECURED (+${net_val:.2f})"
         elif pct >= TP_PCT: 
             should_close=True; close_reason=f"TP SECURED +{pct:.2f}%"
-        elif peak >= 1.00 and pct <= (peak - 0.25):  
+        elif peak >= 0.80 and pct <= (peak - 0.20):  
             should_close=True; close_reason=f"PEAK-LOCK SECURED (+{pct:.2f}%)"
         elif pct <= -SL_PCT: 
             should_close=True; close_reason=f"SL BUFFER TRIGGERED"
@@ -372,7 +371,7 @@ def render(state):
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",10.0); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",34.0); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
@@ -389,8 +388,8 @@ def render(state):
             trade_boxes_html="""
             <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
                 <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
-                <b style='font-size:11px;letter-spacing:1px'>BINANCE SPOT EXECUTION ACTIVE ($34.62)</b>
-                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning markets and dispatching live exchange orders (~$10 each)...</div>
+                <b style='font-size:11px;letter-spacing:1px'>BINANCE FULL ALLOCATION ACTIVE ($34.62)</b>
+                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning for single high-conviction sniper trade (~$34 target)...</div>
             </div>
             <style>
             @keyframes blink {
@@ -487,7 +486,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||10.0;
+        let pos = parseFloat(posStr)||34.0;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
@@ -532,7 +531,6 @@ def render(state):
                 let prog = i / steps;
                 let targetStepPrice = lastPrice + ((tp > lastPrice ? tp - lastPrice : lastPrice - tp) * (side=='LONG'?1:-1) * (prog * 0.5));
                 let waveAdjustment = Math.sin(prog * Math.PI) * (velocity * 2);
-                dynamicPred.path = targetStepPrice + waveAdjustment;
                 dynamicPred.push(targetStepPrice + waveAdjustment);
             }}
 
@@ -576,7 +574,7 @@ def catch_all(path):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         kv_del(STATE_KEY)
         return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
-    if p.changed if False else p.startswith("/api/closeall") or p == "/closeall":
+    if p.startswith("/api/closeall") or p == "/closeall":
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         state=load_state(); state["open"]=[]; kv_set(STATE_KEY, state)
         return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
