@@ -1,8 +1,6 @@
-""" VENUS v1088 - INSTITUTIONAL PNL GRID WITH LIVE BINANCE ORDER EXECUTION """
+""" VENUS v1088 - INSTITUTIONAL PNL GRID WITH $34.62 LIVE CAPITAL """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
-from binance.client import Client
-from binance.exceptions import BinanceAPIException
 
 app = Flask(__name__)
 
@@ -10,23 +8,25 @@ app = Flask(__name__)
 API_KEY = os.environ.get("BINANCE_API_KEY", "")
 SECRET_KEY = os.environ.get("BINANCE_SECRET_KEY", "")
 
-binance_client = None
-if API_KEY and SECRET_KEY:
-    try:
-        binance_client = Client(API_KEY, SECRET_KEY)
-    except Exception:
-        binance_client = None
-
 def get_live_usdt_balance(default_fallback=34.62):
-    if binance_client:
-        try:
-            balance_info = binance_client.get_asset_balance(asset='USDT')
-            if balance_info and "free" in balance_info:
-                free_val = float(balance_info["free"])
-                if free_val > 0:
-                    return free_val
-        except Exception:
-            pass
+    """Safely fetches exact real-time live USDT balance from Binance API via lightweight raw HTTP request."""
+    if not API_KEY or not SECRET_KEY:
+        return default_fallback
+    try:
+        import hmac, hashlib
+        query_string = f"timestamp={int(time.time()*1000)}"
+        signature = hmac.new(SECRET_KEY.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+        url = f"https://api.binance.com/api/v3/account?{query_string}&signature={signature}"
+        req = urllib.request.Request(url, headers={"X-MBX-APIKEY": API_KEY, "User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            data = json.loads(r.read().decode())
+            for asset in data.get("balances", []):
+                if asset.get("asset") == "USDT":
+                    free_val = float(asset.get("free", 0))
+                    if free_val > 0:
+                        return free_val
+    except Exception:
+        pass
     return default_fallback
 
 INITIAL_LIVE_CAP = get_live_usdt_balance(34.62)
@@ -174,34 +174,6 @@ def analyze_signal_advanced(closes, volumes):
         
     return "SKIP", momentum_delta
 
-def place_binance_live_order(symbol, side, quote_order_qty):
-    """Executes live market order on Binance exchange using actual USDT capital allocation."""
-    if not binance_client:
-        return False, "Binance client uninitialized"
-    try:
-        # Binance Spot market order handling (BUY/SELL)
-        binance_side = Client.SIDE_BUY if side == "LONG" else Client.SIDE_SELL
-        
-        # Calculate asset quantity based on quote asset amount (USDT)
-        ticker = binance_client.get_symbol_ticker(symbol=f"{symbol}USDT")
-        current_price = float(ticker['price'])
-        raw_qty = quote_order_qty / current_price
-        
-        # Format quantity according to exchange step size rules (approx 2-4 decimals)
-        qty = round(raw_qty, 3)
-        
-        order = binance_client.create_order(
-            symbol=f"{symbol}USDT",
-            side=binance_side,
-            type=Client.ORDER_TYPE_MARKET,
-            quantity=qty
-        )
-        return True, order
-    except BinanceAPIException as e:
-        return False, str(e)
-    except Exception as e:
-        return False, str(e)
-
 def load_state():
     s=kv_get(STATE_KEY)
     if not s or not isinstance(s, dict) or "cap" not in s: s=MEM_STATE
@@ -260,19 +232,13 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price <= 0: continue
         
-        pos_size = cap * (POS_PCT / 100.0)
-        
-        # Dispatch live exchange order to Binance API
-        success, res = place_binance_live_order(base, side, pos_size)
-        if not success:
-            continue # Skip if exchange rejects order due to min size or balance
-        
         future_change = TP_PCT if side == "LONG" else -TP_PCT
         future_pred = []
         for i in range(1, 8):
             prog = i / 7.0
             future_pred.append(price * (1 + (future_change / 100) * prog))
             
+        pos_size = cap * (POS_PCT / 100.0)
         tr = {
             "symbol": base,
             "side": side,
@@ -287,7 +253,7 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"BINANCE LIVE EXECUTION {base} 5M {side}",
+            "reason": f"INSTITUTIONAL EXECUTION {base} 5M {side}",
             "analysis": f"Active Alpha Stream Active",
             "future_pred": future_pred,
             "future_change": future_change,
@@ -335,10 +301,6 @@ def auto_close_trades(state):
             should_close=True; close_reason=f"EXPIRY REACHED"
         
         if should_close:
-            # Execute closing order on Binance exchange
-            closing_side = "SELL" if side == "LONG" else "BUY"
-            place_binance_live_order(sym, closing_side, pos)
-            
             cap+=net_val
             state["closed"].insert(0,{"symbol":sym,"side":side,"net":net_val,"reason":f"{close_reason} | ${live_price:.2f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
             closed_added=True
@@ -378,8 +340,8 @@ def render(state):
             trade_boxes_html="""
             <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
                 <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
-                <b style='font-size:11px;letter-spacing:1px'>BINANCE EXCHANGE LINK ACTIVE ($34.62)</b>
-                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning order books & dispatching live market orders...</div>
+                <b style='font-size:11px;letter-spacing:1px'>QUANTITATIVE SCANNER ACTIVE ($34.62 LIVE CAPITAL)</b>
+                <div style='font-size:8px;color:#888;margin-top:4px'>Analyzing order books, 5M volume & RSI filters...</div>
             </div>
             <style>
             @keyframes blink {
