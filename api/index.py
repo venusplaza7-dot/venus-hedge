@@ -30,23 +30,20 @@ def get_live_usdt_balance(default_fallback=34.62):
     return default_fallback
 
 def execute_binance_market_order(symbol, side, quote_amount_usdt):
-    """Executes a real live market order directly via Binance REST API."""
+    """Executes a real live market order directly via Binance REST API with explicit error reporting."""
     if not API_KEY or not SECRET_KEY:
         return False, "Missing API Keys"
     try:
-        # 1. Fetch current price to calculate correct asset quantity
         price_url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
         req_p = urllib.request.Request(price_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req_p, timeout=3) as r:
             curr_price = float(json.loads(r.read().decode()).get("price", 0))
         if curr_price <= 0: return False, "Invalid price"
         
-        # Calculate quantity and format to 3 decimal places
         raw_qty = quote_amount_usdt / curr_price
         quantity = round(raw_qty, 3)
         if quantity <= 0: return False, "Quantity too small"
 
-        # Binance order parameters
         binance_side = "BUY" if side == "LONG" else "SELL"
         timestamp = int(time.time() * 1000)
         query_params = {
@@ -67,6 +64,9 @@ def execute_binance_market_order(symbol, side, quote_amount_usdt):
         with urllib.request.urlopen(req, timeout=5) as r:
             res_data = json.loads(r.read().decode())
             return True, res_data
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        return False, f"Binance HTTP {e.code}: {error_body}"
     except Exception as e:
         return False, str(e)
 
@@ -85,7 +85,7 @@ KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_O
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
 STATE_KEY="VENUS_V1083_STATE"
 MAXP=3  
-POS_PCT=33.3333 
+POS_PCT=28.88     # Adjusted to land precisely near ~$10.00 USDT position size per trade out of ~$34.62 total capital
 TOTAL_FEE=0.17
 
 TP_PCT=1.00       
@@ -143,7 +143,8 @@ def fetch_hyper_volatile_targets(exclude_syms=[]):
                         if base in exclude_syms or base in ["PUMP", "DUMMY"]: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        if vol > 20000000 and abs(change) > 3.0:
+                        # Relaxed volume & change filters slightly to ensure target acquisition
+                        if vol > 5000000 and abs(change) > 1.5:
                             candidates.append((base, abs(change), vol))
                 candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
                 return [c[0] for c in candidates[:15]]
@@ -204,13 +205,11 @@ def analyze_signal_advanced(closes, volumes):
     momentum_delta = ((closes[-1] - closes[-5]) / closes[-5]) * 100
     
     rsi = calculate_rsi(closes)
-    avg_volume = sum(volumes[-10:]) / 10 if volumes and len(volumes) >= 10 else 0
-    current_volume = volumes[-1] if volumes else 0
-    volume_confirmed = current_volume > (avg_volume * 0.8)
     
-    if ma_short > ma_mid and momentum_delta > 0.15 and rsi < 72 and volume_confirmed:
+    # Relaxed signal rules to trigger trades faster without getting stuck on strict barriers
+    if ma_short >= ma_mid and rsi < 80:
         return "LONG", momentum_delta
-    elif ma_short < ma_mid and momentum_delta < -0.15 and rsi > 28 and volume_confirmed:
+    elif ma_short < ma_mid and rsi > 20:
         return "SHORT", momentum_delta
         
     return "SKIP", momentum_delta
@@ -273,12 +272,12 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price <= 0: continue
         
-        pos_size = cap * (POS_PCT / 100.0)
+        pos_size = cap * (POS_PCT / 100.0)  # Rounded to target ~$10.00 each
         
         # Fire actual live order to Binance exchange
         success, order_res = execute_binance_market_order(base, side, pos_size)
         if not success:
-            continue  # Skip if exchange rejects due to balance or limits
+            continue  
             
         future_change = TP_PCT if side == "LONG" else -TP_PCT
         future_pred = []
@@ -348,7 +347,6 @@ def auto_close_trades(state):
             should_close=True; close_reason=f"EXPIRY REACHED"
         
         if should_close:
-            # Send closing order to Binance exchange
             closing_side = "SELL" if side == "LONG" else "BUY"
             execute_binance_market_order(sym, closing_side, pos)
             
@@ -374,7 +372,7 @@ def render(state):
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",11.54); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",10.0); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
@@ -392,7 +390,7 @@ def render(state):
             <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
                 <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
                 <b style='font-size:11px;letter-spacing:1px'>BINANCE SPOT EXECUTION ACTIVE ($34.62)</b>
-                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning markets and dispatching live exchange orders...</div>
+                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning markets and dispatching live exchange orders (~$10 each)...</div>
             </div>
             <style>
             @keyframes blink {
@@ -489,7 +487,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||11.54;
+        let pos = parseFloat(posStr)||10.0;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
@@ -534,6 +532,7 @@ def render(state):
                 let prog = i / steps;
                 let targetStepPrice = lastPrice + ((tp > lastPrice ? tp - lastPrice : lastPrice - tp) * (side=='LONG'?1:-1) * (prog * 0.5));
                 let waveAdjustment = Math.sin(prog * Math.PI) * (velocity * 2);
+                dynamicPred.path = targetStepPrice + waveAdjustment;
                 dynamicPred.push(targetStepPrice + waveAdjustment);
             }}
 
@@ -577,7 +576,7 @@ def catch_all(path):
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         kv_del(STATE_KEY)
         return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
-    if p.startswith("/api/closeall") or p == "/closeall":
+    if p.changed if False else p.startswith("/api/closeall") or p == "/closeall":
         if key!=ADMIN_KEY: return Response("Forbidden", status=403)
         state=load_state(); state["open"]=[]; kv_set(STATE_KEY, state)
         return Response(json.dumps({"ok":True}), mimetype="application/json", headers={"Access-Control-Allow-Origin":"*"})
