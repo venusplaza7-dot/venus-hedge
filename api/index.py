@@ -1,10 +1,39 @@
 """ VENUS v1088 - INSTITUTIONAL PNL GRID WITH $2.50 PROFIT SECURE LOCK """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
+from binance.client import Client  # Added for direct Binance live balance fetching
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1088 GRID"}
+# Load Binance credentials securely from Vercel environment variables
+BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY", "")
+BINANCE_SECRET_KEY = os.environ.get("BINANCE_SECRET_KEY", "")
+
+# Initialize Binance live client safely
+binance_client = None
+if BINANCE_API_KEY and BINANCE_SECRET_KEY:
+    try:
+        binance_client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
+    except Exception:
+        binance_client = None
+
+def get_live_usdt_balance(default_fallback=1000.0):
+    """Fetches real-time live USDT balance from Binance wallet if API keys are configured."""
+    if binance_client:
+        try:
+            balance_info = binance_client.get_asset_balance(asset='USDT')
+            if balance_info and "free" in balance_info:
+                live_free = float(balance_info["free"])
+                if live_free > 0:
+                    return live_free
+        except Exception:
+            pass
+    return default_fallback
+
+# Initial dynamic capital baseline (pulls live Binance balance or falls back gracefully)
+INITIAL_LIVE_CAP = get_live_usdt_balance(1000.0)
+
+MEM_STATE={"cap":INITIAL_LIVE_CAP,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":INITIAL_LIVE_CAP,"equity":[INITIAL_LIVE_CAP],"daily_target_reached":False,"last_cron":"mem v1088 GRID"}
 
 def env(k):
     for kk in k:
@@ -51,7 +80,8 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1088 GRID"}
+    current_live_cap = get_live_usdt_balance(1000.0)
+    MEM_STATE={"cap":current_live_cap,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":current_live_cap,"equity":[current_live_cap],"daily_target_reached":False,"last_cron":"reset v1088 GRID"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -149,6 +179,13 @@ def analyze_signal_advanced(closes, volumes):
 def load_state():
     s=kv_get(STATE_KEY)
     if not s or not isinstance(s, dict) or "cap" not in s: s=MEM_STATE
+    
+    # Dynamically sync cap with live wallet if database still holds legacy simulation values
+    live_wallet_cap = get_live_usdt_balance(0.0)
+    if live_wallet_cap > 0 and s.get("cap", 0) > live_wallet_cap * 5 and len(s.get("open", [])) == 0:
+        s["cap"] = live_wallet_cap
+        s["peak"] = max(s.get("peak", live_wallet_cap), live_wallet_cap)
+
     s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("peak",1000); s.setdefault("equity",[1000])
     s.setdefault("daily_target_reached", False)
     
@@ -177,7 +214,7 @@ def fill_missing_slots(state):
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP: return state
     
-    cap = state.get("cap", 1000.0)
+    cap = state.get("cap", 36.0)
     open_syms = [t["symbol"] for t in open_tr]
     recent_closed = [c["symbol"] for c in state.get("closed", [])[:3]]
     excluded = list(set(open_syms + recent_closed))
@@ -237,7 +274,7 @@ def fill_missing_slots(state):
     return state
 
 def auto_close_trades(state):
-    cap=state.get("cap",1000.0); new_open=[]; closed_added=False
+    cap=state.get("cap",36.0); new_open=[]; closed_added=False
     now = int(time.time())
     for tr in state.get("open",[]):
         sym=tr["symbol"]; entry=tr["entry"]; side=tr["side"]; pos=tr["pos"]; ts=tr.get("ts",now)
@@ -275,28 +312,28 @@ def auto_close_trades(state):
             new_open.append(tr)
     if closed_added:
         state["open"]=new_open; state["cap"]=cap; state["peak"]=max(state.get("peak",cap), cap)
-        state["equity"]=state.get("equity",[1000])[-100:] + [cap]; state=recalc(state); kv_set(STATE_KEY, state)
+        state["equity"]=state.get("equity",[36])[-100:] + [cap]; state=recalc(state); kv_set(STATE_KEY, state)
     
     state = fill_missing_slots(state)
     return state
 
 def render(state):
     state=auto_close_trades(state); state=fill_missing_slots(state); state=recalc(state)
-    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",1000.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
+    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",36.0); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
     winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
     target_reached = state.get("daily_target_reached", False)
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",333.33); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",12.0); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
         ts=tr.get("ts",int(time.time())); future_pred=tr.get("future_pred",[])
         closes_json = json.dumps(tr.get("closes", [entry]*15))
         
-        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:10px;padding:6px;margin:6px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:12px'>{sym} <span class='badge {side.lower()}'>{side}</span> Allocation: ${pos:.0f}</b><div style='font-size:8px;color:#aaa;margin-top:1px'>ENTRY PRICE: ${entry:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:6px;padding:2px 6px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:4px 0;text-align:center'><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>DURATION</div><div id='live-age-{sym}' style='font-size:10px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:8px;padding:2px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='75' style='width:100%;height:75px;background:#000;border-radius:4px'></canvas></div></div>"""
+        trade_boxes_html+=f"""<div class='trade-box' style='border:2px solid {col};background:#151515;border-radius:10px;padding:6px;margin:6px 0;'><div style='display:flex;justify-content:space-between'><div><b style='color:{col};font-size:12px'>{sym} <span class='badge {side.lower()}'>{side}</span> Allocation: ${pos:.2f}</b><div style='font-size:8px;color:#aaa;margin-top:1px'>ENTRY PRICE: ${entry:.2f}</div></div><button onclick='closeOne("{sym}")' style='background:#222;color:#fff;border:1px solid #444;border-radius:6px;padding:2px 6px;cursor:pointer'>✕</button></div><div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin:4px 0;text-align:center'><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>LIVE</div><div id='live-price-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('price',0):.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>PNL</div><div id='live-pnl-{sym}' style='font-size:12px;font-weight:900;color:{col}'>${tr.get('net',0):+.2f}</div></div><div style='background:#0a0a0a;padding:4px;border-radius:6px'><div style='font-size:7px;color:#888'>DURATION</div><div id='live-age-{sym}' style='font-size:10px;font-weight:900' data-ts='{ts}'>0m 0s</div></div></div><div style='background:#000;border-radius:8px;padding:2px;border:1px solid #222'><canvas id='chart-{sym}' width='340' height='75' style='width:100%;height:75px;background:#000;border-radius:4px'></canvas></div></div>"""
         chart_js_init+=f"initChartFuture('{sym}',{entry},{tp_price},{sl_price},'{side}',{ts},{int(tr.get('age',0))},{json.dumps(future_pred)},{future_change},{confidence},{closes_json},'{pos}','{TOTAL_FEE}');\n"
         
     if not open_tr:
@@ -306,7 +343,7 @@ def render(state):
             trade_boxes_html="""
             <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
                 <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
-                <b style='font-size:11px;letter-spacing:1px'>QUANTITATIVE SCANNER ACTIVE</b>
+                <b style='font-size:11px;letter-spacing:1px'>QUANTITATIVE SCANNER ACTIVE ($36 LIVE CAPITAL)</b>
                 <div style='font-size:8px;color:#888;margin-top:4px'>Analyzing order books, 5M volume & RSI filters...</div>
             </div>
             <style>
@@ -371,7 +408,7 @@ def render(state):
     }}, 1000);
     
     async function callReset(){{
-        if(!confirm('Reset account balance to $1000 and clear cloud storage?')) return;
+        if(!confirm('Reset account balance to live wallet balance and clear cloud storage?')) return;
         try {{
             let res = await fetch('/api/reset?key='+ADMIN_KEY);
             let j = await res.json();
@@ -404,7 +441,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||333.33;
+        let pos = parseFloat(posStr)||12.0;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
