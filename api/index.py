@@ -1,4 +1,4 @@
-""" VENUS v1088 - HIGH-VELOCITY MOMENTUM SPOT ENGINE """
+""" VENUS v1088 - HIGH-VELOCITY MOMENTUM SPOT ENGINE (MOBILE OPTIMIZED) """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 import hmac, hashlib
@@ -97,12 +97,11 @@ ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
 STATE_KEY="VENUS_V1083_STATE"
 
 MAXP=3
-POS_PCT=33.33  # ~$10 slots
+POS_PCT=33.33  
 TOTAL_FEE=0.17
 TP_PCT=1.00       
 SL_PCT=10.50      
 DOLLAR_PROFIT_LOCK = 0.50  
-DAILY_PROFIT_GOAL = 500.0 
 
 def kv_get(k):
     global MEM_STATE
@@ -139,7 +138,6 @@ def kv_del(k):
     except: return True
 
 def fetch_moving_momentum_targets(exclude_syms=[]):
-    """Scans exclusively for coins showing explosive 24hr movement & volume."""
     candidates = []
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
@@ -154,8 +152,7 @@ def fetch_moving_momentum_targets(exclude_syms=[]):
                         if base in exclude_syms or base in ["PUMP", "DUMMY"]: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        # STRICT: Only take coins actively surging by more than 2% with solid volume
-                        if vol > 5000000 and change > 2.0:
+                        if vol > 2000000 and change > 1.0:
                             candidates.append((base, change, vol))
                 candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
                 return [c[0] for c in candidates[:10]]
@@ -174,7 +171,6 @@ def fetch_live_price_fast(base):
     return None, "fail"
 
 def fetch_klines_momentum_check(base):
-    """Validates that the 5-minute candle structure is actively breaking upward."""
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
             url=f"{b}/api/v3/klines?symbol={base}USDT&interval=5m&limit=10"
@@ -183,7 +179,6 @@ def fetch_klines_momentum_check(base):
                 data=json.loads(r.read().decode())
                 closes=[float(k[4]) for k in data if len(k)>4]
                 if len(closes)>=5:
-                    # Check if recent short MA is above mid MA (active upward velocity)
                     ma_short = sum(closes[-3:]) / 3
                     ma_mid = sum(closes[-8:]) / min(8, len(closes))
                     if ma_short > ma_mid:
@@ -219,14 +214,12 @@ def fill_missing_slots(state):
         if len(open_tr) >= MAXP: break
         if base in open_syms: continue
         
-        # Double check active candle velocity before entering
         if not fetch_klines_momentum_check(base): continue
         
         price, src = fetch_live_price_fast(base)
         if not price or price <= 0: continue
         
         pos_size = cap * (POS_PCT / 100.0)
-        
         success, order_res = execute_binance_spot_buy(base, pos_size)
         if not success: continue  
             
@@ -293,14 +286,32 @@ def render(state):
     trade_boxes_html=""
     for tr in open_tr:
         sym=tr["symbol"]; pos=tr.get("pos",10.0); entry=tr.get("entry",0)
-        trade_boxes_html+=f"<div style='border:2px solid #0f8;background:#151515;border-radius:10px;padding:6px;margin:6px 0;'><b>🚀 ACTIVE MOVING TRADE: {sym} SPOT LONG</b> | Size: ${pos:.2f} | Entry: ${entry:.2f}</div>"
+        trade_boxes_html+=f"<div style='border:2px solid #0f8;background:#151515;border-radius:12px;padding:12px;margin:10px 0;font-size:14px;'><b>🚀 ACTIVE TRADE: {sym} SPOT LONG</b><br>Size: ${pos:.2f} | Entry: ${entry:.2f}</div>"
 
     if not open_tr:
-        trade_boxes_html="<div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'><b>HIGH-VELOCITY SCANNER ACTIVE</b><br>Waiting for active surging momentum coins...</div>"
+        trade_boxes_html="<div style='text-align:center;color:#0f8;padding:20px;border:2px solid #0f8;border-radius:12px;background:#111;font-size:15px;'><b>🔍 HIGH-VELOCITY SCANNER ACTIVE</b><br><span style='font-size:12px;color:#aaa;'>Scanning for active surging momentum coins...</span></div>"
         
-    closed_html = "".join([f"<div style='background:#111;padding:5px;border-radius:6px;font-size:8px;'><b>{c.get('symbol')}</b>: ${c.get('net'):+.2f}</div>" for c in closed[:20]]) or "<div style='color:#666;text-align:center;font-size:9px;'>No trades yet.</div>"
+    closed_html = "".join([f"<div style='background:#111;padding:8px;border-radius:8px;font-size:12px;margin-bottom:6px;'><b>{c.get('symbol')}</b>: <span style='color:#0f8;'>${c.get('net'):+.2f}</span></div>" for c in closed[:20]]) or "<div style='color:#666;text-align:center;font-size:13px;'>No trades yet.</div>"
 
-    return f"<html><body style='background:#0a0a0a;color:#eee;font-family:monospace;padding:10px;'><h2>⚡ VENUS MOMENTUM ENGINE - AUM: ${cap:.2f} (W:{wins} L:{loss})</h2><a href='?key={ADMIN_KEY}'><button style='background:#0f8;padding:8px;'>SYNC STATE</button></a> <a href='/api/reset?key={ADMIN_KEY}'><button style='background:#f44;padding:8px;'>WIPE DATA</button></a><hr>{trade_boxes_html}<h3>Recent Ledger</h3>{closed_html}</body></html>"
+    return f"""<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>
+    body{{background:#0a0a0a;color:#eee;font-family:monospace;padding:12px;font-size:14px;}}
+    .btn{{background:#0f8;color:#000;padding:12px 18px;font-weight:900;border:0;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin:4px;}}
+    .btn-reset{{background:#f44;color:#fff;}}
+    </style></head><body>
+    <h2 style='color:#0f8;font-size:18px;'>⚡ VENUS MOMENTUM ENGINE</h2>
+    <div style='background:#151515;padding:12px;border-radius:8px;margin-bottom:12px;font-size:15px;'>
+        <b>AUM:</b> ${cap:.2f} &nbsp;|&nbsp; <b>Wins:</b> {wins} &nbsp;|&nbsp; <b>Losses:</b> {loss}
+    </div>
+    <div style='margin-bottom:14px;'>
+        <a class='btn' href='?key={ADMIN_KEY}'>SYNC STATE</a>
+        <a class='btn btn-reset' href='/api/reset?key={ADMIN_KEY}'>WIPE DATA</a>
+    </div>
+    <hr style='border-color:#333;margin:14px 0;'>
+    <h3 style='font-size:16px;'>Active Trades</h3>
+    {trade_boxes_html}
+    <h3 style='font-size:16px;margin-top:20px;'>Recent Ledger</h3>
+    {closed_html}
+    </body></html>"""
 
 @app.route('/', defaults={'path': ''}, methods=['GET','POST'])
 @app.route('/<path:path>', methods=['GET','POST'])
