@@ -1,6 +1,7 @@
-""" VENUS v1088 - INSTITUTIONAL PNL GRID WITH $34.62 LIVE CAPITAL """
+""" VENUS v1088 - INSTITUTIONAL PNL GRID WITH LIVE BINANCE SPOT EXECUTION """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
+import hmac, hashlib
 
 app = Flask(__name__)
 
@@ -13,7 +14,6 @@ def get_live_usdt_balance(default_fallback=34.62):
     if not API_KEY or not SECRET_KEY:
         return default_fallback
     try:
-        import hmac, hashlib
         query_string = f"timestamp={int(time.time()*1000)}"
         signature = hmac.new(SECRET_KEY.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
         url = f"https://api.binance.com/api/v3/account?{query_string}&signature={signature}"
@@ -28,6 +28,47 @@ def get_live_usdt_balance(default_fallback=34.62):
     except Exception:
         pass
     return default_fallback
+
+def execute_binance_market_order(symbol, side, quote_amount_usdt):
+    """Executes a real live market order directly via Binance REST API."""
+    if not API_KEY or not SECRET_KEY:
+        return False, "Missing API Keys"
+    try:
+        # 1. Fetch current price to calculate correct asset quantity
+        price_url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
+        req_p = urllib.request.Request(price_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req_p, timeout=3) as r:
+            curr_price = float(json.loads(r.read().decode()).get("price", 0))
+        if curr_price <= 0: return False, "Invalid price"
+        
+        # Calculate quantity and format to 3 decimal places
+        raw_qty = quote_amount_usdt / curr_price
+        quantity = round(raw_qty, 3)
+        if quantity <= 0: return False, "Quantity too small"
+
+        # Binance order parameters
+        binance_side = "BUY" if side == "LONG" else "SELL"
+        timestamp = int(time.time() * 1000)
+        query_params = {
+            "symbol": f"{symbol}USDT",
+            "side": binance_side,
+            "type": "MARKET",
+            "quantity": quantity,
+            "timestamp": timestamp
+        }
+        
+        query_string = urllib.parse.urlencode(query_params)
+        signature = hmac.new(SECRET_KEY.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+        full_query = f"{query_string}&signature={signature}"
+        
+        url = f"https://api.binance.com/api/v3/order?{full_query}"
+        req = urllib.request.Request(url, method="POST", headers={"X-MBX-APIKEY": API_KEY, "User-Agent": "Mozilla/5.0"})
+        
+        with urllib.request.urlopen(req, timeout=5) as r:
+            res_data = json.loads(r.read().decode())
+            return True, res_data
+    except Exception as e:
+        return False, str(e)
 
 INITIAL_LIVE_CAP = get_live_usdt_balance(34.62)
 
@@ -232,13 +273,19 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price <= 0: continue
         
+        pos_size = cap * (POS_PCT / 100.0)
+        
+        # Fire actual live order to Binance exchange
+        success, order_res = execute_binance_market_order(base, side, pos_size)
+        if not success:
+            continue  # Skip if exchange rejects due to balance or limits
+            
         future_change = TP_PCT if side == "LONG" else -TP_PCT
         future_pred = []
         for i in range(1, 8):
             prog = i / 7.0
             future_pred.append(price * (1 + (future_change / 100) * prog))
             
-        pos_size = cap * (POS_PCT / 100.0)
         tr = {
             "symbol": base,
             "side": side,
@@ -253,7 +300,7 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"INSTITUTIONAL EXECUTION {base} 5M {side}",
+            "reason": f"BINANCE EXCHANGE EXECUTION {base} 5M {side}",
             "analysis": f"Active Alpha Stream Active",
             "future_pred": future_pred,
             "future_change": future_change,
@@ -301,6 +348,10 @@ def auto_close_trades(state):
             should_close=True; close_reason=f"EXPIRY REACHED"
         
         if should_close:
+            # Send closing order to Binance exchange
+            closing_side = "SELL" if side == "LONG" else "BUY"
+            execute_binance_market_order(sym, closing_side, pos)
+            
             cap+=net_val
             state["closed"].insert(0,{"symbol":sym,"side":side,"net":net_val,"reason":f"{close_reason} | ${live_price:.2f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
             closed_added=True
@@ -340,8 +391,8 @@ def render(state):
             trade_boxes_html="""
             <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
                 <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
-                <b style='font-size:11px;letter-spacing:1px'>QUANTITATIVE SCANNER ACTIVE ($34.62 LIVE CAPITAL)</b>
-                <div style='font-size:8px;color:#888;margin-top:4px'>Analyzing order books, 5M volume & RSI filters...</div>
+                <b style='font-size:11px;letter-spacing:1px'>BINANCE SPOT EXECUTION ACTIVE ($34.62)</b>
+                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning markets and dispatching live exchange orders...</div>
             </div>
             <style>
             @keyframes blink {
