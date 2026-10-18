@@ -1,7 +1,6 @@
 """ VENUS v1088 - INSTITUTIONAL PNL GRID WITH $2.50 PROFIT SECURE LOCK """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
-from binance.client import Client  # Added for direct Binance live balance fetching
 
 app = Flask(__name__)
 
@@ -9,29 +8,29 @@ app = Flask(__name__)
 BINANCE_API_KEY = os.environ.get("BINANCE_API_KEY", "")
 BINANCE_SECRET_KEY = os.environ.get("BINANCE_SECRET_KEY", "")
 
-# Initialize Binance live client safely
-binance_client = None
-if BINANCE_API_KEY and BINANCE_SECRET_KEY:
+def get_live_usdt_balance(default_fallback=36.0):
+    """Safely fetches real-time live USDT balance from Binance API via raw HTTP request to avoid missing dependency crashes."""
+    if not BINANCE_API_KEY or not BINANCE_SECRET_KEY:
+        return default_fallback
     try:
-        binance_client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
+        import hmac, hashlib
+        query_string = f"timestamp={int(time.time()*1000)}"
+        signature = hmac.new(BINANCE_SECRET_KEY.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+        url = f"https://api.binance.com/api/v3/account?{query_string}&signature={signature}"
+        req = urllib.request.Request(url, headers={"X-MBX-APIKEY": BINANCE_API_KEY, "User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            data = json.loads(r.read().decode())
+            for asset in data.get("balances", []):
+                if asset.get("asset") == "USDT":
+                    free_val = float(asset.get("free", 0))
+                    if free_val > 0:
+                        return free_val
     except Exception:
-        binance_client = None
-
-def get_live_usdt_balance(default_fallback=1000.0):
-    """Fetches real-time live USDT balance from Binance wallet if API keys are configured."""
-    if binance_client:
-        try:
-            balance_info = binance_client.get_asset_balance(asset='USDT')
-            if balance_info and "free" in balance_info:
-                live_free = float(balance_info["free"])
-                if live_free > 0:
-                    return live_free
-        except Exception:
-            pass
+        pass
     return default_fallback
 
-# Initial dynamic capital baseline (pulls live Binance balance or falls back gracefully)
-INITIAL_LIVE_CAP = get_live_usdt_balance(1000.0)
+# Initial dynamic capital baseline (defaults safely to $36 live allocation)
+INITIAL_LIVE_CAP = get_live_usdt_balance(36.0)
 
 MEM_STATE={"cap":INITIAL_LIVE_CAP,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":INITIAL_LIVE_CAP,"equity":[INITIAL_LIVE_CAP],"daily_target_reached":False,"last_cron":"mem v1088 GRID"}
 
@@ -80,7 +79,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    current_live_cap = get_live_usdt_balance(1000.0)
+    current_live_cap = get_live_usdt_balance(36.0)
     MEM_STATE={"cap":current_live_cap,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":current_live_cap,"equity":[current_live_cap],"daily_target_reached":False,"last_cron":"reset v1088 GRID"}
     if not KV_URL or not KV_TOKEN: return True
     try:
@@ -180,13 +179,13 @@ def load_state():
     s=kv_get(STATE_KEY)
     if not s or not isinstance(s, dict) or "cap" not in s: s=MEM_STATE
     
-    # Dynamically sync cap with live wallet if database still holds legacy simulation values
-    live_wallet_cap = get_live_usdt_balance(0.0)
-    if live_wallet_cap > 0 and s.get("cap", 0) > live_wallet_cap * 5 and len(s.get("open", [])) == 0:
+    # Sync cap with live wallet if database still holds legacy simulation values
+    live_wallet_cap = get_live_usdt_balance(36.0)
+    if live_wallet_cap > 0 and (s.get("cap", 0) > 100 or s.get("cap", 0) != live_wallet_cap) and len(s.get("open", [])) == 0:
         s["cap"] = live_wallet_cap
         s["peak"] = max(s.get("peak", live_wallet_cap), live_wallet_cap)
 
-    s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("peak",1000); s.setdefault("equity",[1000])
+    s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("peak",36); s.setdefault("equity",[36])
     s.setdefault("daily_target_reached", False)
     
     unique_open=[]
