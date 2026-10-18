@@ -1,10 +1,10 @@
-""" VENUS v1086 - ULTRA-CLEAN INSTITUTIONAL PNL GRID WITH PULSING SCANNER """
+""" VENUS v1088 - INSTITUTIONAL PNL GRID WITH $2.50 PROFIT SECURE LOCK """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 
 app = Flask(__name__)
 
-MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1086 GRID"}
+MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"mem v1088 GRID"}
 
 def env(k):
     for kk in k:
@@ -22,6 +22,7 @@ TOTAL_FEE=0.17
 
 TP_PCT=1.00       
 SL_PCT=10.50      
+DOLLAR_PROFIT_LOCK = 2.50  # Instantly lock trade when net PnL hits $2.50 or higher
 DAILY_PROFIT_GOAL = 500.0 
 MAX_AGE_SECONDS = 86400 
 
@@ -50,7 +51,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1086 GRID"}
+    MEM_STATE={"cap":1000.0,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":1000.0,"equity":[1000.0],"daily_target_reached":False,"last_cron":"reset v1088 GRID"}
     if not KV_URL or not KV_TOKEN: return True
     try:
         body=json.dumps([["SET",k,json.dumps(MEM_STATE)]]).encode()
@@ -247,13 +248,18 @@ def auto_close_trades(state):
         pct=(live_price-entry)/entry*100 if side=="LONG" else (entry-live_price)/entry*100
         age = now - ts
         
+        pct_net=pct-TOTAL_FEE
+        net_val=pos*pct_net/100
+        
         peak = max(tr.get("peak_gross", 0.0), pct)
         tr["peak_gross"] = peak
         
         should_close=False; close_reason=""
-        if pct >= TP_PCT: 
+        if net_val >= DOLLAR_PROFIT_LOCK:
+            should_close=True; close_reason=f"$2.50+ PROFIT SECURED (+${net_val:.2f})"
+        elif pct >= TP_PCT: 
             should_close=True; close_reason=f"TP SECURED +{pct:.2f}%"
-        elif peak >= 1.20 and pct <= (peak - 0.25):
+        elif peak >= 1.00 and pct <= (peak - 0.25):  # Trailing lock on pullback
             should_close=True; close_reason=f"PEAK-LOCK SECURED (+{pct:.2f}%)"
         elif pct <= -SL_PCT: 
             should_close=True; close_reason=f"SL BUFFER TRIGGERED"
@@ -261,11 +267,11 @@ def auto_close_trades(state):
             should_close=True; close_reason=f"EXPIRY REACHED"
         
         if should_close:
-            pct_net=pct-TOTAL_FEE; net=pos*pct_net/100; cap+=net
-            state["closed"].insert(0,{"symbol":sym,"side":side,"net":net,"reason":f"{close_reason} | ${live_price:.2f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
+            cap+=net_val
+            state["closed"].insert(0,{"symbol":sym,"side":side,"net":net_val,"reason":f"{close_reason} | ${live_price:.2f}","pct_gross":pct,"pct_net":pct_net,"age":age,"pos":pos,"entry":entry,"exit":live_price})
             closed_added=True
         else:
-            tr["pct_gross"]=pct; tr["pct"]=pct-TOTAL_FEE; tr["net"]=pos*(pct-TOTAL_FEE)/100; tr["price"]=live_price; tr["age"]=age
+            tr["pct_gross"]=pct; tr["pct"]=pct_net; tr["net"]=net_val; tr["price"]=live_price; tr["age"]=age
             new_open.append(tr)
     if closed_added:
         state["open"]=new_open; state["cap"]=cap; state["peak"]=max(state.get("peak",cap), cap)
@@ -424,7 +430,7 @@ def render(state):
                         priceEl.style.color = pct>=0 ? '#0f8' : '#f44';
                     }}
                     
-                    if(pct >= {TP_PCT} || pct <= -{SL_PCT}) {{ location.reload(); }}
+                    if(netVal >= {DOLLAR_PROFIT_LOCK} || pct <= -{SL_PCT}) {{ location.reload(); }}
                 }}
             }}catch(e){{}}
         }}
@@ -432,18 +438,35 @@ def render(state):
             let w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
             let currentPrices = [...normalizedCloses, ...live];
             if(currentPrices.length<2) currentPrices=[entry, entry];
-            let all=[...currentPrices, ...(futurePred || [])]; let mn=Math.min(...all)*0.999, mx=Math.max(...all)*1.001;
+            
+            let recentLive = live.slice(-5);
+            let velocity = recentLive.length > 1 ? (recentLive[recentLive.length-1] - recentLive[0]) / recentLive.length : 0;
+            let lastPrice = currentPrices[currentPrices.length - 1];
+            
+            let dynamicPred = [];
+            let steps = 7;
+            for(let i=1; i<=steps; i++) {{
+                let prog = i / steps;
+                let targetStepPrice = lastPrice + ((tp > lastPrice ? tp - lastPrice : lastPrice - tp) * (side=='LONG'?1:-1) * (prog * 0.5));
+                let waveAdjustment = Math.sin(prog * Math.PI) * (velocity * 2);
+                dynamicPred.push(targetStepPrice + waveAdjustment);
+            }}
+
+            let all=[...currentPrices, ...dynamicPred]; let mn=Math.min(...all)*0.999, mx=Math.max(...all)*1.001;
             function yF(p){{return h*0.85-((p-mn)/(mx-mn||1))*h*0.7;}}
+            
             let ey=yF(entry); ctx.strokeStyle='#fc0'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,ey); ctx.lineTo(w,ey); ctx.stroke();
             let tpy=yF(tp); ctx.strokeStyle='#0f8'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,tpy); ctx.lineTo(w,tpy); ctx.stroke(); ctx.setLineDash([]);
             let sly=yF(sl); ctx.strokeStyle='#f44'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(0,sly); ctx.lineTo(w,sly); ctx.stroke(); ctx.setLineDash([]);
+            
             ctx.strokeStyle=side=='LONG'?'#0f8':'#f44'; ctx.lineWidth=2; ctx.beginPath();
-            currentPrices.forEach((p,i)=>{{let x=i/(currentPrices.length+(futurePred||[]).length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
-            if(futurePred && futurePred.length>0){{
+            currentPrices.forEach((p,i)=>{{let x=i/(currentPrices.length+dynamicPred.length-1)*w*0.7, y=yF(p); if(i==0)ctx.moveTo(x,y); else ctx.lineTo(x,y);}}); ctx.stroke();
+            
+            if(dynamicPred && dynamicPred.length>0){{
                 ctx.strokeStyle='#fc0'; ctx.setLineDash([4,4]); ctx.beginPath();
-                let lx=(currentPrices.length-1)/(currentPrices.length+futurePred.length-1)*w*0.7, ly=yF(currentPrices[currentPrices.length-1]);
+                let lx=(currentPrices.length-1)/(currentPrices.length+dynamicPred.length-1)*w*0.7, ly=yF(currentPrices[currentPrices.length-1]);
                 ctx.moveTo(lx,ly);
-                futurePred.forEach((fp,i)=>{{let x=(currentPrices.length+i)/(currentPrices.length+futurePred.length-1)*w*0.9; ctx.lineTo(x, yF(fp));}});
+                dynamicPred.forEach((fp,i)=>{{let x=(currentPrices.length+i)/(currentPrices.length+dynamicPred.length-1)*w*0.9; ctx.lineTo(x, yF(fp));}});
                 ctx.stroke(); ctx.setLineDash([]);
             }}
         }}
