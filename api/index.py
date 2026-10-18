@@ -1,4 +1,4 @@
-""" VENUS v1088 - HIGH-VELOCITY MOMENTUM SPOT ENGINE (MOBILE OPTIMIZED) """
+""" VENUS v1088 - $5 TEST TRADE LIVE SPOT ENGINE """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 import hmac, hashlib
@@ -96,12 +96,11 @@ KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_O
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
 STATE_KEY="VENUS_V1083_STATE"
 
-MAXP=3
-POS_PCT=33.33  
-TOTAL_FEE=0.17
+MAXP=1
+TEST_POS_SIZE = 5.0  # Exactly $5 test trade size
 TP_PCT=1.00       
 SL_PCT=10.50      
-DOLLAR_PROFIT_LOCK = 0.50  
+DOLLAR_PROFIT_LOCK = 0.20  
 
 def kv_get(k):
     global MEM_STATE
@@ -137,8 +136,8 @@ def kv_del(k):
         with urllib.request.urlopen(req, timeout=4) as r: return True
     except: return True
 
-def fetch_moving_momentum_targets(exclude_syms=[]):
-    candidates = []
+def fetch_test_target():
+    """Loosened filter to grab the very first available moving coin for a $5 test."""
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
         try:
             url=f"{b}/api/v3/ticker/24hr"
@@ -149,15 +148,13 @@ def fetch_moving_momentum_targets(exclude_syms=[]):
                     sym=item.get("symbol","")
                     if sym.endswith("USDT") and not any(x in sym for x in ["UP","DOWN","BULL","BEAR","TEST"]):
                         base=sym[:-4]
-                        if base in exclude_syms or base in ["PUMP", "DUMMY"]: continue
+                        if base in ["PUMP", "DUMMY"]: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        if vol > 2000000 and change > 1.0:
-                            candidates.append((base, change, vol))
-                candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
-                return [c[0] for c in candidates[:10]]
+                        if vol > 1000000 and change > 0.1: # Extremely loose filter to fire instantly
+                            return base
         except: continue
-    return []
+    return "BTC"
 
 def fetch_live_price_fast(base):
     for b in ["https://data-api.binance.vision","https://api.binance.com"]:
@@ -169,22 +166,6 @@ def fetch_live_price_fast(base):
                 if price > 0: return price, "binance"
         except: continue
     return None, "fail"
-
-def fetch_klines_momentum_check(base):
-    for b in ["https://data-api.binance.vision","https://api.binance.com"]:
-        try:
-            url=f"{b}/api/v3/klines?symbol={base}USDT&interval=5m&limit=10"
-            req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=5) as r:
-                data=json.loads(r.read().decode())
-                closes=[float(k[4]) for k in data if len(k)>4]
-                if len(closes)>=5:
-                    ma_short = sum(closes[-3:]) / 3
-                    ma_mid = sum(closes[-8:]) / min(8, len(closes))
-                    if ma_short > ma_mid:
-                        return True
-        except: continue
-    return False
 
 def load_state():
     s=kv_get(STATE_KEY)
@@ -205,45 +186,32 @@ def fill_missing_slots(state):
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP: return state
     
-    cap = 30.0
-    open_syms = [t["symbol"] for t in open_tr]
-    targets = fetch_moving_momentum_targets(exclude_syms=open_syms)
-    added = False
+    base = fetch_test_target()
+    if not base: return state
     
-    for base in targets:
-        if len(open_tr) >= MAXP: break
-        if base in open_syms: continue
+    price, src = fetch_live_price_fast(base)
+    if not price or price <= 0: return state
+    
+    success, order_res = execute_binance_spot_buy(base, TEST_POS_SIZE)
+    if not success: return state  
         
-        if not fetch_klines_momentum_check(base): continue
-        
-        price, src = fetch_live_price_fast(base)
-        if not price or price <= 0: continue
-        
-        pos_size = cap * (POS_PCT / 100.0)
-        success, order_res = execute_binance_spot_buy(base, pos_size)
-        if not success: continue  
-            
-        qty_purchased = pos_size / price
-        tr = {
-            "symbol": base,
-            "side": "LONG",
-            "entry": price,
-            "price": price,
-            "pos": pos_size,
-            "qty": qty_purchased,
-            "ts": int(time.time()),
-            "tp": TP_PCT,
-            "sl": SL_PCT,
-            "reason": f"MOMENTUM SPOT LONG {base}"
-        }
-        open_tr.append(tr)
-        open_syms.append(base)
-        added = True
-        
-    if added:
-        state["open"] = open_tr
-        state = recalc(state)
-        kv_set(STATE_KEY, state)
+    qty_purchased = TEST_POS_SIZE / price
+    tr = {
+        "symbol": base,
+        "side": "LONG",
+        "entry": price,
+        "price": price,
+        "pos": TEST_POS_SIZE,
+        "qty": qty_purchased,
+        "ts": int(time.time()),
+        "tp": TP_PCT,
+        "sl": SL_PCT,
+        "reason": f"$5 TEST SPOT LONG {base}"
+    }
+    open_tr.append(tr)
+    state["open"] = open_tr
+    state = recalc(state)
+    kv_set(STATE_KEY, state)
     return state
 
 def auto_close_trades(state):
@@ -255,7 +223,7 @@ def auto_close_trades(state):
             new_open.append(tr)
             continue
         pct=(live_price-entry)/entry*100
-        net_val = pos * (pct - TOTAL_FEE) / 100
+        net_val = pos * pct / 100
         
         should_close=False; close_reason=""
         if net_val >= DOLLAR_PROFIT_LOCK:
@@ -285,11 +253,11 @@ def render(state):
     
     trade_boxes_html=""
     for tr in open_tr:
-        sym=tr["symbol"]; pos=tr.get("pos",10.0); entry=tr.get("entry",0)
-        trade_boxes_html+=f"<div style='border:2px solid #0f8;background:#151515;border-radius:12px;padding:12px;margin:10px 0;font-size:14px;'><b>🚀 ACTIVE TRADE: {sym} SPOT LONG</b><br>Size: ${pos:.2f} | Entry: ${entry:.2f}</div>"
+        sym=tr["symbol"]; pos=tr.get("pos",5.0); entry=tr.get("entry",0)
+        trade_boxes_html+=f"<div style='border:2px solid #0f8;background:#151515;border-radius:12px;padding:12px;margin:10px 0;font-size:14px;'><b>🚀 $5 TEST TRADE ACTIVE: {sym} SPOT LONG</b><br>Size: ${pos:.2f} | Entry: ${entry:.2f}</div>"
 
     if not open_tr:
-        trade_boxes_html="<div style='text-align:center;color:#0f8;padding:20px;border:2px solid #0f8;border-radius:12px;background:#111;font-size:15px;'><b>🔍 HIGH-VELOCITY SCANNER ACTIVE</b><br><span style='font-size:12px;color:#aaa;'>Scanning for active surging momentum coins...</span></div>"
+        trade_boxes_html="<div style='text-align:center;color:#0f8;padding:20px;border:2px solid #0f8;border-radius:12px;background:#111;font-size:15px;'><b>🔍 FIRING $5 TEST ORDER...</b><br><span style='font-size:12px;color:#aaa;'>Connecting to Binance API...</span></div>"
         
     closed_html = "".join([f"<div style='background:#111;padding:8px;border-radius:8px;font-size:12px;margin-bottom:6px;'><b>{c.get('symbol')}</b>: <span style='color:#0f8;'>${c.get('net'):+.2f}</span></div>" for c in closed[:20]]) or "<div style='color:#666;text-align:center;font-size:13px;'>No trades yet.</div>"
 
@@ -298,7 +266,7 @@ def render(state):
     .btn{{background:#0f8;color:#000;padding:12px 18px;font-weight:900;border:0;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin:4px;}}
     .btn-reset{{background:#f44;color:#fff;}}
     </style></head><body>
-    <h2 style='color:#0f8;font-size:18px;'>⚡ VENUS MOMENTUM ENGINE</h2>
+    <h2 style='color:#0f8;font-size:18px;'>⚡ VENUS $5 TEST ENGINE</h2>
     <div style='background:#151515;padding:12px;border-radius:8px;margin-bottom:12px;font-size:15px;'>
         <b>AUM:</b> ${cap:.2f} &nbsp;|&nbsp; <b>Wins:</b> {wins} &nbsp;|&nbsp; <b>Losses:</b> {loss}
     </div>
