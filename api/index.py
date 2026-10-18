@@ -85,9 +85,9 @@ KV_TOKEN=env(["KV_REST_API_TOKEN","UPSTASH_REDIS_REST_TOKEN","KV_REST_API_READ_O
 ADMIN_KEY=env(["ADMIN_KEY"]) or "venus727"
 STATE_KEY="VENUS_V1083_STATE"
 
-# --- SINGLE COIN FULL ALLOCATION ENGINE CONFIG ---
-MAXP=1         # Restricted to 1 single position at a time
-POS_PCT=98.0   # Allocates ~ $34.00 of your total balance into the single coin
+# --- $30 ROUNDED CAPITAL ENGINE CONFIG ---
+MAXP=3         # 3 concurrent slots
+POS_PCT=33.33  # Allocates exactly ~$10.00 per slot based on a $30 pool target
 TOTAL_FEE=0.17
 
 TP_PCT=1.00       
@@ -145,7 +145,7 @@ def fetch_hyper_volatile_targets(exclude_syms=[]):
                         if base in exclude_syms or base in ["PUMP", "DUMMY"]: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        if vol > 5000000 and abs(change) > 1.5:
+                        if vol > 3000000 and abs(change) > 1.0:
                             candidates.append((base, abs(change), vol))
                 candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
                 return [c[0] for c in candidates[:15]]
@@ -207,9 +207,9 @@ def analyze_signal_advanced(closes, volumes):
     
     rsi = calculate_rsi(closes)
     
-    if ma_short >= ma_mid and rsi < 80:
+    if ma_short >= ma_mid and rsi < 85:
         return "LONG", momentum_delta
-    elif ma_short < ma_mid and rsi > 20:
+    elif ma_short < ma_mid and rsi > 15:
         return "SHORT", momentum_delta
         
     return "SKIP", momentum_delta
@@ -251,7 +251,7 @@ def fill_missing_slots(state):
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP: return state
     
-    cap = state.get("cap", 34.62)
+    cap = 30.0  # Base calculation on $30 target pool (~$10 per trade slot)
     open_syms = [t["symbol"] for t in open_tr]
     recent_closed = [c["symbol"] for c in state.get("closed", [])[:3]]
     excluded = list(set(open_syms + recent_closed))
@@ -272,7 +272,7 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price <= 0: continue
         
-        pos_size = cap * (POS_PCT / 100.0)  # Allocates ~$34 into single trade
+        pos_size = cap * (POS_PCT / 100.0)  # Exactly ~$10.00 per slot
         
         success, order_res = execute_binance_market_order(base, side, pos_size)
         if not success:
@@ -298,7 +298,7 @@ def fill_missing_slots(state):
             "age": 0,
             "tp": TP_PCT,
             "sl": SL_PCT,
-            "reason": f"BINANCE FULL ALLOCATION {base} 5M {side}",
+            "reason": f"BINANCE $10 SLOT EXECUTION {base} 5M {side}",
             "analysis": f"Active Alpha Stream Active",
             "future_pred": future_pred,
             "future_change": future_change,
@@ -371,7 +371,7 @@ def render(state):
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",34.0); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",10.0); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
@@ -388,8 +388,8 @@ def render(state):
             trade_boxes_html="""
             <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
                 <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
-                <b style='font-size:11px;letter-spacing:1px'>BINANCE FULL ALLOCATION ACTIVE ($34.62)</b>
-                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning for single high-conviction sniper trade (~$34 target)...</div>
+                <b style='font-size:11px;letter-spacing:1px'>BINANCE $10 SLOT EXECUTION ACTIVE</b>
+                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning markets for high-momentum ~$10 slot targets...</div>
             </div>
             <style>
             @keyframes blink {
@@ -486,7 +486,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||34.0;
+        let pos = parseFloat(posStr)||10.0;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
