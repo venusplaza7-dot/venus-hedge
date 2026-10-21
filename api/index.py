@@ -1,4 +1,4 @@
-""" VENUS v1088 - INSTITUTIONAL PNL GRID ($1000 CAP / $333 POS) """
+""" VENUS v1088 - INSTITUTIONAL PNL GRID ($1000 CAP / $333 POS - RELAXED FILTERS) """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 import hmac, hashlib
@@ -123,10 +123,11 @@ def fetch_hyper_volatile_targets(exclude_syms=[]):
                         if base in exclude_syms or base in ["PUMP", "DUMMY"]: continue
                         vol=float(item.get("quoteVolume",0))
                         change=float(item.get("priceChangePercent",0))
-                        if vol > 20000000 and abs(change) > 3.0:
+                        # Relaxed filters: Volume > 5M, Abs Change > 1.5%
+                        if vol > 5000000 and abs(change) > 1.5:
                             candidates.append((base, abs(change), vol))
                 candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
-                return [c[0] for c in candidates[:15]]
+                return [c[0] for c in candidates[:20]]
         except: continue
     return ["BTC", "ETH", "SOL"]
 
@@ -184,13 +185,11 @@ def analyze_signal_advanced(closes, volumes):
     momentum_delta = ((closes[-1] - closes[-5]) / closes[-5]) * 100
     
     rsi = calculate_rsi(closes)
-    avg_volume = sum(volumes[-10:]) / 10 if volumes and len(volumes) >= 10 else 0
-    current_volume = volumes[-1] if volumes else 0
-    volume_confirmed = current_volume > (avg_volume * 0.8)
     
-    if ma_short > ma_mid and momentum_delta > 0.15 and rsi < 72 and volume_confirmed:
+    # Relaxed signal rules to trigger trades more dynamically
+    if ma_short >= ma_mid and momentum_delta > 0.05 and rsi < 78:
         return "LONG", momentum_delta
-    elif ma_short < ma_mid and momentum_delta < -0.15 and rsi > 28 and volume_confirmed:
+    elif ma_short <= ma_mid and momentum_delta < -0.05 and rsi > 22:
         return "SHORT", momentum_delta
         
     return "SKIP", momentum_delta
@@ -366,7 +365,7 @@ def render(state):
             <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
                 <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
                 <b style='font-size:11px;letter-spacing:1px'>BINANCE SPOT EXECUTION ACTIVE ($1000 AUM / $333 POS)</b>
-                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning markets and dispatching live exchange orders...</div>
+                <div style='font-size:8px;color:#888;margin-top:4px'>Scanning markets with relaxed filters for active entries...</div>
             </div>
             <style>
             @keyframes blink {
