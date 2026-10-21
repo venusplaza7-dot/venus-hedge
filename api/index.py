@@ -1,33 +1,16 @@
-""" VENUS v1088 - INSTITUTIONAL PNL GRID WITH LIVE BINANCE SPOT EXECUTION ($1000 CAP / $333 POS) """
+""" VENUS v1088 - INSTITUTIONAL PNL GRID ($1000 CAP / $333 POS) """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 import hmac, hashlib
 
 app = Flask(__name__)
 
-# Load Binance credentials securely from Vercel environment variables
 API_KEY = os.environ.get("BINANCE_API_KEY", "")
 SECRET_KEY = os.environ.get("BINANCE_SECRET_KEY", "")
 
 def get_live_usdt_balance(default_fallback=1000.00):
-    """Safely fetches exact real-time live USDT balance from Binance API via lightweight raw HTTP request."""
-    if not API_KEY or not SECRET_KEY:
-        return default_fallback
-    try:
-        query_string = f"timestamp={int(time.time()*1000)}"
-        signature = hmac.new(SECRET_KEY.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
-        url = f"https://api.binance.com/api/v3/account?{query_string}&signature={signature}"
-        req = urllib.request.Request(url, headers={"X-MBX-APIKEY": API_KEY, "User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=3) as r:
-            data = json.loads(r.read().decode())
-            for asset in data.get("balances", []):
-                if asset.get("asset") == "USDT":
-                    free_val = float(asset.get("free", 0))
-                    if free_val > 0:
-                        return free_val
-    except Exception:
-        pass
-    return default_fallback
+    """Enforces the $1,000 strategy capital baseline for the trading engine."""
+    return 1000.00
 
 def execute_binance_market_order(symbol, side, quote_amount_usdt):
     """Executes a real live market order directly via Binance REST API."""
@@ -87,7 +70,7 @@ TOTAL_FEE=0.17
 
 TP_PCT=1.00       
 SL_PCT=10.50      
-DOLLAR_PROFIT_LOCK = 10.00  # Adjusted profit lock for $333 allocation scale
+DOLLAR_PROFIT_LOCK = 10.00  
 DAILY_PROFIT_GOAL = 500.0 
 MAX_AGE_SECONDS = 86400 
 
@@ -216,12 +199,8 @@ def load_state():
     s=kv_get(STATE_KEY)
     if not s or not isinstance(s, dict) or "cap" not in s: s=MEM_STATE
     
-    live_wallet_cap = get_live_usdt_balance(1000.00)
-    if live_wallet_cap > 0 and len(s.get("open", [])) == 0:
-        s["cap"] = live_wallet_cap
-        s["peak"] = max(s.get("peak", live_wallet_cap), live_wallet_cap)
-
-    s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("peak",live_wallet_cap); s.setdefault("equity",[live_wallet_cap])
+    s["cap"] = 1000.00
+    s.setdefault("scan",0); s.setdefault("scan_offset",0); s.setdefault("full_scans",0); s.setdefault("open",[]); s.setdefault("closed",[]); s.setdefault("peak",1000.00); s.setdefault("equity",[1000.00])
     s.setdefault("daily_target_reached", False)
     
     unique_open=[]
@@ -249,7 +228,7 @@ def fill_missing_slots(state):
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP: return state
     
-    cap = state.get("cap", 1000.00)
+    cap = 1000.00
     open_syms = [t["symbol"] for t in open_tr]
     recent_closed = [c["symbol"] for c in state.get("closed", [])[:3]]
     excluded = list(set(open_syms + recent_closed))
@@ -270,7 +249,7 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price <= 0: continue
         
-        pos_size = cap * (POS_PCT / 100.0) # ~$333.33 per position
+        pos_size = cap * (POS_PCT / 100.0) # $333.33 per position
         
         success, order_res = execute_binance_market_order(base, side, pos_size)
         if not success:
@@ -451,7 +430,7 @@ def render(state):
     }}, 1000);
     
     async function callReset(){{
-        if(!confirm('Reset account balance to live wallet balance and clear cloud storage?')) return;
+        if(!confirm('Reset account balance to $1,000 and clear cloud storage?')) return;
         try {{
             let res = await fetch('/api/reset?key='+ADMIN_KEY);
             let j = await res.json();
