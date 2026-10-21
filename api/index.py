@@ -1,4 +1,4 @@
-""" VENUS v1088 - INSTITUTIONAL PNL GRID WITH LIVE BINANCE SPOT EXECUTION """
+""" VENUS v1088 - INSTITUTIONAL PNL GRID WITH LIVE BINANCE SPOT EXECUTION ($1000 CAP / $333 POS) """
 from flask import Flask, request, Response
 import os, json, time, urllib.request, urllib.parse, math
 import hmac, hashlib
@@ -9,7 +9,7 @@ app = Flask(__name__)
 API_KEY = os.environ.get("BINANCE_API_KEY", "")
 SECRET_KEY = os.environ.get("BINANCE_SECRET_KEY", "")
 
-def get_live_usdt_balance(default_fallback=34.62):
+def get_live_usdt_balance(default_fallback=1000.00):
     """Safely fetches exact real-time live USDT balance from Binance API via lightweight raw HTTP request."""
     if not API_KEY or not SECRET_KEY:
         return default_fallback
@@ -34,19 +34,16 @@ def execute_binance_market_order(symbol, side, quote_amount_usdt):
     if not API_KEY or not SECRET_KEY:
         return False, "Missing API Keys"
     try:
-        # 1. Fetch current price to calculate correct asset quantity
         price_url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
         req_p = urllib.request.Request(price_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req_p, timeout=3) as r:
             curr_price = float(json.loads(r.read().decode()).get("price", 0))
         if curr_price <= 0: return False, "Invalid price"
         
-        # Calculate quantity and format to 3 decimal places
         raw_qty = quote_amount_usdt / curr_price
         quantity = round(raw_qty, 3)
         if quantity <= 0: return False, "Quantity too small"
 
-        # Binance order parameters
         binance_side = "BUY" if side == "LONG" else "SELL"
         timestamp = int(time.time() * 1000)
         query_params = {
@@ -70,7 +67,7 @@ def execute_binance_market_order(symbol, side, quote_amount_usdt):
     except Exception as e:
         return False, str(e)
 
-INITIAL_LIVE_CAP = get_live_usdt_balance(34.62)
+INITIAL_LIVE_CAP = get_live_usdt_balance(1000.00)
 
 MEM_STATE={"cap":INITIAL_LIVE_CAP,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":INITIAL_LIVE_CAP,"equity":[INITIAL_LIVE_CAP],"daily_target_reached":False,"last_cron":"mem v1088 GRID"}
 
@@ -90,7 +87,7 @@ TOTAL_FEE=0.17
 
 TP_PCT=1.00       
 SL_PCT=10.50      
-DOLLAR_PROFIT_LOCK = 2.50  
+DOLLAR_PROFIT_LOCK = 10.00  # Adjusted profit lock for $333 allocation scale
 DAILY_PROFIT_GOAL = 500.0 
 MAX_AGE_SECONDS = 86400 
 
@@ -119,7 +116,7 @@ def kv_set(k,o):
 
 def kv_del(k):
     global MEM_STATE
-    current_live_cap = get_live_usdt_balance(34.62)
+    current_live_cap = get_live_usdt_balance(1000.00)
     MEM_STATE={"cap":current_live_cap,"daily":0.0,"fees_paid":0.0,"wins":0,"loss":0,"total":0,"scan":0,"scan_offset":0,"full_scans":0,"open":[],"closed":[],"peak":current_live_cap,"equity":[current_live_cap],"daily_target_reached":False,"last_cron":"reset v1088 GRID"}
     if not KV_URL or not KV_TOKEN: return True
     try:
@@ -219,7 +216,7 @@ def load_state():
     s=kv_get(STATE_KEY)
     if not s or not isinstance(s, dict) or "cap" not in s: s=MEM_STATE
     
-    live_wallet_cap = get_live_usdt_balance(34.62)
+    live_wallet_cap = get_live_usdt_balance(1000.00)
     if live_wallet_cap > 0 and len(s.get("open", [])) == 0:
         s["cap"] = live_wallet_cap
         s["peak"] = max(s.get("peak", live_wallet_cap), live_wallet_cap)
@@ -252,7 +249,7 @@ def fill_missing_slots(state):
     open_tr = state.get("open", [])
     if len(open_tr) >= MAXP: return state
     
-    cap = state.get("cap", 34.62)
+    cap = state.get("cap", 1000.00)
     open_syms = [t["symbol"] for t in open_tr]
     recent_closed = [c["symbol"] for c in state.get("closed", [])[:3]]
     excluded = list(set(open_syms + recent_closed))
@@ -273,12 +270,11 @@ def fill_missing_slots(state):
         price, src = fetch_live_price_fast(base)
         if not price or price <= 0: continue
         
-        pos_size = cap * (POS_PCT / 100.0)
+        pos_size = cap * (POS_PCT / 100.0) # ~$333.33 per position
         
-        # Fire actual live order to Binance exchange
         success, order_res = execute_binance_market_order(base, side, pos_size)
         if not success:
-            continue  # Skip if exchange rejects due to balance or limits
+            continue  
             
         future_change = TP_PCT if side == "LONG" else -TP_PCT
         future_pred = []
@@ -318,7 +314,7 @@ def fill_missing_slots(state):
     return state
 
 def auto_close_trades(state):
-    cap=state.get("cap",34.62); new_open=[]; closed_added=False
+    cap=state.get("cap",1000.00); new_open=[]; closed_added=False
     now = int(time.time())
     for tr in state.get("open",[]):
         sym=tr["symbol"]; entry=tr["entry"]; side=tr["side"]; pos=tr["pos"]; ts=tr.get("ts",now)
@@ -337,7 +333,7 @@ def auto_close_trades(state):
         
         should_close=False; close_reason=""
         if net_val >= DOLLAR_PROFIT_LOCK:
-            should_close=True; close_reason=f"$2.50+ PROFIT SECURED (+${net_val:.2f})"
+            should_close=True; close_reason=f"PROFIT SECURED (+${net_val:.2f})"
         elif pct >= TP_PCT: 
             should_close=True; close_reason=f"TP SECURED +{pct:.2f}%"
         elif peak >= 1.00 and pct <= (peak - 0.25):  
@@ -348,7 +344,6 @@ def auto_close_trades(state):
             should_close=True; close_reason=f"EXPIRY REACHED"
         
         if should_close:
-            # Send closing order to Binance exchange
             closing_side = "SELL" if side == "LONG" else "BUY"
             execute_binance_market_order(sym, closing_side, pos)
             
@@ -360,21 +355,21 @@ def auto_close_trades(state):
             new_open.append(tr)
     if closed_added:
         state["open"]=new_open; state["cap"]=cap; state["peak"]=max(state.get("peak",cap), cap)
-        state["equity"]=state.get("equity",[34.62])[-100:] + [cap]; state=recalc(state); kv_set(STATE_KEY, state)
+        state["equity"]=state.get("equity",[1000.00])[-100:] + [cap]; state=recalc(state); kv_set(STATE_KEY, state)
     
     state = fill_missing_slots(state)
     return state
 
 def render(state):
     state=auto_close_trades(state); state=fill_missing_slots(state); state=recalc(state)
-    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",34.62); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
+    open_tr=state.get("open",[]); closed=state.get("closed",[]); cap=state.get("cap",1000.00); wins=state.get("wins",0); loss=state.get("loss",0); tot=state.get("total",0); daily=state.get("daily",0.0)
     winrate=int(wins/tot*100) if tot>0 else 0
     daily_color = "#0f8" if daily>=0 else "#f44"
     target_reached = state.get("daily_target_reached", False)
     
     trade_boxes_html=""; chart_js_init=""
     for tr in open_tr:
-        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",11.54); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
+        sym=tr["symbol"]; side=tr.get("side","LONG"); pos=tr.get("pos",333.33); entry=tr.get("entry",0); tp=tr.get("tp",TP_PCT); sl=tr.get("sl",SL_PCT)
         tp_price=entry*(1+tp/100) if side=="LONG" else entry*(1-tp/100); sl_price=entry*(1-sl/100) if side=="LONG" else entry*(1+sl/100)
         col="#0f8" if tr.get("pct",0)>=0 else "#f44"
         future_change=tr.get("future_change",0); confidence=tr.get("confidence",0)
@@ -391,7 +386,7 @@ def render(state):
             trade_boxes_html="""
             <div style='text-align:center;color:#0f8;padding:16px;border:2px solid #0f8;border-radius:10px;background:#111'>
                 <div style='display:inline-block;width:10px;height:10px;background:#0f8;border-radius:50%;box-shadow:0 0 10px #0f8;animation:blink 1.2s infinite ease-in-out;margin-right:6px;'></div>
-                <b style='font-size:11px;letter-spacing:1px'>BINANCE SPOT EXECUTION ACTIVE ($34.62)</b>
+                <b style='font-size:11px;letter-spacing:1px'>BINANCE SPOT EXECUTION ACTIVE ($1000 AUM / $333 POS)</b>
                 <div style='font-size:8px;color:#888;margin-top:4px'>Scanning markets and dispatching live exchange orders...</div>
             </div>
             <style>
@@ -489,7 +484,7 @@ def render(state):
         let scaleFactor = entry / (lastClose || entry);
         let normalizedCloses = baseCloses.map(p => p * scaleFactor);
         let live=[entry];
-        let pos = parseFloat(posStr)||11.54;
+        let pos = parseFloat(posStr)||333.33;
         let fee = parseFloat(feeStr)||0.17;
         
         async function fetchP(){{
